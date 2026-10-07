@@ -1,0 +1,1388 @@
+{
+  "id": "dep_da9629d2cf",
+  "project_id": "prj_59c0ee1d86",
+  "created": 1791332033.418946,
+  "status": "promoted",
+  "shakedown": true,
+  "autofix": true,
+  "options": {
+    "local": {
+      "replicas": 1,
+      "sticky_sessions": false,
+      "tz": "Asia/Seoul"
+    },
+    "aws": {
+      "replicas": 2,
+      "sticky_sessions": true,
+      "tz": "UTC"
+    }
+  },
+  "targets": {
+    "local": {
+      "status": "ready",
+      "label": "Docker + Cloudflare Tunnel",
+      "error": null,
+      "url": "http://localhost:18081",
+      "instances": 1,
+      "info": {
+        "runtime": "My PC (Docker)",
+        "instances": "1",
+        "sticky_sessions": "n/a",
+        "timezone": "Asia/Seoul"
+      },
+      "commands": [
+        "docker compose -p sd-prj-59c0ee1d86-local up -d"
+      ],
+      "options": {
+        "replicas": 1,
+        "sticky_sessions": false,
+        "tz": "Asia/Seoul"
+      }
+    },
+    "aws": {
+      "status": "ready",
+      "label": "App Runner + RDS",
+      "error": null,
+      "url": "http://localhost:18082",
+      "instances": 2,
+      "info": {
+        "runtime": "Cloud (simulated: LB + multiple instances, UTC)",
+        "instances": "2",
+        "sticky_sessions": "true",
+        "timezone": "UTC"
+      },
+      "commands": [
+        "docker compose -p sd-prj-59c0ee1d86-cloud up -d",
+        "docker compose -p sd-prj-59c0ee1d86-cloud restart lb",
+        "docker compose -p sd-prj-59c0ee1d86-cloud up -d",
+        "docker compose -p sd-prj-59c0ee1d86-cloud restart lb"
+      ],
+      "options": {
+        "replicas": 2,
+        "sticky_sessions": true,
+        "tz": "UTC"
+      }
+    }
+  },
+  "attempts": [
+    {
+      "n": 1,
+      "options": {
+        "local": {
+          "replicas": 1,
+          "sticky_sessions": false,
+          "tz": "Asia/Seoul"
+        },
+        "aws": {
+          "replicas": 2,
+          "sticky_sessions": false,
+          "tz": "UTC"
+        }
+      },
+      "steps": [
+        {
+          "index": 1,
+          "title": "Open sign-up page",
+          "local": {
+            "index": 1,
+            "title": "Open sign-up page",
+            "status": "passed",
+            "error": null,
+            "final_path": "/join",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/join",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "path",
+                "ok": true,
+                "detail": "ended on /join"
+              }
+            ],
+            "text": "KTY Board - 회원가입\nJoin Us\nEmail address\nNickname\nPassword\n회원가입 완료\n이미 계정이 있으신가요?\n로그인하러 가기",
+            "elapsed_ms": 9
+          },
+          "cloud": {
+            "index": 1,
+            "title": "Open sign-up page",
+            "status": "passed",
+            "error": null,
+            "final_path": "/join",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/join",
+                "status": 200,
+                "instance": "172.23.0.3:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "path",
+                "ok": true,
+                "detail": "ended on /join"
+              }
+            ],
+            "text": "KTY Board - 회원가입\nJoin Us\nEmail address\nNickname\nPassword\n회원가입 완료\n이미 계정이 있으신가요?\n로그인하러 가기",
+            "elapsed_ms": 15
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 2,
+          "title": "Create a test account",
+          "local": {
+            "index": 2,
+            "title": "Create a test account",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/join",
+                "status": 302,
+                "instance": null
+              },
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "text": "KTY Board - Login\nBoard Login\nEmail address\nPassword\nLogin\n계정이 없으신가요?\n회원가입",
+            "elapsed_ms": 494
+          },
+          "cloud": {
+            "index": 2,
+            "title": "Create a test account",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/join",
+                "status": 302,
+                "instance": "172.23.0.4:8080"
+              },
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": "172.23.0.3:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "text": "KTY Board - Login\nBoard Login\nEmail address\nPassword\nLogin\n계정이 없으신가요?\n회원가입",
+            "elapsed_ms": 492
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 3,
+          "title": "Open sign-in page",
+          "local": {
+            "index": 3,
+            "title": "Open sign-in page",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "text": "KTY Board - Login\nBoard Login\nEmail address\nPassword\nLogin\n계정이 없으신가요?\n회원가입",
+            "elapsed_ms": 2
+          },
+          "cloud": {
+            "index": 3,
+            "title": "Open sign-in page",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": "172.23.0.4:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "text": "KTY Board - Login\nBoard Login\nEmail address\nPassword\nLogin\n계정이 없으신가요?\n회원가입",
+            "elapsed_ms": 3
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 4,
+          "title": "Sign in",
+          "local": {
+            "index": 4,
+            "title": "Sign in",
+            "status": "passed",
+            "error": null,
+            "final_path": "/board",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/login",
+                "status": 302,
+                "instance": null
+              },
+              {
+                "method": "GET",
+                "path": "/board",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "text": "KTY Board - 게시판 목록\n📋 게시판 목록\nsd9d2cf1\n님 환영합니다!\n로그아웃\n번호\n제목\n작성자\n조회수\n9\n[shakedown] post b80d91\nsdb80d91\n1\n8\n[shakedown] post 27eb82\nsd27eb82\n1\n7\n[shakedown] post 27eb81\nsd27eb81\n1\n6\n[shakedown] post 4f8772\nsd4f8772\n1\n5\n[shakedown] post 4f8771\nsd4f8771\n1\n4\n[shakedown] post 55a312\nsd55a312\n1\n3\n[shakedown] post 55a311\nsd55a311\n1\n2\n[shakedown] post 5e0522\nsd5e0522\n1\n1\n[shakedown] post 5e0521\nsd5e0521\n1\n🖋️ 글쓰기",
+            "elapsed_ms": 66
+          },
+          "cloud": {
+            "index": 4,
+            "title": "Sign in",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/login",
+                "status": 302,
+                "instance": "172.23.0.3:8080"
+              },
+              {
+                "method": "GET",
+                "path": "/board",
+                "status": 302,
+                "instance": "172.23.0.4:8080"
+              },
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": "172.23.0.3:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "text": "KTY Board - Login\nBoard Login\nEmail address\nPassword\nLogin\n계정이 없으신가요?\n회원가입",
+            "elapsed_ms": 313
+          },
+          "kind": "path_diff",
+          "severity": "critical",
+          "reasons": [
+            "ended on /board (local) vs / (cloud)"
+          ],
+          "classified_by": "rule"
+        },
+        {
+          "index": 5,
+          "title": "Open the editor",
+          "local": {
+            "index": 5,
+            "title": "Open the editor",
+            "status": "passed",
+            "error": null,
+            "final_path": "/write",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/write",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "path",
+                "ok": true,
+                "detail": "ended on /write"
+              }
+            ],
+            "text": "KTY Board - 새 글 작성\n📝 새 글 작성\n작성자:\nsd9d2cf1\n제목\n최대 100자까지 입력 가능합니다.\n내용\n취소\n등록하기",
+            "elapsed_ms": 12
+          },
+          "cloud": {
+            "index": 5,
+            "title": "Open the editor",
+            "status": "failed",
+            "error": "ended on /, expected /write",
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/write",
+                "status": 302,
+                "instance": "172.23.0.4:8080"
+              },
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": "172.23.0.3:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "path",
+                "ok": false,
+                "detail": "ended on /, expected /write"
+              }
+            ],
+            "text": "KTY Board - Login\nBoard Login\nEmail address\nPassword\nLogin\n계정이 없으신가요?\n회원가입",
+            "elapsed_ms": 13
+          },
+          "kind": "env_diff",
+          "severity": "critical",
+          "reasons": [
+            "passed on local, failed on cloud",
+            "ended on /, expected /write",
+            "ended on /write (local) vs / (cloud)"
+          ],
+          "classified_by": "rule"
+        },
+        {
+          "index": 6,
+          "title": "Publish a post",
+          "local": {
+            "index": 6,
+            "title": "Publish a post",
+            "status": "passed",
+            "error": null,
+            "final_path": "/board",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/api/posts/write",
+                "status": 302,
+                "instance": null
+              },
+              {
+                "method": "GET",
+                "path": "/board",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'[shakedown] post 9d2cf1' shown"
+              }
+            ],
+            "text": "KTY Board - 게시판 목록\n📋 게시판 목록\nsd9d2cf1\n님 환영합니다!\n로그아웃\n번호\n제목\n작성자\n조회수\n10\n[shakedown] post 9d2cf1\nsd9d2cf1\n0\n9\n[shakedown] post b80d91\nsdb80d91\n1\n8\n[shakedown] post 27eb82\nsd27eb82\n1\n7\n[shakedown] post 27eb81\nsd27eb81\n1\n6\n[shakedown] post 4f8772\nsd4f8772\n1\n5\n[shakedown] post 4f8771\nsd4f8771\n1\n4\n[shakedown] post 55a312\nsd55a312\n1\n3\n[shakedown] post 55a311\nsd55a311\n1\n2\n[shakedown] post 5e0522\nsd5e0522\n1\n1\n[shakedown] post 5e0521\nsd5e0521\n1\n🖋️ 글쓰기",
+            "elapsed_ms": 81
+          },
+          "cloud": {
+            "index": 6,
+            "title": "Publish a post",
+            "status": "skipped",
+            "error": "an earlier step failed",
+            "final_path": null,
+            "final_status": null,
+            "hops": [],
+            "checks": [],
+            "text": "",
+            "elapsed_ms": 0
+          },
+          "kind": "env_diff",
+          "severity": "critical",
+          "reasons": [
+            "passed on local, skipped on cloud",
+            "an earlier step failed",
+            "ended on /board (local) vs None (cloud)"
+          ],
+          "classified_by": "rule"
+        },
+        {
+          "index": 7,
+          "title": "Open the new post",
+          "local": {
+            "index": 7,
+            "title": "Open the new post",
+            "status": "passed",
+            "error": null,
+            "final_path": "/posts/10",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/posts/10",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'Shakedown body 9d2cf1. If you can read this, writes reach the DB.' shown"
+              }
+            ],
+            "text": "KTY Board - 게시글 상세보기\n[shakedown] post 9d2cf1\n작성자\nsd9d2cf1\n👀 조회수\n1\n📅 게시글 ID:\n10\nShakedown body 9d2cf1. If you can read this, writes reach the DB.\n💬 댓글\n0\n개\n등록\n아직 댓글이 없습니다. 첫 번째 댓글을 남겨보세요!\n목록으로\n수정\n삭제",
+            "elapsed_ms": 25
+          },
+          "cloud": {
+            "index": 7,
+            "title": "Open the new post",
+            "status": "skipped",
+            "error": "an earlier step failed",
+            "final_path": null,
+            "final_status": null,
+            "hops": [],
+            "checks": [],
+            "text": "",
+            "elapsed_ms": 0
+          },
+          "kind": "env_diff",
+          "severity": "critical",
+          "reasons": [
+            "passed on local, skipped on cloud",
+            "an earlier step failed",
+            "ended on /posts/10 (local) vs None (cloud)"
+          ],
+          "classified_by": "rule"
+        },
+        {
+          "index": 8,
+          "title": "Leave a comment",
+          "local": {
+            "index": 8,
+            "title": "Leave a comment",
+            "status": "passed",
+            "error": null,
+            "final_path": "/posts/10/view",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/api/comments",
+                "status": 302,
+                "instance": null
+              },
+              {
+                "method": "GET",
+                "path": "/posts/10/view",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'shakedown comment 9d2cf1' shown"
+              }
+            ],
+            "text": "KTY Board - 게시글 상세보기\n[shakedown] post 9d2cf1\n작성자\nsd9d2cf1\n👀 조회수\n1\n📅 게시글 ID:\n10\nShakedown body 9d2cf1. If you can read this, writes reach the DB.\n💬 댓글\n1\n개\n등록\nsd9d2cf1\n수정\n삭제\nshakedown comment 9d2cf1\n목록으로\n수정\n삭제",
+            "elapsed_ms": 17
+          },
+          "cloud": {
+            "index": 8,
+            "title": "Leave a comment",
+            "status": "skipped",
+            "error": "an earlier step failed",
+            "final_path": null,
+            "final_status": null,
+            "hops": [],
+            "checks": [],
+            "text": "",
+            "elapsed_ms": 0
+          },
+          "kind": "env_diff",
+          "severity": "critical",
+          "reasons": [
+            "passed on local, skipped on cloud",
+            "an earlier step failed",
+            "ended on /posts/10/view (local) vs None (cloud)"
+          ],
+          "classified_by": "rule"
+        }
+      ],
+      "verdict": {
+        "status": "BLOCKED",
+        "first_divergence": 4,
+        "summary": "Step 4 (Sign in) led to different pages (/board locally, / on the cloud)."
+      },
+      "report": {
+        "headline": "Login is lost on the cloud: requests land on different instances",
+        "cause": "The app keeps the login in server memory (HttpSession). The cloud runs 2 instances behind a load balancer without session affinity, so the request after login reaches an instance that never saw it.",
+        "evidence": [
+          "Step 4 worked locally (1 instance, ended on /board) but not on the cloud (ended on /).",
+          "Cloud hops: POST /login [172.23.0.3:8080] → GET /board [172.23.0.4:8080] → GET / [172.23.0.3:8080]",
+          "2 different instances served one user's requests."
+        ],
+        "fix": {
+          "target": "aws",
+          "option": "sticky_sessions",
+          "value": "true",
+          "description": "Pin each user to one instance (session affinity).",
+          "native": "nginx upstream ip_hash (on AWS: ALB target-group stickiness; on Cloud Run: --session-affinity)",
+          "auto_applicable": true
+        },
+        "confidence": "high",
+        "by": "rule"
+      },
+      "duration_s": 1.3,
+      "applied_fix": {
+        "target": "aws",
+        "option": "sticky_sessions",
+        "value": "true",
+        "description": "Pin each user to one instance (session affinity).",
+        "native": "nginx upstream ip_hash (on AWS: ALB target-group stickiness; on Cloud Run: --session-affinity)",
+        "auto_applicable": true
+      }
+    },
+    {
+      "n": 2,
+      "options": {
+        "local": {
+          "replicas": 1,
+          "sticky_sessions": false,
+          "tz": "Asia/Seoul"
+        },
+        "aws": {
+          "replicas": 2,
+          "sticky_sessions": true,
+          "tz": "UTC"
+        }
+      },
+      "steps": [
+        {
+          "index": 1,
+          "title": "Open sign-up page",
+          "local": {
+            "index": 1,
+            "title": "Open sign-up page",
+            "status": "passed",
+            "error": null,
+            "final_path": "/join",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/join",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "path",
+                "ok": true,
+                "detail": "ended on /join"
+              }
+            ],
+            "text": "KTY Board - 회원가입\nJoin Us\nEmail address\nNickname\nPassword\n회원가입 완료\n이미 계정이 있으신가요?\n로그인하러 가기",
+            "elapsed_ms": 17
+          },
+          "cloud": {
+            "index": 1,
+            "title": "Open sign-up page",
+            "status": "passed",
+            "error": null,
+            "final_path": "/join",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/join",
+                "status": 200,
+                "instance": "172.23.0.3:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "path",
+                "ok": true,
+                "detail": "ended on /join"
+              }
+            ],
+            "text": "KTY Board - 회원가입\nJoin Us\nEmail address\nNickname\nPassword\n회원가입 완료\n이미 계정이 있으신가요?\n로그인하러 가기",
+            "elapsed_ms": 9
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 2,
+          "title": "Create a test account",
+          "local": {
+            "index": 2,
+            "title": "Create a test account",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/join",
+                "status": 302,
+                "instance": null
+              },
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "text": "KTY Board - Login\nBoard Login\nEmail address\nPassword\nLogin\n계정이 없으신가요?\n회원가입",
+            "elapsed_ms": 40
+          },
+          "cloud": {
+            "index": 2,
+            "title": "Create a test account",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/join",
+                "status": 302,
+                "instance": "172.23.0.3:8080"
+              },
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": "172.23.0.3:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "text": "KTY Board - Login\nBoard Login\nEmail address\nPassword\nLogin\n계정이 없으신가요?\n회원가입",
+            "elapsed_ms": 101
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 3,
+          "title": "Open sign-in page",
+          "local": {
+            "index": 3,
+            "title": "Open sign-in page",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "text": "KTY Board - Login\nBoard Login\nEmail address\nPassword\nLogin\n계정이 없으신가요?\n회원가입",
+            "elapsed_ms": 4
+          },
+          "cloud": {
+            "index": 3,
+            "title": "Open sign-in page",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": "172.23.0.3:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "text": "KTY Board - Login\nBoard Login\nEmail address\nPassword\nLogin\n계정이 없으신가요?\n회원가입",
+            "elapsed_ms": 3
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 4,
+          "title": "Sign in",
+          "local": {
+            "index": 4,
+            "title": "Sign in",
+            "status": "passed",
+            "error": null,
+            "final_path": "/board",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/login",
+                "status": 302,
+                "instance": null
+              },
+              {
+                "method": "GET",
+                "path": "/board",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "text": "KTY Board - 게시판 목록\n📋 게시판 목록\nsd9d2cf2\n님 환영합니다!\n로그아웃\n번호\n제목\n작성자\n조회수\n10\n[shakedown] post 9d2cf1\nsd9d2cf1\n1\n9\n[shakedown] post b80d91\nsdb80d91\n1\n8\n[shakedown] post 27eb82\nsd27eb82\n1\n7\n[shakedown] post 27eb81\nsd27eb81\n1\n6\n[shakedown] post 4f8772\nsd4f8772\n1\n5\n[shakedown] post 4f8771\nsd4f8771\n1\n4\n[shakedown] post 55a312\nsd55a312\n1\n3\n[shakedown] post 55a311\nsd55a311\n1\n2\n[shakedown] post 5e0522\nsd5e0522\n1\n1\n[shakedown] post 5e0521\nsd5e0521\n1\n🖋️ 글쓰기",
+            "elapsed_ms": 37
+          },
+          "cloud": {
+            "index": 4,
+            "title": "Sign in",
+            "status": "passed",
+            "error": null,
+            "final_path": "/board",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/login",
+                "status": 302,
+                "instance": "172.23.0.3:8080"
+              },
+              {
+                "method": "GET",
+                "path": "/board",
+                "status": 200,
+                "instance": "172.23.0.3:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "text": "KTY Board - 게시판 목록\n📋 게시판 목록\nsd9d2cf2\n님 환영합니다!\n로그아웃\n번호\n제목\n작성자\n조회수\n5\n[shakedown] post b80d91\nsdb80d91\n1\n4\n[shakedown] post 27eb82\nsd27eb82\n1\n3\n[shakedown] post 4f8772\nsd4f8772\n1\n2\n[shakedown] post 55a312\nsd55a312\n1\n1\n[shakedown] post 5e0522\nsd5e0522\n1\n🖋️ 글쓰기",
+            "elapsed_ms": 89
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 5,
+          "title": "Open the editor",
+          "local": {
+            "index": 5,
+            "title": "Open the editor",
+            "status": "passed",
+            "error": null,
+            "final_path": "/write",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/write",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "path",
+                "ok": true,
+                "detail": "ended on /write"
+              }
+            ],
+            "text": "KTY Board - 새 글 작성\n📝 새 글 작성\n작성자:\nsd9d2cf2\n제목\n최대 100자까지 입력 가능합니다.\n내용\n취소\n등록하기",
+            "elapsed_ms": 4
+          },
+          "cloud": {
+            "index": 5,
+            "title": "Open the editor",
+            "status": "passed",
+            "error": null,
+            "final_path": "/write",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/write",
+                "status": 200,
+                "instance": "172.23.0.3:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "path",
+                "ok": true,
+                "detail": "ended on /write"
+              }
+            ],
+            "text": "KTY Board - 새 글 작성\n📝 새 글 작성\n작성자:\nsd9d2cf2\n제목\n최대 100자까지 입력 가능합니다.\n내용\n취소\n등록하기",
+            "elapsed_ms": 5
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 6,
+          "title": "Publish a post",
+          "local": {
+            "index": 6,
+            "title": "Publish a post",
+            "status": "passed",
+            "error": null,
+            "final_path": "/board",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/api/posts/write",
+                "status": 302,
+                "instance": null
+              },
+              {
+                "method": "GET",
+                "path": "/board",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'[shakedown] post 9d2cf2' shown"
+              }
+            ],
+            "text": "KTY Board - 게시판 목록\n📋 게시판 목록\nsd9d2cf2\n님 환영합니다!\n로그아웃\n번호\n제목\n작성자\n조회수\n11\n[shakedown] post 9d2cf2\nsd9d2cf2\n0\n10\n[shakedown] post 9d2cf1\nsd9d2cf1\n1\n9\n[shakedown] post b80d91\nsdb80d91\n1\n8\n[shakedown] post 27eb82\nsd27eb82\n1\n7\n[shakedown] post 27eb81\nsd27eb81\n1\n6\n[shakedown] post 4f8772\nsd4f8772\n1\n5\n[shakedown] post 4f8771\nsd4f8771\n1\n4\n[shakedown] post 55a312\nsd55a312\n1\n3\n[shakedown] post 55a311\nsd55a311\n1\n2\n[shakedown] post 5e0522\nsd5e0522\n1\n1\n[shakedown] post 5e0521\nsd5e0521\n1\n🖋️ 글쓰기",
+            "elapsed_ms": 26
+          },
+          "cloud": {
+            "index": 6,
+            "title": "Publish a post",
+            "status": "passed",
+            "error": null,
+            "final_path": "/board",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/api/posts/write",
+                "status": 302,
+                "instance": "172.23.0.3:8080"
+              },
+              {
+                "method": "GET",
+                "path": "/board",
+                "status": 200,
+                "instance": "172.23.0.3:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'[shakedown] post 9d2cf2' shown"
+              }
+            ],
+            "text": "KTY Board - 게시판 목록\n📋 게시판 목록\nsd9d2cf2\n님 환영합니다!\n로그아웃\n번호\n제목\n작성자\n조회수\n6\n[shakedown] post 9d2cf2\nsd9d2cf2\n0\n5\n[shakedown] post b80d91\nsdb80d91\n1\n4\n[shakedown] post 27eb82\nsd27eb82\n1\n3\n[shakedown] post 4f8772\nsd4f8772\n1\n2\n[shakedown] post 55a312\nsd55a312\n1\n1\n[shakedown] post 5e0522\nsd5e0522\n1\n🖋️ 글쓰기",
+            "elapsed_ms": 30
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 7,
+          "title": "Open the new post",
+          "local": {
+            "index": 7,
+            "title": "Open the new post",
+            "status": "passed",
+            "error": null,
+            "final_path": "/posts/11",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/posts/11",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'Shakedown body 9d2cf2. If you can read this, writes reach the DB.' shown"
+              }
+            ],
+            "text": "KTY Board - 게시글 상세보기\n[shakedown] post 9d2cf2\n작성자\nsd9d2cf2\n👀 조회수\n1\n📅 게시글 ID:\n11\nShakedown body 9d2cf2. If you can read this, writes reach the DB.\n💬 댓글\n0\n개\n등록\n아직 댓글이 없습니다. 첫 번째 댓글을 남겨보세요!\n목록으로\n수정\n삭제",
+            "elapsed_ms": 15
+          },
+          "cloud": {
+            "index": 7,
+            "title": "Open the new post",
+            "status": "passed",
+            "error": null,
+            "final_path": "/posts/6",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/posts/6",
+                "status": 200,
+                "instance": "172.23.0.3:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'Shakedown body 9d2cf2. If you can read this, writes reach the DB.' shown"
+              }
+            ],
+            "text": "KTY Board - 게시글 상세보기\n[shakedown] post 9d2cf2\n작성자\nsd9d2cf2\n👀 조회수\n1\n📅 게시글 ID:\n6\nShakedown body 9d2cf2. If you can read this, writes reach the DB.\n💬 댓글\n0\n개\n등록\n아직 댓글이 없습니다. 첫 번째 댓글을 남겨보세요!\n목록으로\n수정\n삭제",
+            "elapsed_ms": 21
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 8,
+          "title": "Leave a comment",
+          "local": {
+            "index": 8,
+            "title": "Leave a comment",
+            "status": "passed",
+            "error": null,
+            "final_path": "/posts/11/view",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/api/comments",
+                "status": 302,
+                "instance": null
+              },
+              {
+                "method": "GET",
+                "path": "/posts/11/view",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'shakedown comment 9d2cf2' shown"
+              }
+            ],
+            "text": "KTY Board - 게시글 상세보기\n[shakedown] post 9d2cf2\n작성자\nsd9d2cf2\n👀 조회수\n1\n📅 게시글 ID:\n11\nShakedown body 9d2cf2. If you can read this, writes reach the DB.\n💬 댓글\n1\n개\n등록\nsd9d2cf2\n수정\n삭제\nshakedown comment 9d2cf2\n목록으로\n수정\n삭제",
+            "elapsed_ms": 18
+          },
+          "cloud": {
+            "index": 8,
+            "title": "Leave a comment",
+            "status": "passed",
+            "error": null,
+            "final_path": "/posts/6/view",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/api/comments",
+                "status": 302,
+                "instance": "172.23.0.3:8080"
+              },
+              {
+                "method": "GET",
+                "path": "/posts/6/view",
+                "status": 200,
+                "instance": "172.23.0.3:8080"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'shakedown comment 9d2cf2' shown"
+              }
+            ],
+            "text": "KTY Board - 게시글 상세보기\n[shakedown] post 9d2cf2\n작성자\nsd9d2cf2\n👀 조회수\n1\n📅 게시글 ID:\n6\nShakedown body 9d2cf2. If you can read this, writes reach the DB.\n💬 댓글\n1\n개\n등록\nsd9d2cf2\n수정\n삭제\nshakedown comment 9d2cf2\n목록으로\n수정\n삭제",
+            "elapsed_ms": 22
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        }
+      ],
+      "verdict": {
+        "status": "PASS",
+        "first_divergence": null,
+        "summary": "Both environments behaved the same on every step."
+      },
+      "duration_s": 0.4
+    }
+  ],
+  "timings": {
+    "build_s": 3.1,
+    "deploy_s": 18.4,
+    "total_s": 28.4
+  },
+  "ai_cost": {
+    "calls": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "krw": 0.0,
+    "items": []
+  },
+  "image": "shakedown/prj-59c0ee1d86:da9629d2cf",
+  "scenario": {
+    "app_understanding": "Rule-based journey (AI unavailable)",
+    "steps": [
+      {
+        "title": "Open sign-up page",
+        "action": "visit",
+        "path": "/join",
+        "form_action": null,
+        "fields": [],
+        "link_text": null,
+        "expect": {
+          "path_startswith": "/join",
+          "text_contains": []
+        }
+      },
+      {
+        "title": "Create a test account",
+        "action": "submit_form",
+        "path": null,
+        "form_action": "/join",
+        "fields": [
+          {
+            "name": "email",
+            "value": "{{email}}"
+          },
+          {
+            "name": "nickname",
+            "value": "{{nickname}}"
+          },
+          {
+            "name": "password",
+            "value": "{{password}}"
+          }
+        ],
+        "link_text": null,
+        "expect": {
+          "path_startswith": null,
+          "text_contains": []
+        }
+      },
+      {
+        "title": "Open sign-in page",
+        "action": "visit",
+        "path": "/",
+        "form_action": null,
+        "fields": [],
+        "link_text": null,
+        "expect": {
+          "path_startswith": null,
+          "text_contains": []
+        }
+      },
+      {
+        "title": "Sign in",
+        "action": "submit_form",
+        "path": null,
+        "form_action": "/login",
+        "fields": [
+          {
+            "name": "email",
+            "value": "{{email}}"
+          },
+          {
+            "name": "password",
+            "value": "{{password}}"
+          }
+        ],
+        "link_text": null,
+        "expect": {
+          "path_startswith": null,
+          "text_contains": []
+        }
+      },
+      {
+        "title": "Open the editor",
+        "action": "visit",
+        "path": "/write",
+        "form_action": null,
+        "fields": [],
+        "link_text": null,
+        "expect": {
+          "path_startswith": "/write",
+          "text_contains": []
+        }
+      },
+      {
+        "title": "Publish a post",
+        "action": "submit_form",
+        "path": null,
+        "form_action": "/api/posts/write",
+        "fields": [
+          {
+            "name": "title",
+            "value": "{{title}}"
+          },
+          {
+            "name": "content",
+            "value": "{{content}}"
+          }
+        ],
+        "link_text": null,
+        "expect": {
+          "path_startswith": null,
+          "text_contains": [
+            "{{title}}"
+          ]
+        }
+      },
+      {
+        "title": "Open the new post",
+        "action": "click_link",
+        "path": null,
+        "form_action": null,
+        "fields": [],
+        "link_text": "{{title}}",
+        "expect": {
+          "path_startswith": null,
+          "text_contains": [
+            "{{content}}"
+          ]
+        }
+      },
+      {
+        "title": "Leave a comment",
+        "action": "submit_form",
+        "path": null,
+        "form_action": "/api/comments",
+        "fields": [
+          {
+            "name": "content",
+            "value": "{{comment}}"
+          }
+        ],
+        "link_text": null,
+        "expect": {
+          "path_startswith": null,
+          "text_contains": [
+            "{{comment}}"
+          ]
+        }
+      }
+    ]
+  },
+  "scenario_source": "fallback",
+  "finished": 1791332061.846084
+}

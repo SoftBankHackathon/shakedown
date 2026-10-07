@@ -1,0 +1,239 @@
+{
+  "id": "prj_59c0ee1d86",
+  "name": "kty-board",
+  "repo": "samples/kty-board",
+  "created": 1791302563.3908951,
+  "analysis": {
+    "stack": "spring-boot-gradle",
+    "port": 8080,
+    "java_version": 21,
+    "database": "mysql",
+    "database_name": "board_db",
+    "health_path": "/",
+    "uses_server_session": true,
+    "summary": "",
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/api/comments",
+        "file": "src/main/java/com/kty/board/controller/CommentController.java",
+        "params": [
+          "postId",
+          "content"
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/api/comments/{commentId}/delete",
+        "file": "src/main/java/com/kty/board/controller/CommentController.java",
+        "params": [
+          "postId"
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/api/comments/{commentId}/edit",
+        "file": "src/main/java/com/kty/board/controller/CommentController.java",
+        "params": [
+          "postId",
+          "content"
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/join",
+        "file": "src/main/java/com/kty/board/controller/MemberController.java",
+        "params": [
+          "email",
+          "nickname",
+          "password"
+        ]
+      },
+      {
+        "method": "POST",
+        "path": "/login",
+        "file": "src/main/java/com/kty/board/controller/MemberController.java",
+        "params": [
+          "email",
+          "password"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/logout",
+        "file": "src/main/java/com/kty/board/controller/MemberController.java",
+        "params": []
+      },
+      {
+        "method": "POST",
+        "path": "/api/posts/write",
+        "file": "src/main/java/com/kty/board/controller/PostController.java",
+        "params": [
+          "title",
+          "content"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/api/posts",
+        "file": "src/main/java/com/kty/board/controller/PostController.java",
+        "params": []
+      },
+      {
+        "method": "GET",
+        "path": "/api/posts/{postId}",
+        "file": "src/main/java/com/kty/board/controller/PostController.java",
+        "params": []
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/posts/{postId}",
+        "file": "src/main/java/com/kty/board/controller/PostController.java",
+        "params": [
+          "(JSON body)"
+        ]
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/posts/{postId}",
+        "file": "src/main/java/com/kty/board/controller/PostController.java",
+        "params": []
+      },
+      {
+        "method": "POST",
+        "path": "/api/posts/{postId}/delete",
+        "file": "src/main/java/com/kty/board/controller/PostController.java",
+        "params": []
+      },
+      {
+        "method": "POST",
+        "path": "/api/posts/{postId}/edit",
+        "file": "src/main/java/com/kty/board/controller/PostController.java",
+        "params": [
+          "title",
+          "content"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/",
+        "file": "src/main/java/com/kty/board/controller/ViewController.java",
+        "params": []
+      },
+      {
+        "method": "GET",
+        "path": "/join",
+        "file": "src/main/java/com/kty/board/controller/ViewController.java",
+        "params": []
+      },
+      {
+        "method": "GET",
+        "path": "/board",
+        "file": "src/main/java/com/kty/board/controller/ViewController.java",
+        "params": []
+      },
+      {
+        "method": "GET",
+        "path": "/write",
+        "file": "src/main/java/com/kty/board/controller/ViewController.java",
+        "params": []
+      },
+      {
+        "method": "GET",
+        "path": "/posts/{postId}",
+        "file": "src/main/java/com/kty/board/controller/ViewController.java",
+        "params": []
+      },
+      {
+        "method": "GET",
+        "path": "/posts/{postId}/view",
+        "file": "src/main/java/com/kty/board/controller/ViewController.java",
+        "params": []
+      },
+      {
+        "method": "GET",
+        "path": "/posts/{postId}/edit",
+        "file": "src/main/java/com/kty/board/controller/ViewController.java",
+        "params": []
+      }
+    ],
+    "evidence": [
+      {
+        "field": "stack",
+        "value": "Spring Boot (Gradle)",
+        "file": "build.gradle",
+        "source": "rule"
+      },
+      {
+        "field": "spring_boot",
+        "value": "4.0.3",
+        "file": "build.gradle",
+        "source": "rule"
+      },
+      {
+        "field": "java",
+        "value": "21",
+        "file": "build.gradle",
+        "source": "rule"
+      },
+      {
+        "field": "port",
+        "value": "8080",
+        "file": null,
+        "source": "default"
+      },
+      {
+        "field": "database",
+        "value": "MySQL (board_db)",
+        "file": "application.yml",
+        "source": "rule"
+      },
+      {
+        "field": "session",
+        "value": "server-memory HttpSession",
+        "file": "src/main/java/com/kty/board/controller/MemberController.java",
+        "source": "rule"
+      },
+      {
+        "field": "health_path",
+        "value": "/",
+        "file": null,
+        "source": "default"
+      }
+    ],
+    "env": {
+      "SPRING_DATASOURCE_URL": "jdbc:mysql://db:3306/board_db?characterEncoding=UTF-8&allowPublicKeyRetrieval=true&useSSL=false",
+      "SPRING_DATASOURCE_USERNAME": "app",
+      "SPRING_JPA_HIBERNATE_DDL_AUTO": "update",
+      "SPRING_JPA_SHOW_SQL": "false"
+    },
+    "secret_env": [
+      "SPRING_DATASOURCE_PASSWORD"
+    ],
+    "warnings": [
+      "application.yml has a hardcoded DB password. It is overridden by an injected secret."
+    ]
+  },
+  "analysis_cost": {
+    "calls": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "krw": 0.0,
+    "items": []
+  },
+  "ports": {
+    "local": 18081,
+    "aws": 18082
+  },
+  "secrets": [
+    {
+      "name": "db_password",
+      "value": "••••••••"
+    }
+  ],
+  "last_deployment": null,
+  "targets": [
+    "local",
+    "aws"
+  ]
+}

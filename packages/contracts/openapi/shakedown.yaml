@@ -1,0 +1,219 @@
+openapi: 3.1.0
+info:
+  title: Shakedown Runner API
+  version: 0.1.0
+  description: |
+    > **상태: 초안 (v0.1.0, 2026-10-08)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
+
+    AI 시운전 서비스가 구현하는 API (apps/shakedown, 김태현). 엔진이 호출합니다.
+
+    흐름: 모든 대상이 `ready`가 되면 엔진이 `POST /shakedowns`로 대상 URL들을 넘김
+    → 시운전은 202를 돌려주고 뒤에서 실행 → 엔진이 `GET /shakedowns/{id}`를 폴링
+    → `status=done`이면 `verdict`로 승격/차단 결정.
+
+    약속
+    - `baseline`은 정상이라고 믿는 기준 환경(보통 local). 시나리오는 먼저 baseline에서 통과해야 비교에 사용
+    - **판정(verdict)은 규칙이 결정**. AI는 시나리오 작성, 애매한 차이 분류, 원인 보고서만 담당
+    - 결과 형식은 `packages/contracts/src/index.ts`의 `Scenario`, `StepDiff`, `Report`와 같음
+    - 진행 중에도 `steps`를 채워서 돌려주면 대시보드가 단계별로 실시간 표시 가능
+
+    상태 확인 방식 (초안)
+    - 엔진은 `GET /shakedowns/{shakedown_id}`를 2~3초 간격으로 조회
+    - 3분 안에 `done`이 안 되면 엔진이 실패로 처리
+    - 나중에 콜백(`callback_url`) 방식으로 바뀔 수 있음. 그래도 GET 조회는 남김
+# 해커톤 내부 통신용이라 인증 없음. 공개 배포 시 토큰 인증 추가.
+security: []
+servers:
+  - url: http://localhost:9201
+    description: apps/shakedown (기본 포트 제안)
+paths:
+  /shakedowns:
+    post:
+      summary: 시운전 시작 (비동기)
+      operationId: createShakedown
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ShakedownRequest" }
+            example:
+              deployment_id: dep_53c6f5e052
+              project_id: prj_59c0ee1d86
+              baseline: { name: local, url: https://kty-board.trycloudflare.com }
+              candidates:
+                - { name: aws, url: https://abcd1234.ap-northeast-2.awsapprunner.com }
+              hints:
+                routes: ["POST /login (email, password)", "POST /api/posts/write (title, content)"]
+                uses_server_session: true
+      responses:
+        "202":
+          description: 접수됨
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Shakedown" }
+  /shakedowns/{shakedown_id}:
+    get:
+      summary: 시운전 진행 상황과 결과
+      operationId: getShakedown
+      parameters:
+        - name: shakedown_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 현재 상태
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Shakedown" }
+        "404":
+          description: 없는 시운전
+components:
+  schemas:
+    Endpoint:
+      type: object
+      required: [name, url]
+      properties:
+        name: { type: string, description: "대상 이름 (local, aws 등)" }
+        url: { type: string, format: uri }
+    ShakedownRequest:
+      type: object
+      required: [deployment_id, baseline, candidates]
+      properties:
+        deployment_id: { type: string }
+        project_id: { type: string }
+        baseline: { $ref: "#/components/schemas/Endpoint" }
+        candidates:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/Endpoint" }
+        scenario:
+          description: 저장된 시나리오를 재사용할 때만 전달. 없으면 AI가 새로 작성
+          $ref: "#/components/schemas/Scenario"
+        hints:
+          type: object
+          description: 엔진의 레포 분석 결과 중 시나리오 작성에 도움이 되는 정보 (비밀값 금지)
+          additionalProperties: true
+    Shakedown:
+      type: object
+      required: [shakedown_id, status]
+      properties:
+        shakedown_id: { type: string }
+        status: { type: string, enum: [running, done, failed] }
+        scenario: { $ref: "#/components/schemas/Scenario" }
+        scenario_source: { type: string, enum: [ai, saved, fallback] }
+        steps:
+          type: array
+          description: 단계별 비교 결과. 진행 중에는 완료된 단계까지만
+          items: { $ref: "#/components/schemas/StepDiff" }
+        verdict: { $ref: "#/components/schemas/Verdict" }
+        report:
+          description: verdict=BLOCKED일 때 원인 보고서
+          $ref: "#/components/schemas/Report"
+        screenshots:
+          type: object
+          description: "단계 번호 → 대상 이름 → 이미지 URL (Playwright 캡처, 선택)"
+          additionalProperties:
+            type: object
+            additionalProperties: { type: string, format: uri }
+        ai_cost: { $ref: "#/components/schemas/CostLedger" }
+        error: { type: string }
+    Scenario:
+      type: object
+      required: [app_understanding, steps]
+      properties:
+        app_understanding: { type: string }
+        steps:
+          type: array
+          items:
+            type: object
+            required: [title, action, expect]
+            properties:
+              title: { type: string }
+              action: { type: string, enum: [visit, submit_form, click_link] }
+              path: { type: string }
+              form_action: { type: string }
+              link_text: { type: string }
+              fields:
+                type: array
+                items:
+                  type: object
+                  required: [name, value]
+                  properties:
+                    name: { type: string }
+                    value: { type: string, description: "{{email}} 같은 자리표시자 사용" }
+              expect:
+                type: object
+                properties:
+                  path_startswith: { type: string }
+                  text_contains: { type: array, items: { type: string } }
+    Hop:
+      type: object
+      required: [method, path, status]
+      properties:
+        method: { type: string }
+        path: { type: string }
+        status: { type: integer }
+        instance: { type: [string, "null"], description: 응답한 서버 식별자 (있으면) }
+    StepResult:
+      type: object
+      required: [index, title, status]
+      properties:
+        index: { type: integer }
+        title: { type: string }
+        status: { type: string, enum: [passed, failed, skipped] }
+        error: { type: [string, "null"] }
+        final_path: { type: [string, "null"] }
+        final_status: { type: [integer, "null"] }
+        hops: { type: array, items: { $ref: "#/components/schemas/Hop" } }
+        elapsed_ms: { type: integer }
+    StepDiff:
+      type: object
+      required: [index, title, local, cloud, kind, severity]
+      description: |
+        baseline과 candidate 하나의 단계별 비교. 필드 이름 local/cloud는 대시보드 호환을 위해 유지
+        (local = baseline, cloud = candidate).
+      properties:
+        index: { type: integer }
+        title: { type: string }
+        baseline: { type: string, description: 기준 대상 이름 (예 local) }
+        candidate: { type: string, description: 비교 대상 이름 (예 aws). 비교 대상이 여러 개면 대상마다 한 줄씩 }
+        local: { $ref: "#/components/schemas/StepResult" }
+        cloud: { $ref: "#/components/schemas/StepResult" }
+        kind: { type: string, enum: [same, env_diff, path_diff, both_failed, text_diff, skipped] }
+        severity: { type: string, enum: [none, ignore, warn, critical] }
+        reasons: { type: array, items: { type: string } }
+        classified_by: { type: string, enum: [rule, ai] }
+    Verdict:
+      type: object
+      required: [status, summary]
+      properties:
+        status: { type: string, enum: [PASS, WARN, BLOCKED] }
+        first_divergence: { type: [integer, "null"] }
+        summary: { type: string }
+    Report:
+      type: object
+      required: [headline, cause, evidence, confidence, by]
+      properties:
+        headline: { type: string }
+        cause: { type: string }
+        evidence: { type: array, items: { type: string } }
+        fix:
+          type: [object, "null"]
+          properties:
+            target: { type: string }
+            option: { type: string, description: "sticky_sessions | tz | code_change | none" }
+            value: { type: string }
+            description: { type: string }
+            native: { type: string, description: 대상 환경에서의 실제 설정 이름 }
+            auto_applicable: { type: boolean }
+        confidence: { type: string, enum: [high, medium, low] }
+        by: { type: string, enum: [rule, ai] }
+    CostLedger:
+      type: object
+      properties:
+        calls: { type: integer }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        krw: { type: number }

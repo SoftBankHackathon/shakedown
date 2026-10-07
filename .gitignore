@@ -147,3 +147,19 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# --- shakedown monorepo ---
+.next/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.data/
+.DS_Store
+.idea/
+.vscode/
+# Java (samples/kty-board)
+.gradle/
+build/
+out/
+!gradle/wrapper/gradle-wrapper.jar
