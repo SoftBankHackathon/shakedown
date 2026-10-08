@@ -84,12 +84,26 @@ python3 smoke.py https://YOUR.trycloudflare.com --marker smoke-demo1
 python3 smoke.py https://YOUR.trycloudflare.com --marker smoke-demo1 --verify-only
 ```
 
-## Opt-in data-loss demo (disposable data only)
+## One-command rehearsal
 
-Proposed reproducible failure: `demo-reset` uses Hibernate `ddl-auto=create`, so an
+```sh
+npm run demo
+```
+
+Builds the current sample, creates an isolated PostgreSQL DB, and verifies the whole
+sequence: normal data persists → demo-reset loses data on restart → normal mode
+keeps new data again. Docker assigns an unused loopback port. Every run uses a new
+Compose project; finally it removes only that run's containers/network/volume, even
+if a check fails. A JSON report is retained in `.data/rehearsal-*/report.json`.
+The existing deployment, Tunnel and DB are unaffected. No .env or manual password
+is required for this rehearsal; it generates private disposable credentials.
+
+## Data-loss demo (disposable data only)
+
+The demo failure is: `demo-reset` uses Hibernate `ddl-auto=create`, so an
 app restart drops/recreates tables **in PostgreSQL**. Normal mode uses `update`.
 This is an explicit demo configuration; it does not randomly discard writes.
-Agree on this trigger with the AWS/AI testing owners before the shared rehearsal.
+AWS/AI testing integration should use this same restart trigger and profile switch.
 
 Use a separate Compose project/volume so normal demo data is unaffected:
 

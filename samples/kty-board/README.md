@@ -49,5 +49,5 @@ Form endpoints redirect; verify session and created rows, not merely the final H
 Normal mode uses PostgreSQL with `ddl-auto=update`; rows survive app restarts.
 Explicit `SPRING_PROFILES_ACTIVE=demo-reset` uses `ddl-auto=create` and recreates
 all tables on every app start. Use only a separate disposable demo DB. See the local
-README for reproduction and the fix. The exact shared AWS scenario still needs
-coordination; this provides a deterministic PostgreSQL-only option.
+README for reproduction and the fix. The local rehearsal uses this deterministic PostgreSQL-only scenario;
+run `npm run demo` in `infra/local` to verify normal → bug → fix automatically.
