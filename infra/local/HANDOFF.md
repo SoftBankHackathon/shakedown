@@ -37,6 +37,8 @@ Node.js 22+, Python 3, Docker Compose v2 및 이미지/Gradle 다운로드를 �
 
 ## 도경님: 엔진 연결
 
+로컬 연결은 `apps/engine/engine/deployments.py`에서 구현했다. 대시보드 live 모드 Action으로 빌드→POST→폴링→URL 표시가 가능하다. `deployed`는 시운전 미실행 상태이며 AWS/시운전은 별도 연결이 필요하다. 실행법은 `apps/engine/README.md` 참조.
+
 실행 상세는 [README](README.md#engine-integration), 요청 본문은
 [`deploy.example.json`](deploy.example.json)을 참고한다.
 

@@ -1,4 +1,4 @@
-﻿"""Python mirrors of the read-only team contracts."""
+"""Python mirrors of the read-only team contracts."""
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
@@ -59,7 +59,7 @@ class Project(Model):
 class CreateProjectRequest(Model):
     repo: StrictStr = Field(min_length=1, max_length=4096)
     name: StrictStr | None = Field(default=None, min_length=1, max_length=120)
-    targets: list[TargetName] = Field(default_factory=lambda: ['local', 'aws'], min_length=2)
+    targets: list[TargetName] = Field(default_factory=lambda: ['local', 'aws'], min_length=1)
 
 # Internal compatibility types for the imported analyzer, never exposed by API.
 class DatabaseConfig(Model):

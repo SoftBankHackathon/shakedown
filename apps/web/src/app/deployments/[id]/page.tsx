@@ -7,7 +7,7 @@ import { useT } from "@/components/i18n";
 import { AiTag, Badge, Chip, Mono, RuleTag, Section } from "@/components/ui";
 import { DeployReport } from "@/components/deploy-report";
 import { StepTable } from "@/components/step-table";
-import { api, DONE, formatSeconds, type Deployment, type Fix, type Report } from "@/lib/api";
+import { api, DONE, errorMessage, formatSeconds, type Deployment, type Fix, type Report } from "@/lib/api";
 import { orderTargets, targetLabel } from "@/lib/targets";
 
 const STAGES = ["building", "deploying", "shakedown", "analyzing", "fixing"] as const;
@@ -16,6 +16,7 @@ export default function DeploymentPage() {
   const { id } = useParams<{ id: string }>();
   const search = useSearchParams();
   const t = useT();
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [dep, setDep] = useState<Deployment | null>(null);
   const [logs, setLogs] = useState<{ source: string; line: string }[]>([]);
   const [message, setMessage] = useState("");
@@ -23,7 +24,7 @@ export default function DeploymentPage() {
   const refetch = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    api.deployment(id).then(setDep);
+    api.deployment(id).then(setDep).catch((e) => setLoadError(errorMessage(e)));
     // Build logs can arrive many lines per second: buffer them and repaint at most 5 times a second.
     let buffer: { source: string; line: string }[] = [];
     const flush = setInterval(() => {
@@ -39,15 +40,16 @@ export default function DeploymentPage() {
       }
       if (ev.kind === "stage") setMessage(String(ev.message ?? ""));
       if (refetch.current) clearTimeout(refetch.current);
-      refetch.current = setTimeout(() => api.deployment(id).then(setDep), 120);
+      refetch.current = setTimeout(() => api.deployment(id).then(setDep).catch((e) => setLoadError(errorMessage(e))), 120);
     });
     return () => {
       clearInterval(flush);
+      if (refetch.current) clearTimeout(refetch.current);
       unsubscribe();
     };
   }, [id]);
 
-  if (!dep) return <p className="text-muted">{t("loading")}</p>;
+  if (!dep) return <p className="text-muted">{loadError ?? t("loading")}</p>;
   const attempt = dep.attempts.find((a) => a.n === tab) ?? dep.attempts.at(-1);
   const previous = attempt && dep.attempts.find((a) => a.n === attempt.n - 1);
   const done = DONE.has(dep.status);
@@ -163,6 +165,7 @@ export default function DeploymentPage() {
 type T = ReturnType<typeof useT>;
 
 function statusLine(d: Deployment, t: T) {
+  if (d.status === "deployed") return t("dep.deployed");
   if (d.status === "promoted") return t("dep.promoted");
   if (d.status === "blocked") return t("dep.blocked");
   return t("dep.failed");

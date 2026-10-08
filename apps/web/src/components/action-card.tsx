@@ -85,7 +85,7 @@ export const ActionCard = memo(function ActionCard({ deployment: d, projectName 
   const fixed = d.attempts.find((a) => a.applied_fix)?.applied_fix;
 
   const buildState: State = built ? "passed" : d.status === "building" ? "running" : d.status === "failed" ? "failed" : "pending";
-  const verdictState: State = done ? (d.status === "promoted" ? "passed" : "failed")
+  const verdictState: State = d.status === "deployed" ? "pending" : done ? (d.status === "promoted" ? "passed" : "failed")
     : ["analyzing", "fixing"].includes(d.status) ? "running" : "pending";
 
   return (
@@ -131,7 +131,7 @@ export const ActionCard = memo(function ActionCard({ deployment: d, projectName 
           <Stage name={t("stage.shakedown")}>
             {names.map((name) => {
               const r = targetShakedown(d, name, baseline);
-              const sub = r.total ? t("pipe.steps", { passed: r.passed, total: r.total }) : undefined;
+              const sub = !d.shakedown ? t("dep.notRun") : r.total ? t("pipe.steps", { passed: r.passed, total: r.total }) : undefined;
               return <Box key={name} title={targetLabel(name)} state={r.state} sub={sub} />;
             })}
           </Stage>

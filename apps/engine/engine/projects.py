@@ -61,7 +61,7 @@ class ProjectStore:
 
     def create(self, request: CreateProjectRequest) -> Project:
         if len(request.targets) != len(set(request.targets)):
-            raise AnalysisError('Targets must be unique and contain at least two distinct names.')
+            raise AnalysisError('Targets must be unique and contain at least one target.')
         if request.name is not None and not request.name.strip():
             raise AnalysisError('Project name must not be blank.')
         repo = normalize_repo(request.repo)

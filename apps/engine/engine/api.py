@@ -1,23 +1,31 @@
-"""Dashboard-facing API. Actual deployments and shakedown are team-owned."""
+"""Dashboard-facing project and local deployment API."""
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+import asyncio
+import json
+import time
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from engine.deployments import DeploymentStore, DeployRequest, DeploymentError, Busy, TERMINAL
 from engine.analyzer import AnalysisError
 from engine.models import CreateProjectRequest, Project
 from engine.projects import DATA_DIR, ProjectStore
 
 
-def create_app(store: ProjectStore | None = None) -> FastAPI:
+def create_app(store: ProjectStore | None = None, deployments_store: DeploymentStore | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(api: FastAPI):
         if api.state.store is None:
             api.state.store = ProjectStore(DATA_DIR / 'projects.sqlite3')
+        if api.state.deployments is None:
+            api.state.deployments = DeploymentStore(api.state.store.path.parent / "deployments.sqlite3")
         yield
+        api.state.deployments.close()
 
     api = FastAPI(title='Shakedown Engine', version='0.1.0', lifespan=lifespan)
     api.state.store = store
+    api.state.deployments = deployments_store
     api.add_middleware(CORSMiddleware,
                        allow_origins=['http://localhost:3700', 'http://127.0.0.1:3700'],
                        allow_methods=['GET', 'POST', 'OPTIONS'], allow_headers=['Content-Type'])
@@ -49,18 +57,61 @@ def create_app(store: ProjectStore | None = None) -> FastAPI:
         found = api.state.store.get(project_id)
         if found is None:
             raise HTTPException(status_code=404, detail='Project not found.')
+        history = api.state.deployments.list(project_id)
+        found.last_deployment = history[0] if history else None
         return found
 
-    # The live dashboard loads this list immediately after importing a repo.
+    @api.middleware('http')
+    async def local_access(request: Request, call_next):
+        if request.url.hostname not in {'localhost', '127.0.0.1', 'testserver'}:
+            return JSONResponse(status_code=403, content={'detail': 'Loopback host required.'})
+        origin = request.headers.get('origin')
+        if origin and origin not in {'http://localhost:3700', 'http://127.0.0.1:3700'}:
+            return JSONResponse(status_code=403, content={'detail': 'Origin not allowed.'})
+        return await call_next(request)
+
     @api.get('/api/deployments')
     def deployments(project_id: str | None = None):
-        return []
+        return api.state.deployments.list(project_id)
 
-    @api.post('/api/projects/{project_id}/deployments')
-    def deploy(project_id: str):
-        if api.state.store.get(project_id) is None:
+    @api.post('/api/projects/{project_id}/deployments', status_code=202)
+    def deploy(project_id: str, body: DeployRequest):
+        project = api.state.store.get(project_id)
+        if project is None:
             raise HTTPException(status_code=404, detail='Project not found.')
-        raise HTTPException(status_code=501, detail='Deployment orchestration is not connected. No build, deploy, shakedown or autofix was performed.')
+        try:
+            return api.state.deployments.start(project, body)
+        except Busy as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except DeploymentError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @api.get('/api/deployments/{deployment_id}')
+    def deployment(deployment_id: str):
+        found = api.state.deployments.get(deployment_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail='Deployment not found.')
+        return found
+
+    @api.get('/api/deployments/{deployment_id}/events')
+    def events(deployment_id: str):
+        deployment(deployment_id)
+        async def stream():
+            previous = None
+            while True:
+                d = api.state.deployments.get(deployment_id)
+                status = d['status']
+                if status != previous:
+                    event = dict(ts=time.time(), kind='stage', status=status, message=status)
+                    yield 'data: ' + json.dumps(event) + '\n\n'
+                    yield 'data: ' + json.dumps(dict(ts=time.time(), kind='log', source='engine', line=status)) + '\n\n'
+                    previous = status
+                if status in TERMINAL:
+                    yield 'data: ' + json.dumps(dict(ts=time.time(), kind='done', status=status)) + '\n\n'
+                    return
+                yield ': keepalive\n\n'
+                await asyncio.sleep(1)
+        return StreamingResponse(stream(), media_type='text/event-stream', headers={'Cache-Control':'no-cache', 'X-Accel-Buffering':'no'})
 
     return api
 

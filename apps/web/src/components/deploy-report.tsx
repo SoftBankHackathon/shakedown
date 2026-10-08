@@ -36,6 +36,8 @@ export function DeployReport({ dep }: { dep: Deployment }) {
     );
   }
 
+  if (dep.status === "deployed") return <Section title={t("report.deployTitle")}><p>{t("dep.deployed")}</p></Section>;
+
   const names = orderTargets(Object.keys(dep.targets));
   const baseline = dep.attempts.at(-1)?.steps?.[0]?.baseline ?? names[0];
   const last = dep.attempts.length - 1;

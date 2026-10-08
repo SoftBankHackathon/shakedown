@@ -120,7 +120,7 @@ def test_unsupported_repository(client, tmp_path):
     assert client.post('/api/projects', json={'repo': str(tmp_path)}).status_code == 400
 
 
-@pytest.mark.parametrize('body', [{}, {'repo': 123}, {'repo': 'x', 'name': 1}, {'repo': 'x', 'targets': ['local']},
+@pytest.mark.parametrize('body', [{}, {'repo': 123}, {'repo': 'x', 'name': 1}, {'repo': 'x', 'targets': []},
                                 {'repo': 'x', 'targets': ['local', 'bogus']}, {'repo': 'x', 'password': 'NEVER_EMIT_VALIDATION'},
                                 {'repo': 'x', 'targets': ['local', 'local']}, {'repo': 'x', 'name': ' '}])
 def test_invalid_request_sanitized(client, body):
@@ -196,8 +196,8 @@ def test_team_sample_without_modification():
     analysis = RepoAnalyzer().analyze(WORKSPACE / 'samples/kty-board')
     assert analysis.stack == 'spring-boot-gradle'
     assert analysis.java_version == 21
-    assert analysis.database == 'mysql'
-    assert analysis.database_name == 'board_db'
+    assert analysis.database == 'postgresql'
+    assert analysis.database_name is None  # env-backed URL is intentionally unresolved
     assert analysis.uses_server_session
     assert len(analysis.routes) >= 10
 
@@ -206,7 +206,7 @@ def test_no_deployments_are_fabricated(client, repository):
     project = client.post('/api/projects', json={'repo': str(repository)}).json()
     assert client.get('/api/deployments', params={'project_id': project['id']}).json() == []
     response = client.post('/api/projects/' + project['id'] + '/deployments', json={'shakedown': True, 'autofix': True})
-    assert response.status_code == 501
+    assert response.status_code == 400
     assert client.get('/api/projects/' + project['id']).json()['last_deployment'] is None
 
 

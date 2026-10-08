@@ -20,7 +20,7 @@ export { ApiError };
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(API + path, {
     ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+    headers: { ...(init?.body ? { "content-type": "application/json" } : {}), ...(init?.headers ?? {}) },
     cache: "no-store",
   });
   if (!r.ok) {

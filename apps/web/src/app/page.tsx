@@ -16,7 +16,7 @@ const progressKey = (d: Deployment) =>
 export default function Home() {
   const t = useT();
   const [repo, setRepo] = useState("");
-  const [targets, setTargets] = useState<TargetName[]>(DEFAULT_TARGETS);
+  const [targets, setTargets] = useState<TargetName[]>(MOCK ? DEFAULT_TARGETS : ["local"]);
   const [actions, setActions] = useState<ActionRow[]>([]);
   const [pending, setPending] = useState(0);
   const [flash, setFlash] = useState(false);
@@ -62,8 +62,8 @@ export default function Home() {
   // One Action: register (or reuse) the repo and start the deployment in a single click.
   async function runAction(e: React.FormEvent) {
     e.preventDefault();
-    if (targets.length < 2) {
-      setError(t("home.needTwo"));
+    if (targets.length < (MOCK ? 2 : 1)) {
+      setError(t(MOCK ? "home.needTwo" : "live.needLocal"));
       return;
     }
     setError(null);
@@ -74,7 +74,7 @@ export default function Home() {
     try {
       const project = await api.createProject({ repo: repo.trim(), targets });
       name = project.name;
-      const deployment = await api.deploy(project.id, { shakedown: true, autofix: true, options: {} });
+      const deployment = await api.deploy(project.id, { shakedown: MOCK, autofix: MOCK, options: {}, targets: MOCK ? targets : ["local"] });
       setActions((cur) => [{ deployment, projectName: project.name }, ...cur]);
     } catch (err) {
       // The engine owns the "one running deployment per project" rule and answers 409.
@@ -89,9 +89,9 @@ export default function Home() {
       <section className="pt-4">
         <p className="text-xs font-semibold uppercase tracking-widest text-ai">{t("home.eyebrow")}</p>
         <h1 className="mt-2 text-4xl font-bold tracking-tight">{t("home.title")}</h1>
-        <p className="mt-4 text-base text-muted max-w-3xl leading-relaxed">{t("home.lead")}</p>
+        <p className="mt-4 text-base text-muted max-w-3xl leading-relaxed">{t(MOCK ? "home.lead" : "live.lead")}</p>
         {MOCK && <p className="mt-3 text-xs text-warn">● {t("mock")}</p>}
-        <ol className="mt-8 grid gap-3 sm:grid-cols-4">
+        {MOCK && <ol className="mt-8 grid gap-3 sm:grid-cols-4">
           {([1, 2, 3, 4] as const).map((n) => (
             <li key={n} className="card p-4 relative">
               <span className={`flex size-7 items-center justify-center rounded-full text-sm font-bold ${
@@ -105,7 +105,7 @@ export default function Home() {
               )}
             </li>
           ))}
-        </ol>
+        </ol>}
       </section>
 
       <form onSubmit={runAction} className="card p-5 space-y-4">
@@ -138,7 +138,7 @@ export default function Home() {
                 <button
                   key={tg.id}
                   type="button"
-                  disabled={!tg.available}
+                  disabled={!tg.available || (!MOCK && tg.id !== "local")}
                   aria-pressed={on}
                   onClick={() =>
                     setTargets((cur) =>
@@ -157,7 +157,7 @@ export default function Home() {
               );
             })}
           </div>
-          <p className="mt-2 text-xs text-muted">{t("home.targetsHint")}</p>
+          <p className="mt-2 text-xs text-muted">{MOCK ? t("home.targetsHint") : t("live.scope")}</p>
         </fieldset>
       </form>
       {error && <p className="text-sm text-bad">{error}</p>}

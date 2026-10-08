@@ -35,7 +35,7 @@ export type Deployment = {
   project_id: string;
   created: number;
   finished?: number;
-  status: "queued" | "building" | "deploying" | "shakedown" | "analyzing" | "fixing" | "promoted" | "blocked" | "failed";
+  status: "queued" | "building" | "deploying" | "shakedown" | "analyzing" | "fixing" | "deployed" | "promoted" | "blocked" | "failed";
   shakedown: boolean;
   autofix: boolean;
   options: Record<string, TargetOptions>;
@@ -138,13 +138,14 @@ export type Attempt = {
 export type DeployEvent = { ts: number; kind: string; [k: string]: unknown };
 
 /** Statuses after which a deployment never changes again. */
-export const TERMINAL_STATUSES: ReadonlySet<Deployment["status"]> = new Set(["promoted", "blocked", "failed"]);
+export const TERMINAL_STATUSES: ReadonlySet<Deployment["status"]> = new Set(["deployed", "promoted", "blocked", "failed"]);
 
 /** Body of POST /api/projects (engine.yaml). */
 export type CreateProjectRequest = { repo: string; name?: string; targets: TargetName[] };
 
 /** Body of POST /api/projects/{id}/deployments — the Action button (engine.yaml). */
 export type DeployRequest = {
+  targets?: TargetName[];
   shakedown: boolean;
   autofix: boolean;
   options: Partial<Record<TargetName, Partial<TargetOptions>>>;
