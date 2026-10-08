@@ -1,5 +1,7 @@
 # KTY Board — Shakedown sample (김태윤)
 
+팀 연동은 [김태윤 담당 인수인계](../../infra/local/HANDOFF.md)를 참고하세요.
+
 Java 21 / Spring Boot 4 / Thymeleaf / JPA / **PostgreSQL 17**.
 Existing member, post and comment features are retained.
 

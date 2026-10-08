@@ -1,5 +1,7 @@
 # Local deployment — 김태윤
 
+팀원용 [담당 범위·연동 인수인계](HANDOFF.md): 완료 항목, 호출 예제, 검증 결과와 남은 통합 작업.
+
 PostgreSQL 17 + sample app + Cloudflare Quick Tunnel. Requires Docker Compose v2,
 Node.js 22+ and outbound HTTPS. Java is built inside Docker; host Java is optional.
 
