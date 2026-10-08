@@ -1,0 +1,42 @@
+# packages/contracts
+
+팀 공통 API 명세와 데이터 형식
+
+영역끼리는 아래 OpenAPI 명세대로 통신합니다. 10/9 연결 전에 각자 이 명세대로 만들어 두면 그대로 붙습니다.
+
+```
+대시보드(web) ──engine.yaml──▶ 엔진(engine) ──target.yaml──▶ 인프라(local, aws)
+                                     └──────shakedown.yaml──▶ 시운전(shakedown)
+```
+
+| 명세 | 구현 | 호출 | 핵심 |
+|---|---|---|---|
+| `openapi/target.yaml` | infra/local, infra/aws | engine | 배포 요청 → 상태 폴링 → `ready`면 공개 `url` |
+| `openapi/shakedown.yaml` | apps/shakedown | engine | 대상 URL들 → 단계별 비교, 판정, 원인 보고서 |
+| `openapi/engine.yaml` | apps/engine | apps/web | 프로젝트, Deploy, 배포 상태, 실시간 이벤트(SSE) |
+
+- TypeScript 타입: `src/index.ts`
+- 실제 예시 데이터: `fixtures/`
+- 필드 이름은 snake_case로 통일
+- 형식을 바꿀 때는 팀 채널에 먼저 공유하고, 명세와 fixture를 같이 고칩니다.
+- 명세 검사: `npx @redocly/cli@1.34.5 lint packages/contracts/openapi/*.yaml`
+
+## 상태: 초안
+
+세 명세 모두 **v0.1.0 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
+
+바뀔 가능성이 있는 것
+- 상태 확인 방식: 지금은 GET 폴링(2~3초 간격). 콜백(`callback_url`) 방식이 추가될 수 있음
+- 보고서 언어: 시운전 요청에 `lang`(ko, en, ja) 추가 검토 중
+- 같은 프로젝트 동시 배포: 지금은 409로 거절. 필요하면 대기열 방식으로 바뀔 수 있음
+- 대상 이름: 지금은 `local`, `aws` 구현. `onprem`, `gcp`, `azure`는 예정
+- 비교 대상이 3개 이상일 때의 결과 형식: `StepDiff`에 `baseline`, `candidate`를 넣어 두었고 세부는 미정
+
+바꿀 때
+1. 팀 채널에 먼저 공유
+2. 명세(`openapi/*.yaml`), 타입(`src/index.ts`), 예시(`fixtures/`)를 함께 수정
+3. 각 명세의 `info.version`을 올리고 아래 변경 이력에 한 줄 추가
+
+## 변경 이력
+
+- **v0.1.0 (2026-10-08)**: 첫 초안. 엔진·인프라·시운전 API, 대상 선택(`targets`), 같은 프로젝트 동시 배포 409, 시운전 결과에 대상 이름(`baseline`, `candidate`)

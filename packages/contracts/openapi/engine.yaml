@@ -1,0 +1,229 @@
+openapi: 3.1.0
+info:
+  title: Shakedown Engine API
+  version: 0.1.0
+  description: |
+    > **상태: 초안 (v0.1.0, 2026-10-08)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
+
+    엔진(apps/engine, 김도경)이 구현하고 대시보드(apps/web, 서동옥)가 호출하는 API.
+
+    - 응답 형식은 `packages/contracts/src/index.ts`의 `Project`, `Deployment`와 같음
+    - 실제 예시: `packages/contracts/fixtures/project.json`, `deployment-blocked-then-fixed.json`
+    - 대시보드는 엔진 없이도 fixture로 동작함(mock 모드). 엔진이 이 명세대로 응답하면 그대로 연결됨
+    - 엔진은 내부적으로 Target API(target.yaml)와 Shakedown API(shakedown.yaml)를 호출해 결과를 합침
+
+    상태 확인 방식 (초안)
+    - 상세 화면은 `events`(SSE)로 실시간 수신, 첫 화면 카드는 `GET /api/deployments/{id}`를 1초 간격으로 조회
+    - 첫 화면도 나중에 SSE로 바뀔 수 있음
+# 해커톤 내부 통신용이라 인증 없음. 공개 배포 시 토큰 인증 추가.
+security: []
+servers:
+  - url: http://localhost:8700
+    description: apps/engine (대시보드의 dev:web:live가 연결하는 주소)
+paths:
+  /api/health:
+    get:
+      operationId: health
+      summary: 엔진 상태
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+  /api/projects:
+    get:
+      operationId: listProjects
+      summary: 프로젝트 목록 (각 프로젝트의 최근 배포 포함)
+      responses:
+        "200":
+          description: 목록
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Project" }
+    post:
+      summary: 레포 등록 + 분석
+      operationId: createProject
+      description: 레포를 받아 설정(포트, DB, 환경변수)을 자동으로 채우고 근거 파일을 함께 돌려줌
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repo]
+              properties:
+                repo: { type: string, description: "GitHub URL 또는 로컬 경로. 이미 등록된 레포면 기존 프로젝트를 돌려줌" }
+                name: { type: string }
+                targets:
+                  type: array
+                  minItems: 2
+                  description: 배포 대상. 첫 번째가 기준(baseline)이고 나머지를 기준과 비교. 기본값 [local, aws]
+                  items: { $ref: "./target.yaml#/components/schemas/TargetName" }
+                  default: [local, aws]
+      responses:
+        "200":
+          description: 분석된 프로젝트
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "400":
+          description: 지원하지 않는 레포 또는 잘못된 주소
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/projects/{project_id}:
+    get:
+      operationId: getProject
+      summary: 프로젝트 상세
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 프로젝트
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "404":
+          description: 없음
+  /api/projects/{project_id}/deployments:
+    post:
+      operationId: deploy
+      summary: Action 버튼 (One Action)
+      description: 누르는 즉시 접수하고 배포는 뒤에서 진행 (응답을 기다리지 않음). 진행 상황은 events(SSE)로 확인.
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                shakedown: { type: boolean, default: true }
+                autofix: { type: boolean, default: true }
+                options:
+                  type: object
+                  description: "대상 이름 → TargetOptions (target.yaml 참고)"
+                  additionalProperties: true
+      responses:
+        "202":
+          description: 접수된 배포
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "409":
+          description: 같은 프로젝트의 배포가 이미 진행 중
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: 없는 프로젝트
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/deployments:
+    get:
+      operationId: listDeployments
+      summary: 배포 목록
+      parameters:
+        - { name: project_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: 최신순 목록
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Deployment" }
+  /api/deployments/{deployment_id}:
+    get:
+      operationId: getDeployment
+      summary: 배포 전체 상태 (대상별 상태, 시운전 결과, 원인 보고서, AI 비용)
+      parameters:
+        - { name: deployment_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 배포
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+  /api/deployments/{deployment_id}/events:
+    get:
+      operationId: streamEvents
+      summary: 실시간 진행 (Server-Sent Events)
+      description: |
+        `data:` 줄마다 JSON 이벤트 하나. `kind` 종류:
+        - `stage` {status, message}: 단계 변경
+        - `log` {source, line}: 로그 한 줄
+        - `target` {target, status, url?}: 대상 상태 변경
+        - `step` {attempt, index, status}: 시운전 단계 진행
+        - `verdict` {attempt, status, summary}, `report` {attempt, headline}, `fix` {target, option, value}
+        - `done` {status}: 끝 (promoted | blocked | failed)
+        대시보드는 `log` 외 이벤트를 받으면 GET /api/deployments/{id}로 전체 상태를 다시 읽음.
+      parameters:
+        - { name: deployment_id, in: path, required: true, schema: { type: string } }
+        - { name: after, in: query, description: 이 번호 이후 이벤트부터 재전송, schema: { type: integer } }
+      responses:
+        "200":
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+components:
+  schemas:
+    Project:
+      type: object
+      description: "전체 필드는 packages/contracts/src/index.ts의 Project"
+      required: [id, name, repo, analysis]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        repo: { type: string }
+        targets:
+          type: array
+          description: 등록 시 고른 배포 대상 (첫 번째가 기준)
+          items: { type: string }
+        ports:
+          type: object
+          description: "대상 이름 → 포트 (로컬 대상만)"
+          additionalProperties: { type: integer }
+        analysis: { type: object, additionalProperties: true }
+        secrets:
+          type: array
+          description: 비밀값은 이름만, 값은 항상 가려서 보냄
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              value: { type: string, example: "••••••••" }
+        last_deployment: { oneOf: [{ $ref: "#/components/schemas/Deployment" }, { type: "null" }] }
+    Deployment:
+      type: object
+      description: "전체 필드는 packages/contracts/src/index.ts의 Deployment"
+      required: [id, project_id, status, targets, attempts]
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        status:
+          type: string
+          enum: [queued, building, deploying, shakedown, analyzing, fixing, promoted, blocked, failed]
+        targets:
+          type: object
+          description: "대상 이름(local, aws 등) → 상태 (target.yaml의 TargetDeployment에서 status, url, instances, info, commands, error)"
+          additionalProperties: true
+        attempts:
+          type: array
+          description: "시운전 회차. 각 회차의 steps/verdict/report는 shakedown.yaml의 Shakedown과 같은 형식"
+          items: { type: object, additionalProperties: true }
+        timings: { type: object, additionalProperties: { type: number } }
+        ai_cost: { type: object, additionalProperties: true }
+    Error:
+      type: object
+      properties:
+        detail: { type: string }

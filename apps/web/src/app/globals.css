@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* Light palette by default, dark when the OS asks for it. */
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --line: #e3e6ea;
+  --text: #15181d;
+  --muted: #697282;
+  --ok: #16a34a;
+  --bad: #dc2626;
+  --warn: #d97706;
+  --ai: #eab308;
+  --accent: #2563eb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1116;
+    --panel: #151a21;
+    --line: #262d37;
+    --text: #e6e9ee;
+    --muted: #8b95a5;
+    --ok: #22c55e;
+    --bad: #f87171;
+    --warn: #fbbf24;
+    --ai: #facc15;
+    --accent: #60a5fa;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-line: var(--line);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-ok: var(--ok);
+  --color-bad: var(--bad);
+  --color-warn: var(--warn);
+  --color-ai: var(--ai);
+  --color-accent: var(--accent);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}

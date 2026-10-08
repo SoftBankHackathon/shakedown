@@ -1,0 +1,11 @@
+{
+  "name": "shakedown",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:web": "npm run dev -w @shakedown/web",
+    "dev:web:live": "npm run dev:live -w @shakedown/web",
+    "build:web": "npm run build -w @shakedown/web",
+    "lint:web": "npm run lint -w @shakedown/web"
+  }
+}
