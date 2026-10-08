@@ -25,7 +25,9 @@ repositories {
 }
 
 dependencies {
-    runtimeOnly 'com.mysql:mysql-connector-j'
+    // Direct module: only session-jdbc profile enables the session filter.
+    implementation 'org.springframework.session:spring-session-jdbc'
+    runtimeOnly 'org.postgresql:postgresql'
     implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
 	implementation 'org.springframework.boot:spring-boot-h2console'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
@@ -43,3 +45,5 @@ dependencies {
 tasks.named('test') {
 	useJUnitPlatform()
 }
+
+tasks.named('bootJar') { archiveFileName = 'board.jar' }

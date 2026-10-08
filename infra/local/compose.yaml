@@ -1,0 +1,36 @@
+# Standalone development. Engine-driven deployments use generated Compose files.
+name: shakedown-local
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: board_db
+      POSTGRES_USER: board
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?Set LOCAL_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U board -d board_db']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  app:
+    image: shakedown/kty-board:local
+    build: ../../samples/kty-board
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/board_db
+      SPRING_DATASOURCE_USERNAME: board
+      SPRING_DATASOURCE_PASSWORD: ${LOCAL_DB_PASSWORD:?Set LOCAL_DB_PASSWORD}
+      SPRING_PROFILES_ACTIVE: ${BOARD_PROFILE:-default}
+    ports:
+      - '127.0.0.1:${BOARD_PORT:-18080}:8080'
+    depends_on:
+      db:
+        condition: service_healthy
+  tunnel:
+    image: cloudflare/cloudflared@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07
+    command: [tunnel, --no-autoupdate, --protocol, http2, --url, 'http://app:8080']
+    profiles: [public]
+    depends_on: [app]
+volumes:
+  pgdata:

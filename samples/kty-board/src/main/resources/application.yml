@@ -1,15 +1,19 @@
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      cookie:
+        name: SESSION
+        http-only: true
+        same-site: lax
 spring:
+  profiles:
+    default: session-memory
   datasource:
-    url: jdbc:mysql://localhost:3306/board_db?serverTimezone=Asia/Seoul&characterEncoding=UTF-8
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    username: root
-    password: "0371"
-
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/board_db}
+    username: ${SPRING_DATASOURCE_USERNAME:board}
+    password: ${SPRING_DATASOURCE_PASSWORD}
   jpa:
     hibernate:
-      ddl-auto: update
-    show-sql: true
-    properties:
-      hibernate:
-        format_sql: true
-        dialect: org.hibernate.dialect.MySQLDialect
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}

@@ -1,0 +1,10 @@
+{
+  "deployment_id": "dep_example",
+  "target": "aws",
+  "status": "ready",
+  "url": "http://example.ap-northeast-2.elb.amazonaws.com",
+  "instances": 2,
+  "started_at": "2026-10-08T08:00:00.000Z",
+  "ready_at": "2026-10-08T08:02:00.000Z",
+  "info": { "runtime": "ECS Fargate", "database": "RDS PostgreSQL 17", "session": "jdbc", "timezone": "UTC", "sticky_sessions": "false", "transport": "HTTP (demo)" }
+}
