@@ -2,13 +2,14 @@
 // POST로 받으면 202를 바로 돌려주고 뒤에서 실행한다. 엔진은 GET으로 진행 상황과 결과를 폴링한다.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
-import type { CostLedger, Scenario, StepDiff } from "@shakedown/contracts";
+import type { CostLedger, Report, Scenario, StepDiff } from "@shakedown/contracts";
 import { runShakedown, type ShakedownInput, type Target } from "./shakedown.ts";
 import { defaultScenario } from "./scenario.ts";
 import type { Verdict } from "./verdict.ts";
 import { waitUntilReachable } from "./preflight.ts";
+import { ruleReport } from "./report.ts";
 
-/** GET /shakedowns/{id} 응답. 실행 중에는 verdict가 없다. report는 다음 PR에서 더한다. */
+/** GET /shakedowns/{id} 응답. 실행 중에는 verdict와 report가 없다. */
 export type Shakedown = {
   shakedown_id: string;
   status: "running" | "done" | "failed";
@@ -16,6 +17,8 @@ export type Shakedown = {
   scenario_source: "saved" | "fallback";
   steps: StepDiff[];
   verdict?: Verdict;
+  /** BLOCKED일 때만 채운다. PASS/WARN이면 null. */
+  report?: Report | null;
   ai_cost: CostLedger;
   error?: string;
 };
@@ -87,9 +90,10 @@ async function run(record: Shakedown, job: Job, settings: Settings): Promise<voi
     timer = setTimeout(() => reject(new Error(`timed out after ${deadlineMs / 1000}s`)), deadlineMs);
   });
   try {
-    const result = await Promise.race([execute(record, job, settings), deadline]);
+    const { result, report } = await Promise.race([execute(record, job, settings), deadline]);
     record.steps = result.steps;
     record.verdict = result.verdict;
+    record.report = report;
     record.status = "done";
   } catch (err) {
     record.error = err instanceof Error ? err.message : String(err);
@@ -100,7 +104,7 @@ async function run(record: Shakedown, job: Job, settings: Settings): Promise<voi
 }
 
 /**
- * 접속 확인 → 시운전. 기준 환경이 닿지 않거나 시나리오를 통과하지 못하면 비교할 수 없으니 오류로 끝낸다.
+ * 접속 확인 → 시운전 → 원인 보고서. 기준 환경이 닿지 않거나 시나리오를 통과하지 못하면 비교할 수 없으니 오류로 끝낸다.
  */
 async function execute(record: Shakedown, job: Job, { reachWaitMs }: Settings) {
   const [baselineUp] = await Promise.all([
@@ -121,7 +125,8 @@ async function execute(record: Shakedown, job: Job, { reachWaitMs }: Settings) {
     if (record.status === "running") record.steps = result.steps;
     throw new Error(`baseline ${job.baseline.name} failed at step ${broken.index} (${broken.title}): ${broken.local.error ?? "no error message"}`);
   }
-  return result;
+  const report = result.verdict.status === "BLOCKED" ? ruleReport(result.steps, result.verdict) : null;
+  return { result, report };
 }
 
 export function createShakedownServer(options: { deadlineMs?: number; reachWaitMs?: number } = {}) {
