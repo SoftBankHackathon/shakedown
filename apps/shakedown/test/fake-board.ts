@@ -1,13 +1,14 @@
 // 테스트용 가짜 kty-board. 실제 앱과 같은 경로·폼·리다이렉트를 흉내 낸다.
 // instances: 2로 띄우면 요청을 서버 2대에 번갈아 보내고 세션은 서버마다 따로 둔다
 // → AWS에서 로그인이 풀리는 데모 상황을 그대로 재현한다.
+// delayMs를 주면 모든 응답을 그만큼 늦춘다 → 진행 중 상태를 관찰할 수 있다.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
 type Member = { email: string; nickname: string; password: string };
 type Post = { id: number; title: string; content: string; comments: string[] };
 
-export async function startFakeBoard(options: { instances?: number } = {}) {
+export async function startFakeBoard(options: { instances?: number; delayMs?: number } = {}) {
   const instances = options.instances ?? 1;
   const members = new Map<string, Member>();
   const posts: Post[] = [];
@@ -35,6 +36,7 @@ export async function startFakeBoard(options: { instances?: number } = {}) {
   }
 
   const server = createServer(async (req, res) => {
+    if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs));
     const store = sessions[turn++ % instances];
     const sid = /JSESSIONID=([^;]+)/.exec(req.headers.cookie ?? "")?.[1];
     const user = sid ? store.get(sid) : undefined;

@@ -2,6 +2,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { StepResult } from "@shakedown/contracts";
 import { createSession } from "../src/http.ts";
 import { runScenario, runStep } from "../src/steps.ts";
 import { defaultScenario } from "../src/scenario.ts";
@@ -79,4 +80,12 @@ test("link_text나 path가 비어 있으면 아무 링크나 누르지 않고 �
   assert.equal(click.error, "request failed: click_link step has no link_text");
   const visit = await runStep(session, { title: "Visit", action: "visit", path: null, fields: [], expect: { text_contains: [] } }, 2);
   assert.equal(visit.error, "request failed: visit step has no path");
+});
+
+test("onResult는 skipped를 포함해 단계 결과가 나올 때마다 순서대로 불린다", async () => {
+  const { url } = await board(2);
+  const seen: StepResult[] = [];
+  const results = await runScenario(createSession(url), steps("ggg777"), (r) => seen.push(r));
+  assert.equal(seen.length, 8);
+  assert.deepEqual(seen, results);
 });
