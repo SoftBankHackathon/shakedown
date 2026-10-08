@@ -1,4 +1,5 @@
-FROM eclipse-temurin:21-jdk AS build
+# Java bytecode is portable; compile natively even for an AMD64 runtime image.
+FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jdk AS build
 WORKDIR /src
 COPY gradlew build.gradle settings.gradle ./
 COPY gradle ./gradle
