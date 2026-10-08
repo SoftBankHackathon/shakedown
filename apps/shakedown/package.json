@@ -8,7 +8,7 @@
   },
   "scripts": {
     "test": "node --test \"test/*.test.ts\"",
-    "start": "node src/main.ts",
+    "start": "node --env-file-if-exists=.env src/main.ts",
     "shakedown": "node src/cli.ts"
   },
   "dependencies": {

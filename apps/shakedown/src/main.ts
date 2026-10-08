@@ -1,4 +1,4 @@
-// 시운전 API 서버를 띄운다. 사용: node src/main.ts
+// 시운전 API 서버를 띄운다. 사용: node --env-file-if-exists=.env src/main.ts
 // PORT(기본 9201), HOST(기본 127.0.0.1). 엔진이 다른 PC에서 부르면 HOST=0.0.0.0으로 띄운다.
 import type { AddressInfo } from "node:net";
 import { createShakedownServer } from "./server.ts";

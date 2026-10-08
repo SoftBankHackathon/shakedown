@@ -3,7 +3,7 @@
 AI 시운전. 배포된 두 환경(기준 baseline, 비교 candidate)에서 같은 사용자 흐름을 HTTP로 실행하고, 단계별로 비교해 판정합니다.
 
 - 방식: HTTP 요청으로 회원가입 → 로그인 → 글쓰기 → 글 열기 → 댓글. 쿠키는 환경마다 따로, 리다이렉트는 직접 따라가며 기록
-- 판정: 규칙이 정함 (PASS / WARN / BLOCKED). 원인 보고서는 규칙으로 먼저 만들고, AI는 그 설명만 다듬음(예정)
+- 판정: 규칙이 정함 (PASS / WARN / BLOCKED). 원인 보고서는 규칙으로 먼저 만들고, AI(Claude)가 켜져 있으면 AI가 다시 씀
 - 출력 형식: `packages/contracts`의 `Scenario`, `StepDiff`, `Verdict`, `Report`
 - 화면 검사(Playwright)는 여유가 있을 때 추가
 
@@ -64,6 +64,25 @@ HOST=0.0.0.0 PORT=9201 npm start -w @shakedown/shakedown   # 엔진이 다른 PC
 
 - `auto_applicable`은 모두 false입니다. 아직 어느 대상도 이 설정을 자동으로 적용하지 못하기 때문입니다
 - `hop.instance`(응답한 서버 이름)는 인프라가 헤더를 주지 않아 항상 null이고, 보고서는 이 값에 기대지 않습니다
+
+### AI 보고서 (Claude)
+
+`ANTHROPIC_API_KEY`가 있으면 BLOCKED 보고서를 Claude(`claude-opus-5-5`)가 다시 씁니다. 규칙 보고서를 힌트로 함께 보냅니다.
+
+```bash
+cp apps/shakedown/.env.example apps/shakedown/.env   # 키를 직접 채운다. .env는 커밋되지 않음
+npm start -w @shakedown/shakedown                     # .env를 자동으로 읽음
+```
+
+| 환경변수 | 뜻 |
+|---|---|
+| `ANTHROPIC_API_KEY` | 있으면 AI 보고서 켬. 없으면 규칙 보고서만 |
+| `SHAKEDOWN_AI_REPORT=off` | 키가 있어도 AI 보고서를 끔 |
+
+- 구조화 출력(JSON 스키마)으로 받고 다시 검사합니다. 형식이 틀리거나, 거절되거나, 20초 안에 답이 없으면 규칙 보고서를 그대로 씁니다(재시도 없음)
+- 거절 시 다른 모델이 대신 답하는 서버 측 fallbacks를 켜 두었습니다
+- AI가 낸 수정안도 `auto_applicable: false`입니다. 사람이 확인한 뒤 적용합니다
+- 비용은 `ai_cost`(호출 수, 토큰, 원화)에 기록합니다. 실측: 보고서 1건 약 7초, 입력 1,889·출력 435 토큰, 약 23원
 
 ## 테스트
 

@@ -22,9 +22,9 @@ async function listen(server: Server): Promise<string> {
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
-// 접속 확인 대기는 테스트에서 짧게 둔다(기본 20초).
+// 접속 확인 대기는 테스트에서 짧게 둔다(기본 20초). AI는 기본으로 끈다 → 테스트가 진짜 API 키를 쓰지 않는다.
 const api = (options: Parameters<typeof createShakedownServer>[0] = {}) =>
-  listen(createShakedownServer({ reachWaitMs: 300, ...options }));
+  listen(createShakedownServer({ reachWaitMs: 300, ai: {}, ...options }));
 
 async function board(options: { instances?: number; delayMs?: number } = {}) {
   const b = await startFakeBoard(options);
@@ -240,7 +240,7 @@ test("비교 대상이 2개 이상이면 422", async () => {
 
 test("main.ts는 HOST:PORT에서 듣고 한 줄 로그를 남긴다", async () => {
   const main = fileURLToPath(new URL("../src/main.ts", import.meta.url));
-  const child = spawn(process.execPath, [main], { env: { ...process.env, PORT: "0" } });
+  const child = spawn(process.execPath, [main], { env: { ...process.env, PORT: "0", SHAKEDOWN_AI_REPORT: "off" } });
   try {
     const [chunk] = await once(child.stdout, "data", { signal: AbortSignal.timeout(5000) });
     const port = /^shakedown api listening on 127\.0\.0\.1:(\d+)\n$/.exec(String(chunk))?.[1];
@@ -261,4 +261,56 @@ test("본문이 1MB를 넘으면 413으로 거절한다", async () => {
   });
   assert.equal(res.status, 413);
   assert.deepEqual(await res.json(), { error: "invalid request", detail: "body is larger than 1MB" });
+});
+
+test("AI가 켜져 있으면 BLOCKED 보고서를 AI가 쓰고 비용을 기록한다", async () => {
+  // 가짜 Claude API: 받은 요청의 사용자 내용에 규칙 보고서와 hints가 들어 있는지 보고, 정해진 보고서를 돌려준다.
+  let prompt: { rule_report: { headline: string } | null; hints: Record<string, unknown> } | undefined;
+  const claude = createServer(async (req, res) => {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    prompt = JSON.parse(JSON.parse(raw).messages[0].content);
+    const report = { headline: "AI headline", cause: "AI cause", evidence: ["e1"], fix: null, confidence: "medium" };
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+      id: "msg_1", type: "message", role: "assistant", model: "claude-opus-5-5", container: null, context_management: null,
+      content: [{ type: "text", text: JSON.stringify(report), citations: null }],
+      stop_reason: "end_turn", stop_sequence: null, stop_details: null,
+      usage: { input_tokens: 1000, output_tokens: 500 },
+    }));
+  });
+  const base = await api({ ai: { apiKey: "test-key", baseURL: await listen(claude) } });
+  const { body } = await post(base, request(await board(), await board({ instances: 2 }), { hints: { uses_server_session: true } }));
+  const done = await waitDone(base, body.shakedown_id);
+
+  assert.equal(done.status, "done");
+  assert.deepEqual(done.report, { headline: "AI headline", cause: "AI cause", evidence: ["e1"], fix: null, confidence: "medium", by: "ai" });
+  assert.deepEqual(done.ai_cost, { calls: 1, input_tokens: 1000, output_tokens: 500, krw: 19.6 });
+  assert.equal(prompt?.rule_report?.headline, "Login is lost on aws: requests land on different instances");
+  assert.deepEqual(prompt?.hints, { uses_server_session: true });
+});
+
+test("AI가 켜져 있어도 PASS면 부르지 않고 report는 null", async () => {
+  let called = false;
+  const claude = createServer((_, res) => {
+    called = true;
+    res.writeHead(500).end();
+  });
+  const base = await api({ ai: { apiKey: "test-key", baseURL: await listen(claude) } });
+  const { body } = await post(base, request(await board(), await board()));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.verdict?.status, "PASS");
+  assert.equal(done.report, null);
+  assert.equal(called, false);
+});
+
+test("마감이 가까우면 AI를 기다리다 판정을 잃지 않고 규칙 보고서로 끝낸다", async () => {
+  const silent = createServer(() => {
+    /* 가짜 Claude가 응답하지 않음 */
+  });
+  const base = await api({ deadlineMs: 3_000, ai: { apiKey: "test-key", baseURL: await listen(silent) } });
+  const { body } = await post(base, request(await board(), await board({ instances: 2 })));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.status, "done");
+  assert.equal(done.verdict?.status, "BLOCKED");
+  assert.equal(done.report?.by, "rule");
 });
