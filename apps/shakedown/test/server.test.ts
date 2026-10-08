@@ -78,6 +78,7 @@ test("POST는 202와 running 상태를 바로 돌려주고, 끝나면 PASS", asy
   const done = await waitDone(base, body.shakedown_id);
   assert.equal(done.status, "done");
   assert.equal(done.verdict?.status, "PASS");
+  assert.equal(done.report, null);
   assert.equal(done.steps.length, 8);
   assert.equal(done.steps[0].candidate, "aws");
 });
@@ -92,9 +93,12 @@ test("비교 환경이 서버 2대면 BLOCKED, 4단계에서 갈라진다", asyn
     first_divergence: 4,
     summary: "Step 4 (Sign in) led to different pages (/board on local, / on aws).",
   });
+  assert.equal(done.report?.headline, "Login is lost on aws: requests land on different instances");
+  assert.equal(done.report?.by, "rule");
+  assert.equal(done.report?.fix?.option, "sticky_sessions");
 });
 
-test("비교 환경이 꺼져 있으면 1단계부터 BLOCKED", async () => {
+test("비교 환경이 꺼져 있으면 BLOCKED와 접속 불가 보고서", async () => {
   const down = await startFakeBoard();
   await down.close();
   const base = await api();
@@ -102,6 +106,7 @@ test("비교 환경이 꺼져 있으면 1단계부터 BLOCKED", async () => {
   const done = await waitDone(base, body.shakedown_id);
   assert.equal(done.status, "done");
   assert.equal(done.verdict?.first_divergence, 1);
+  assert.equal(done.report?.headline, "aws is not reachable");
 });
 
 test("기준 환경이 꺼져 있으면 비교할 수 없으니 failed", async () => {

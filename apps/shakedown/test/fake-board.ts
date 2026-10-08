@@ -1,18 +1,25 @@
 // 테스트용 가짜 kty-board. 실제 앱과 같은 경로·폼·리다이렉트를 흉내 낸다.
 // instances: 2로 띄우면 요청을 서버 2대에 번갈아 보내고 세션은 서버마다 따로 둔다
 // → AWS에서 로그인이 풀리는 데모 상황을 그대로 재현한다.
-// delayMs를 주면 모든 응답을 그만큼 늦춘다 → 진행 중 상태를 관찰할 수 있다.
+// 데모 버그가 아직 정해지지 않아서 원인 보고서의 다른 이야기도 옵션으로 재현한다.
+//   sharedSessions: true  → 세션 저장소를 서버끼리 공유한다(로그인은 유지된다).
+//   sharedPosts: false    → 글 저장소를 서버마다 따로 둔다(방금 쓴 글이 다른 서버에선 안 보인다).
+//                           로그인 단계는 통과해야 이 이야기가 보이므로 회원 정보는 계속 공유한다.
+//   failJoin: 500         → 회원가입 POST가 그 상태 코드로 실패한다(DB 연결 실패 흉내).
+//   delayMs: 5            → 모든 응답을 그만큼 늦춘다(진행 중 상태를 관찰할 때).
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
 type Member = { email: string; nickname: string; password: string };
 type Post = { id: number; title: string; content: string; comments: string[] };
 
-export async function startFakeBoard(options: { instances?: number; delayMs?: number } = {}) {
+export type FakeBoardOptions = { instances?: number; sharedSessions?: boolean; sharedPosts?: boolean; failJoin?: number; delayMs?: number };
+
+export async function startFakeBoard(options: FakeBoardOptions = {}) {
   const instances = options.instances ?? 1;
   const members = new Map<string, Member>();
-  const posts: Post[] = [];
-  const sessions = Array.from({ length: instances }, () => new Map<string, string>()); // 세션ID → email
+  const postStores = Array.from({ length: options.sharedPosts === false ? instances : 1 }, (): Post[] => []);
+  const sessions = Array.from({ length: options.sharedSessions ? 1 : instances }, () => new Map<string, string>()); // 세션ID → email
   let turn = 0;
   let nextSession = 1;
 
@@ -37,7 +44,9 @@ export async function startFakeBoard(options: { instances?: number; delayMs?: nu
 
   const server = createServer(async (req, res) => {
     if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs));
-    const store = sessions[turn++ % instances];
+    const n = turn++ % instances;
+    const store = sessions[n % sessions.length];
+    const posts = postStores[n % postStores.length];
     const sid = /JSESSIONID=([^;]+)/.exec(req.headers.cookie ?? "")?.[1];
     const user = sid ? store.get(sid) : undefined;
     const path = new URL(req.url ?? "/", "http://x").pathname;
@@ -46,6 +55,7 @@ export async function startFakeBoard(options: { instances?: number; delayMs?: nu
     if (route === "GET /join") return send(res, 200, joinForm);
     if (route === "POST /join") {
       const f = await readForm(req);
+      if (options.failJoin) return send(res, options.failJoin, "Whitelabel Error Page");
       const email = f.get("email") ?? "";
       if (members.has(email)) return send(res, 200, `이미 존재하는 회원입니다. ${joinForm}`);
       members.set(email, { email, nickname: f.get("nickname") ?? "", password: f.get("password") ?? "" });
