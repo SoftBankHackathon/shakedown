@@ -20,7 +20,7 @@ flowchart LR
 - 공개 ALB → 앱 SG 8080 → DB SG 5432. RDS는 인터넷 경로 없는 서브넷에 배치합니다.
 - 앱은 public subnet/public IP로 ECR·로그에 접근합니다. 인터넷에서 앱 포트 직접 접근은 SG가 막습니다. NAT Gateway는 만들지 않습니다.
 - 초기 스택 생성 및 DB 초기화는 배포 버튼과 분리합니다. 매 배포는 기존 ECS 서비스의 task definition만 교체합니다.
-- 실제 API는 `packages/contracts/openapi/target.yaml`. 엔진의 Python 배포 오케스트레이션은 아직 501 상태라 **팀 전체 연결 완료는 아닙니다.**
+- 실제 API는 `packages/contracts/openapi/target.yaml`. 엔진은 로컬 배포까지 연결되어 있으며 AWS 호출·ECR 업로드·시운전은 아직 미연결입니다. **팀 전체 연결 완료는 아닙니다.**
 
 ## AWS 없이 검증
 

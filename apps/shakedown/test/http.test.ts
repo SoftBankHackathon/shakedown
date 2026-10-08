@@ -99,3 +99,25 @@ test("만료된 쿠키(Max-Age=0, 지난 Expires)는 더 보내지 않는다", a
   assert.equal((await session.request("GET", "/in")).html, "cookie=JSESSIONID=abc; theme=dark");
   assert.equal((await session.request("GET", "/out")).html, "cookie=");
 });
+
+test("records the instance header at each redirect hop", async () => {
+  const url = await serve((req,res) => req.url === "/login"
+    ? res.writeHead(302, {location:"/board", "x-instance-id":"instance-a"}).end()
+    : res.writeHead(200, {"x-instance-id":"instance-b"}).end("board"));
+  const page = await createSession(url).request("POST", "/login", {});
+  assert.deepEqual(page.hops.map(h => h.instance), ["instance-a", "instance-b"]);
+});
+
+test("cancelling a session prevents following redirects or issuing later writes", async () => {
+  const controller = new AbortController();
+  const paths: string[] = [];
+  const url = await serve((req,res) => {
+    paths.push(req.url!);
+    controller.abort();
+    res.writeHead(302, {location:"/next"}).end();
+  });
+  const session = createSession(url, {signal:controller.signal});
+  await assert.rejects(session.request("GET", "/"));
+  await assert.rejects(session.request("POST", "/write", {title:"must not write"}));
+  assert.deepEqual(paths, ["/"]);
+});

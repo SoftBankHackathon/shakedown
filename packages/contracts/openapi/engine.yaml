@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Engine API
-  version: 0.1.0
+  version: 0.1.1
   description: |
-    > **상태: 초안 (v0.1.0, 2026-10-08)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 통합 제안 (v0.1.1, 2026-10-08)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     엔진(apps/engine, 김도경)이 구현하고 대시보드(apps/web, 서동옥)가 호출하는 API.
@@ -63,7 +63,7 @@ paths:
                 name: { type: string }
                 targets:
                   type: array
-                  minItems: 2
+                  minItems: 1
                   description: 배포 대상. 첫 번째가 기준(baseline)이고 나머지를 기준과 비교. 기본값 [local, aws]
                   items: { $ref: "./target.yaml#/components/schemas/TargetName" }
                   default: [local, aws]
@@ -96,7 +96,7 @@ paths:
     post:
       operationId: deploy
       summary: Action 버튼 (One Action)
-      description: 누르는 즉시 접수하고 배포는 뒤에서 진행 (응답을 기다리지 않음). 진행 상황은 events(SSE)로 확인.
+      description: 로컬 배포 지원. shakedown=true이면 comparison URL 필수. autofix는 false만 지원. comparison은 기존 외부 환경이며 배포·삭제하지 않음. deployed는 시운전 미실행, promoted는 검사 통과이며 실제 트래픽 승격을 의미하지 않음.
       parameters:
         - { name: project_id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -105,8 +105,15 @@ paths:
             schema:
               type: object
               properties:
-                shakedown: { type: boolean, default: true }
-                autofix: { type: boolean, default: true }
+                targets:
+                  type: array
+                  minItems: 1
+                  maxItems: 1
+                  default: [local]
+                  items: { type: string, enum: [local] }
+                shakedown: { type: boolean, default: false }
+                autofix: { type: boolean, const: false, default: false }
+                comparison: { $ref: "#/components/schemas/Endpoint" }
                 options:
                   type: object
                   description: "대상 이름 → TargetOptions (target.yaml 참고)"
@@ -127,6 +134,35 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/projects/{project_id}/comparisons:
+    post:
+      operationId: compareExisting
+      summary: 기존 두 환경에서 HTTP 시운전 (새 배포 없음)
+      description: 테스트 계정·글·댓글을 작성하므로 테스트 전용 URL만 사용. 서로 다른 이름과 URL 필수. 외부 리소스를 배포하거나 삭제하지 않음.
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseline, candidate]
+              properties:
+                baseline: { $ref: "#/components/schemas/Endpoint" }
+                candidate: { $ref: "#/components/schemas/Endpoint" }
+      responses:
+        "202":
+          description: 비교 접수
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "400":
+          description: 잘못된 비교 요청
+        "404":
+          description: 없는 프로젝트
+        "409":
+          description: 같은 프로젝트의 작업이 진행 중
   /api/deployments:
     get:
       operationId: listDeployments
@@ -164,11 +200,11 @@ paths:
         - `target` {target, status, url?}: 대상 상태 변경
         - `step` {attempt, index, status}: 시운전 단계 진행
         - `verdict` {attempt, status, summary}, `report` {attempt, headline}, `fix` {target, option, value}
-        - `done` {status}: 끝 (promoted | blocked | failed)
+        - `done` {status}: 끝 (deployed | promoted | warned | blocked | failed)
+        현재 구현은 stage/log/done을 전달하며 단계별 진행은 stage 이벤트 후 전체 상태를 조회. 재연결은 현재 상태부터 시작하고 과거 이벤트 재생은 미지원.
         대시보드는 `log` 외 이벤트를 받으면 GET /api/deployments/{id}로 전체 상태를 다시 읽음.
       parameters:
         - { name: deployment_id, in: path, required: true, schema: { type: string } }
-        - { name: after, in: query, description: 이 번호 이후 이벤트부터 재전송, schema: { type: integer } }
       responses:
         "200":
           description: text/event-stream
@@ -177,6 +213,12 @@ paths:
               schema: { type: string }
 components:
   schemas:
+    Endpoint:
+      type: object
+      required: [name, url]
+      properties:
+        name: { type: string, pattern: "^[a-z][a-z0-9_-]*$", minLength: 1, maxLength: 40 }
+        url: { type: string, format: uri, description: "HTTP(S) origin. 자격 증명·경로·쿼리·fragment 금지." }
     Project:
       type: object
       description: "전체 필드는 packages/contracts/src/index.ts의 Project"
@@ -212,10 +254,14 @@ components:
         project_id: { type: string }
         status:
           type: string
-          enum: [queued, building, deploying, shakedown, analyzing, fixing, promoted, blocked, failed]
+          enum: [queued, building, deploying, shakedown, analyzing, fixing, deployed, promoted, warned, blocked, failed]
+        mode: { type: string, enum: [comparison] }
+        shakedown_id: { type: string }
+        release_gate: { type: string, enum: [passed, review, blocked] }
+        traffic_blocked: { type: boolean, description: "현재 false. BLOCKED는 검사 게이트이며 외부 URL 트래픽을 차단하지 않음." }
         targets:
           type: object
-          description: "대상 이름(local, aws 등) → 상태 (target.yaml의 TargetDeployment에서 status, url, instances, info, commands, error)"
+          description: "대상 이름 → 상태. 기존 환경은 external(관리/배포 완료 아님), 관리 대상은 TargetDeployment 필드 사용"
           additionalProperties: true
         attempts:
           type: array

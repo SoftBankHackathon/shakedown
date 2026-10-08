@@ -35,7 +35,11 @@ export type Deployment = {
   project_id: string;
   created: number;
   finished?: number;
-  status: "queued" | "building" | "deploying" | "shakedown" | "analyzing" | "fixing" | "promoted" | "blocked" | "failed";
+  status: "queued" | "building" | "deploying" | "shakedown" | "analyzing" | "fixing" | "deployed" | "warned" | "promoted" | "blocked" | "failed";
+  mode?: "comparison";
+  shakedown_id?: string;
+  release_gate?: "passed" | "review" | "blocked";
+  traffic_blocked?: boolean;
   shakedown: boolean;
   autofix: boolean;
   options: Record<string, TargetOptions>;
@@ -64,7 +68,7 @@ export type Project = {
 };
 
 export type TargetState = {
-  status: "pending" | "deploying" | "ready" | "failed";
+  status: "pending" | "deploying" | "ready" | "failed" | "external";
   label: string;
   url?: string;
   instances?: number;
@@ -138,13 +142,18 @@ export type Attempt = {
 export type DeployEvent = { ts: number; kind: string; [k: string]: unknown };
 
 /** Statuses after which a deployment never changes again. */
-export const TERMINAL_STATUSES: ReadonlySet<Deployment["status"]> = new Set(["promoted", "blocked", "failed"]);
+export const TERMINAL_STATUSES: ReadonlySet<Deployment["status"]> = new Set(["warned", "deployed", "promoted", "blocked", "failed"]);
 
 /** Body of POST /api/projects (engine.yaml). */
 export type CreateProjectRequest = { repo: string; name?: string; targets: TargetName[] };
 
 /** Body of POST /api/projects/{id}/deployments — the Action button (engine.yaml). */
+export type ComparisonEndpoint = { name: string; url: string };
+export type CompareRequest = { baseline: ComparisonEndpoint; candidate: ComparisonEndpoint };
+
 export type DeployRequest = {
+  comparison?: ComparisonEndpoint;
+  targets?: TargetName[];
   shakedown: boolean;
   autofix: boolean;
   options: Partial<Record<TargetName, Partial<TargetOptions>>>;
@@ -166,7 +175,7 @@ export type TargetDeployRequest = {
 export type TargetDeployment = {
   deployment_id: string;
   target: TargetName;
-  status: TargetState["status"];
+  status: Exclude<TargetState["status"], "external">;
   url?: string;
   instances?: number;
   started_at?: string;

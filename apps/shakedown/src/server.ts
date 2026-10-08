@@ -93,12 +93,17 @@ type Settings = { deadlineMs: number; reachWaitMs: number; ai: AiOptions };
 async function run(record: Shakedown, job: Job, settings: Settings): Promise<void> {
   const { deadlineMs } = settings;
   const deadlineAt = Date.now() + deadlineMs;
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`timed out after ${deadlineMs / 1000}s`)), deadlineMs);
+    timer = setTimeout(() => {
+      const error = new Error(`timed out after ${deadlineMs / 1000}s`);
+      controller.abort(error);
+      reject(error);
+    }, deadlineMs);
   });
   try {
-    const { result, report, cost } = await Promise.race([execute(record, job, settings, deadlineAt), deadline]);
+    const { result, report, cost } = await Promise.race([execute(record, job, settings, deadlineAt, controller.signal), deadline]);
     record.steps = result.steps;
     record.verdict = result.verdict;
     record.report = report;
@@ -116,20 +121,22 @@ async function run(record: Shakedown, job: Job, settings: Settings): Promise<voi
  * 접속 확인 → 시운전 → 원인 보고서. 기준 환경이 닿지 않거나 시나리오를 통과하지 못하면 비교할 수 없으니 오류로 끝낸다.
  * 보고서는 규칙으로 먼저 만들고, AI가 켜져 있으면 AI 보고서로 바꾼다(실패하면 규칙 보고서 그대로).
  */
-async function execute(record: Shakedown, job: Job, { reachWaitMs, ai }: Settings, deadlineAt: number) {
+async function execute(record: Shakedown, job: Job, { reachWaitMs, ai }: Settings, deadlineAt: number, signal: AbortSignal) {
   const [baselineUp] = await Promise.all([
-    waitUntilReachable(job.baseline.url, { waitMs: reachWaitMs }),
-    waitUntilReachable(job.candidate.url, { waitMs: reachWaitMs }),
+    waitUntilReachable(job.baseline.url, { waitMs: reachWaitMs, signal }),
+    waitUntilReachable(job.candidate.url, { waitMs: reachWaitMs, signal }),
   ]);
   if (!baselineUp) throw new Error(`baseline ${job.baseline.name} is not reachable: ${job.baseline.url}`);
 
   const result = await runShakedown({
     ...job,
-    // 마감 뒤에도 실행은 이어지므로, 이미 끝난 기록은 덮어쓰지 않는다.
+    signal,
+    // 마감 때 HTTP 요청을 취소하고 이미 끝난 기록은 덮어쓰지 않는다.
     onProgress: (steps) => {
       if (record.status === "running") record.steps = steps;
     },
   });
+  signal.throwIfAborted();
   const broken = result.steps.find((d) => d.local.status !== "passed");
   if (broken) {
     if (record.status === "running") record.steps = result.steps;

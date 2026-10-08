@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useT } from "@/components/i18n";
 import { AiTag, Badge, Mono, RuleTag, Section } from "@/components/ui";
-import { api, ApiError, errorMessage, formatSeconds, type Deployment, type Project, type TargetOptions } from "@/lib/api";
+import { api, MOCK, ApiError, errorMessage, formatSeconds, type Deployment, type Project, type TargetOptions } from "@/lib/api";
 import { DEFAULT_TARGET_OPTIONS, DEFAULT_TARGETS, targetLabel, TIMEZONES } from "@/lib/targets";
 
 export default function ProjectPage() {
@@ -14,10 +14,12 @@ export default function ProjectPage() {
   const t = useT();
   const [project, setProject] = useState<Project | null>(null);
   const [deps, setDeps] = useState<Deployment[]>([]);
-  const [shakedown, setShakedown] = useState(true);
-  const [autofix, setAutofix] = useState(true);
+  const [shakedown, setShakedown] = useState(MOCK);
+  const [autofix, setAutofix] = useState(MOCK);
   // Options per non-baseline target, keyed by target name.
   const [opts, setOpts] = useState<Record<string, TargetOptions>>({});
+  const [comparisonUrl, setComparisonUrl] = useState("");
+  const [baselineUrl, setBaselineUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,7 +32,7 @@ export default function ProjectPage() {
     setBusy(true);
     setError(null);
     try {
-      const d = await api.deploy(id, { shakedown, autofix, options: opts });
+      const d = await api.deploy(id, { shakedown: MOCK ? shakedown : !!comparisonUrl.trim(), autofix, options: MOCK ? opts : {}, targets: MOCK ? undefined : ["local"], comparison: !MOCK && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
       router.push(`/deployments/${d.id}`);
     } catch (e) {
       setError(e instanceof ApiError && e.status === 409 ? t("home.busy", { name: project?.name ?? id }) : errorMessage(e));
@@ -38,9 +40,17 @@ export default function ProjectPage() {
     }
   }
 
+  async function compareExisting() {
+    setBusy(true); setError(null);
+    try {
+      const d = await api.compare(id, { baseline: {name:"local", url:baselineUrl.trim()}, candidate:{name:"candidate", url:comparisonUrl.trim()} });
+      router.push(`/deployments/${d.id}`);
+    } catch (e) { setError(errorMessage(e)); setBusy(false); }
+  }
+
   if (!project) return <p className="text-muted">{error ?? t("loading")}</p>;
   const a = project.analysis;
-  const targets = project.targets ?? DEFAULT_TARGETS;
+  const targets = MOCK ? project.targets ?? DEFAULT_TARGETS : ["local"];
   const [baseline, ...candidates] = targets;
   const optsFor = (name: string): TargetOptions => opts[name] ?? DEFAULT_TARGET_OPTIONS;
   const setOpt = (name: string, patchOpt: Partial<TargetOptions>) =>
@@ -67,6 +77,15 @@ export default function ProjectPage() {
       </div>
       {error && <p className="text-sm text-bad">{error}</p>}
 
+      {!MOCK && <Section title={t("live.compareTitle")}>
+        <div className="space-y-3 text-sm">
+          <label className="block">{t("live.candidate")}<input type="url" value={comparisonUrl} onChange={(e) => setComparisonUrl(e.target.value)} placeholder="https://comparison.example.com" className="mt-1 w-full rounded border border-line bg-bg p-2" /></label>
+          <p className="text-xs text-muted">{t("live.compareHint")}</p>
+          <label className="block">{t("live.baseline")}<input type="url" value={baselineUrl} onChange={(e) => setBaselineUrl(e.target.value)} placeholder="http://127.0.0.1:18080" className="mt-1 w-full rounded border border-line bg-bg p-2" /></label>
+          <button disabled={busy || !baselineUrl.trim() || !comparisonUrl.trim()} onClick={compareExisting} className="rounded bg-accent px-4 py-2 text-white disabled:opacity-50">{t("live.compareNow")}</button>
+          <p className="text-xs text-muted">{t("live.externalHint")}</p>
+        </div>
+      </Section>}
       <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
         <Section title={t("project.detected")}>
           <table className="w-full text-sm">
@@ -152,15 +171,16 @@ export default function ProjectPage() {
           </Section>
 
           <Section title={t("project.after")}>
+            {!MOCK && <p className="mb-3 text-sm text-muted">{t("live.scope")}</p>}
             <label className="flex items-start gap-3 text-sm mb-3">
-              <input type="checkbox" checked={shakedown} onChange={(e) => setShakedown(e.target.checked)} className="mt-1" />
+              <input type="checkbox" disabled={!MOCK} checked={MOCK ? shakedown : !!comparisonUrl.trim()} onChange={(e) => setShakedown(e.target.checked)} className="mt-1" />
               <span>
                 <span className="font-medium">{t("project.shakedown")}</span>
                 <span className="block text-xs text-muted">{t("project.shakedownDesc")}</span>
               </span>
             </label>
             <label className="flex items-start gap-3 text-sm">
-              <input type="checkbox" checked={autofix} onChange={(e) => setAutofix(e.target.checked)} className="mt-1" />
+              <input type="checkbox" disabled={!MOCK} checked={autofix} onChange={(e) => setAutofix(e.target.checked)} className="mt-1" />
               <span>
                 <span className="font-medium">{t("project.autofix")}</span>
                 <span className="block text-xs text-muted">{t("project.autofixDesc")}</span>

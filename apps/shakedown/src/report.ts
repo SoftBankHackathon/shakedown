@@ -1,6 +1,6 @@
 // 판정이 BLOCKED일 때 단계 비교 결과만 보고 원인 보고서를 만든다. AI는 쓰지 않는다.
 // 데모 버그가 아직 정해지지 않아서 알려진 원인 넷을 정해진 순서로 확인하고, 아무것도 맞지 않으면 일반 보고서를 낸다.
-// hop.instance는 지금 항상 null이라 근거로 쓰지 않는다. 문구는 contracts fixture의 report에 맞춘다.
+// hop.instance는 응답 헤더로 기록된다. 아래 규칙의 원인 추정은 hop 경로를 기준으로 한다.
 import type { Fix, Hop, Report, StepDiff, StepResult } from "@shakedown/contracts";
 import { normalizePath } from "./compare.ts";
 import type { Verdict } from "./verdict.ts";

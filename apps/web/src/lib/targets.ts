@@ -26,6 +26,7 @@ export const DEFAULT_TARGET_OPTIONS: TargetOptions = { replicas: 2, sticky_sessi
 export const TIMEZONES = ["UTC", "Asia/Seoul"] as const;
 
 export function targetLabel(id: string): string {
+  if (id === "candidate") return "Candidate";
   return TARGETS.find((t) => t.id === id)?.label ?? id;
 }
 

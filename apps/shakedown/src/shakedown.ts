@@ -14,6 +14,7 @@ export type ShakedownInput = {
   scenario?: Scenario;
   runId?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
   /** 두 환경이 모두 끝낸 단계가 늘 때마다 그때까지의 비교 결과를 받는다. */
   onProgress?: (steps: StepDiff[]) => void;
 };
@@ -28,7 +29,7 @@ export async function runShakedown(input: ShakedownInput): Promise<ShakedownResu
   const scenario = input.scenario ?? defaultScenario;
   const values = makeValues(input.runId);
   const steps = scenario.steps.map((s) => fillStep(s, values));
-  const options = { timeoutMs: input.timeoutMs };
+  const options = { timeoutMs: input.timeoutMs, signal: input.signal };
   const names = { baseline: input.baseline.name, candidate: input.candidate.name };
 
   // 한쪽만 끝낸 단계는 비교할 수 없으니, 두 쪽이 다 끝낸 단계까지만 알린다.

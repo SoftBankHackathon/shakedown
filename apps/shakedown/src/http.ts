@@ -1,3 +1,5 @@
+import { targetFetch } from "./transport.ts";
+import type { Response } from "undici";
 // 대상 사이트 하나를 브라우저처럼 돌아다니는 HTTP 세션.
 // 쿠키를 직접 보관하고, 리다이렉트(3xx)를 직접 따라가며 거쳐 간 주소(hop)를 모두 기록한다.
 import type { Hop } from "@shakedown/contracts";
@@ -17,7 +19,7 @@ function isExpired(attrs: string[]): boolean {
   });
 }
 
-export function createSession(baseUrl: string, options: { timeoutMs?: number } = {}) {
+export function createSession(baseUrl: string, options: { timeoutMs?: number; signal?: AbortSignal } = {}) {
   const base = new URL(baseUrl);
   const timeoutMs = options.timeoutMs ?? 10_000;
   const cookies = new Map<string, string>();
@@ -50,15 +52,15 @@ export function createSession(baseUrl: string, options: { timeoutMs?: number } =
     let body: URLSearchParams | undefined = form ? new URLSearchParams(form) : undefined;
 
     for (let i = 0; i <= MAX_REDIRECTS; i++) {
-      const res = await fetch(url, {
+      const res = await targetFetch(url, {
         method,
         body,
         headers: cookies.size ? { cookie: cookieHeader() } : {},
         redirect: "manual",
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
       });
       storeCookies(res);
-      hops.push({ method, path: url.pathname + url.search, status: res.status, instance: null });
+      hops.push({ method, path: url.pathname + url.search, status: res.status, instance: res.headers.get("x-instance-id") });
 
       const location = res.headers.get("location");
       if (res.status >= 300 && res.status < 400 && location) {

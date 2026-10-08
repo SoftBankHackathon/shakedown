@@ -7,7 +7,7 @@ import { useT } from "@/components/i18n";
 import { AiTag, Badge, Chip, Mono, RuleTag, Section } from "@/components/ui";
 import { DeployReport } from "@/components/deploy-report";
 import { StepTable } from "@/components/step-table";
-import { api, DONE, formatSeconds, type Deployment, type Fix, type Report } from "@/lib/api";
+import { api, DONE, errorMessage, formatSeconds, type Deployment, type Fix, type Report } from "@/lib/api";
 import { orderTargets, targetLabel } from "@/lib/targets";
 
 const STAGES = ["building", "deploying", "shakedown", "analyzing", "fixing"] as const;
@@ -16,6 +16,7 @@ export default function DeploymentPage() {
   const { id } = useParams<{ id: string }>();
   const search = useSearchParams();
   const t = useT();
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [dep, setDep] = useState<Deployment | null>(null);
   const [logs, setLogs] = useState<{ source: string; line: string }[]>([]);
   const [message, setMessage] = useState("");
@@ -23,7 +24,7 @@ export default function DeploymentPage() {
   const refetch = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    api.deployment(id).then(setDep);
+    api.deployment(id).then(setDep).catch((e) => setLoadError(errorMessage(e)));
     // Build logs can arrive many lines per second: buffer them and repaint at most 5 times a second.
     let buffer: { source: string; line: string }[] = [];
     const flush = setInterval(() => {
@@ -39,15 +40,16 @@ export default function DeploymentPage() {
       }
       if (ev.kind === "stage") setMessage(String(ev.message ?? ""));
       if (refetch.current) clearTimeout(refetch.current);
-      refetch.current = setTimeout(() => api.deployment(id).then(setDep), 120);
+      refetch.current = setTimeout(() => api.deployment(id).then(setDep).catch((e) => setLoadError(errorMessage(e))), 120);
     });
     return () => {
       clearInterval(flush);
+      if (refetch.current) clearTimeout(refetch.current);
       unsubscribe();
     };
   }, [id]);
 
-  if (!dep) return <p className="text-muted">{t("loading")}</p>;
+  if (!dep) return <p className="text-muted">{loadError ?? t("loading")}</p>;
   const attempt = dep.attempts.find((a) => a.n === tab) ?? dep.attempts.at(-1);
   const previous = attempt && dep.attempts.find((a) => a.n === attempt.n - 1);
   const done = DONE.has(dep.status);
@@ -69,8 +71,7 @@ export default function DeploymentPage() {
         </div>
         <div className="flex items-center gap-4 text-sm">
           <Metric label={t("dep.total")} value={seconds(dep.timings.total_s)} />
-          <Metric label={t("dep.build")} value={seconds(dep.timings.build_s)} />
-          <Metric label={t("dep.deploy")} value={seconds(dep.timings.deploy_s)} />
+          {dep.mode !== "comparison" && <><Metric label={t("dep.build")} value={seconds(dep.timings.build_s)} /><Metric label={t("dep.deploy")} value={seconds(dep.timings.deploy_s)} /></>}
           <Metric label={t("dep.aiCost")} value={`₩${dep.ai_cost.krw}`} hint={t("dep.calls", { n: dep.ai_cost.calls })} />
           <Badge status={dep.status} />
         </div>
@@ -78,6 +79,7 @@ export default function DeploymentPage() {
 
       <Pipeline dep={dep} t={t} />
       <DeployReport dep={dep} />
+      {dep.traffic_blocked === false && dep.status === "blocked" && <p className="text-sm text-warn">{t("dep.gateOnly")}</p>}
       {dep.error && <pre className="card p-4 text-xs text-bad whitespace-pre-wrap">{dep.error}</pre>}
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -96,7 +98,7 @@ export default function DeploymentPage() {
               )}
               <div className="mt-3 flex flex-wrap gap-2 text-xs">
                 {o && <Chip>{t("dep.instances", { n: o.replicas })}</Chip>}
-                {name !== baseline && <Chip>{t("dep.affinity", { v: t(o?.sticky_sessions ? "on" : "off") })}</Chip>}
+                {o && name !== baseline && <Chip>{t("dep.affinity", { v: t(o?.sticky_sessions ? "on" : "off") })}</Chip>}
                 {o && <Chip>TZ {o.tz}</Chip>}
               </div>
               {s.error && <pre className="mt-3 text-xs text-bad whitespace-pre-wrap max-h-40 overflow-auto">{s.error}</pre>}
@@ -163,6 +165,8 @@ export default function DeploymentPage() {
 type T = ReturnType<typeof useT>;
 
 function statusLine(d: Deployment, t: T) {
+  if (d.status === "warned") return t("dep.warned");
+  if (d.status === "deployed") return t("dep.deployed");
   if (d.status === "promoted") return t("dep.promoted");
   if (d.status === "blocked") return t("dep.blocked");
   return t("dep.failed");
@@ -186,7 +190,7 @@ function Pipeline({ dep, t }: { dep: Deployment; t: T }) {
   if (dep.scenario || dep.attempts.length) reached.add("shakedown");
   if (dep.attempts.some((a) => a.report)) reached.add("analyzing");
   if (dep.attempts.some((a) => a.applied_fix)) reached.add("fixing");
-  const shown = STAGES.filter((s) => reached.has(s) || s === "shakedown" || s === "deploying");
+  const shown = STAGES.filter((s) => dep.mode === "comparison" ? s === "shakedown" || reached.has(s) && s !== "building" && s !== "deploying" : reached.has(s) || s === "shakedown" || s === "deploying");
   return (
     <ol className="flex flex-wrap items-center gap-2 text-xs">
       {shown.map((s, i) => {

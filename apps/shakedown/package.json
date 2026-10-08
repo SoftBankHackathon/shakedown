@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
-    "@shakedown/contracts": "*"
+    "@shakedown/contracts": "*",
+    "undici": "^7.30.0"
   }
 }

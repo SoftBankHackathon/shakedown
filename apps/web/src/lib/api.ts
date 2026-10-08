@@ -1,6 +1,7 @@
 import {
   TERMINAL_STATUSES,
   type CreateProjectRequest,
+  type CompareRequest,
   type DeployEvent,
   type DeployRequest,
   type Deployment,
@@ -20,7 +21,7 @@ export { ApiError };
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(API + path, {
     ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+    headers: { ...(init?.body ? { "content-type": "application/json" } : {}), ...(init?.headers ?? {}) },
     cache: "no-store",
   });
   if (!r.ok) {
@@ -38,6 +39,8 @@ const liveApi = {
   deployment: (id: string) => call<Deployment>(`/api/deployments/${id}`),
   deploy: (projectId: string, body: DeployRequest) =>
     call<Deployment>(`/api/projects/${projectId}/deployments`, { method: "POST", body: JSON.stringify(body) }),
+  compare: (projectId: string, body: CompareRequest) =>
+    call<Deployment>(`/api/projects/${projectId}/comparisons`, { method: "POST", body: JSON.stringify(body) }),
   /** Live progress over SSE. Returns an unsubscribe function. */
   subscribe: (id: string, onEvent: (ev: DeployEvent) => void): (() => void) => {
     const es = new EventSource(`${API}/api/deployments/${id}/events`);
@@ -50,7 +53,7 @@ const liveApi = {
   },
 };
 
-export const api: typeof liveApi = MOCK ? mockApi : liveApi;
+export const api: typeof liveApi = MOCK ? { ...mockApi, compare: async () => { throw new Error("Use live mode to compare existing environments."); } } : liveApi;
 
 export const DONE = TERMINAL_STATUSES;
 

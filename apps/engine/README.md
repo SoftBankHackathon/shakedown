@@ -1,108 +1,98 @@
-﻿# Engine — STEP 4 (2026-10-08)
+# Engine — 로컬 배포 + HTTP 시운전 연결
 
-Repo URL/로컬 경로를 정적으로 분석해 팀 공통 `Project`를 반환하는 API입니다.
-코드를 실행하거나 빌드하지 않으며, Local/AWS 배포와 Shakedown 검사 구현은 각 담당자의 책임입니다.
-공식 기준은 `packages/contracts/src/index.ts`, `openapi/engine.yaml`, `target.yaml`, `shakedown.yaml`입니다. 공통 Contracts와 다른 팀원 폴더는 수정하지 않았습니다.
+Action에서 프로젝트 분석 → Docker 빌드 → Local Target → 공개 URL → 선택적 HTTP 시운전 → 판정/보고서 표시를 실행합니다. 기존 baseline/candidate URL만 비교하는 기능도 있습니다. 김태현님의 PR #6–#9 구현을 호출하며, 엔진에서 별도 판정 로직이나 Playwright 시나리오를 만들지 않습니다.
 
-## 설치 및 Windows 실행
+## 실행
 
-Python **3.12 이상**, 공개 GitHub Repo 분석에는 Git 및 네트워크 접근이 필요합니다.
-PowerShell에서 현재 Worktree 루트를 기준으로 실행합니다. 가상환경 활성화 없이도 실행할 수 있습니다.
+Python 3.12+, Node 22.18+ 또는 23.6+, Git, Docker가 필요합니다. 저장소 루트에서:
 
-```powershell
-Set-Location apps/engine
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m uvicorn engine.api:app --host 127.0.0.1 --port 8700
+```sh
+python3 -m venv apps/engine/.venv
+apps/engine/.venv/bin/pip install -r apps/engine/requirements.txt
+npm ci --ignore-scripts
 ```
 
-Swagger: `http://localhost:8700/docs`.
-개발용 CORS는 `http://localhost:3700`, `http://127.0.0.1:3700`만 허용합니다.
-Dashboard는 기존 루트 명령 `npm run dev:web:live` 또는 `NEXT_PUBLIC_API_URL=http://localhost:8700` 설정으로 연결할 수 있습니다. Engine에서 Web 파일을 수정하지 않습니다.
+각각 별도 터미널에서 실행합니다.
 
-등록 데이터는 `apps/engine/.data/projects.sqlite3`에 저장합니다. GitHub clone 임시 파일, 테스트 임시 파일도 `apps/engine/.data` 안에만 생성됩니다.
-상대 Repo 경로는 실행 위치와 무관하게 **Worktree 루트**를 기준으로 해석합니다. 예: `samples/kty-board`.
+```sh
+# infra/local/README.md에 따라 LOCAL_DB_PASSWORD 설정
+node --env-file=infra/local/.env infra/local/server.mjs
 
-## API 테스트
+# 기본 검증은 유료 AI 호출 없이 규칙 보고서 사용
+SHAKEDOWN_AI_REPORT=off npm start -w @shakedown/shakedown
 
-서버 실행 후 다른 PowerShell 창에서:
+# 단일 worker. 공유 SQLite에 여러 엔진을 띄우지 않음
+apps/engine/.venv/bin/uvicorn engine.api:app --app-dir apps/engine --host 127.0.0.1 --port 8700
 
-```powershell
-Invoke-RestMethod http://localhost:8700/api/health
-$projectBody = @{
-    repo = 'samples/kty-board'
-    name = 'kty-board'
-    targets = @('local', 'aws')
-} | ConvertTo-Json
-$projectResult = Invoke-RestMethod -Method Post -Uri http://localhost:8700/api/projects -ContentType 'application/json' -Body $projectBody
-$projectResult.analysis | ConvertTo-Json -Depth 10
-Invoke-RestMethod http://localhost:8700/api/projects
-Invoke-RestMethod "http://localhost:8700/api/projects/$($projectResult.id)"
+npm run dev:web:live
 ```
 
-공개 GitHub URL도 `repo = 'https://github.com/OWNER/REPO'`로 등록합니다.
-허용 형식은 GitHub HTTPS Repo URL입니다. 인증정보, query, fragment, SSH URL, 브랜치 하위 경로는 400으로 거절합니다. Clone은 depth=1, 60초 제한이며 Git hook/template/custom filter를 비활성화합니다. Repo 내부 코드는 실행하지 않습니다.
+Windows에서는 `.venv/Scripts/python.exe -m uvicorn`을 사용합니다. AI 보고서 설정은 `apps/shakedown/README.md`를 따릅니다. AI 보고서는 판정을 변경하지 않습니다.
 
-| API | 현재 동작 |
+[대시보드](http://localhost:3700)에 `samples/kty-board`를 입력합니다.
+
+- 비교 URL을 비우고 Action: 로컬 배포만 실행, `deployed`(시운전 미실행).
+- 비교 URL을 넣고 Action: 새 로컬 배포를 baseline으로 기존 URL과 비교.
+- 프로젝트 화면에서 baseline과 비교 URL을 넣고 **기존 두 환경 비교**: 빌드/배포 없이 HTTP 시운전만 실행.
+- 시운전은 회원가입·로그인·글쓰기·댓글을 실제로 수행합니다. 테스트 전용 환경 두 개를 사용하세요. 테스트 데이터는 자동 삭제하지 않습니다.
+- `dev:web:live`는 `/engine` 프록시로 8700에 연결. 엔진 URL 없이 `npm run dev:web`로 실행하면 fixture 데모입니다.
+
+## 지원 범위와 상태 의미
+
+| 상태 | 의미 |
 |---|---|
-| `GET /api/health` | `200 {"ok": true}` |
-| `GET /api/projects` | 최신 등록순 Project 배열 |
-| `POST /api/projects` | `repo`, 선택적 `name`, `targets`를 받아 분석 후 200 Project |
-| `GET /api/projects/{project_id}` | Project 상세, 없으면 404 |
-| `GET /api/deployments` | Dashboard 초기 조회용 빈 배열. 배포 실행 기록이 없음 |
-| `POST /api/projects/{project_id}/deployments` | 미연동 상태를 501로 명시. 없는 Project는 404 |
+| `deployed` | 로컬 배포 완료, 검사 미실행 |
+| `promoted` | HTTP 시나리오 PASS. 실제 트래픽 전환/프로덕션 승격 아님 |
+| `warned` | WARN. 증거 검토 필요 |
+| `blocked` | BLOCKED 검사 게이트. 기존 URL의 접속을 차단하지 않음 |
+| `failed` | 빌드/인프라/시운전 오류, 기준 환경 실패, 불완전 결과 등. PASS 없음 |
 
-`targets`를 생략하면 OpenAPI 기본값 `[local, aws]`를 사용합니다. 최소 두 개의 서로 다른 공통 TargetName을 요구하고 입력 순서를 유지합니다. 첫 번째가 baseline입니다.
-Repo identity는 GitHub 대소문자/`.git`/끝 `/`, Windows 로컬 경로의 대소문자/정규화 경로를 통일합니다. 동일 Repo 재등록 시 기존 id·name·targets·analysis를 그대로 반환하며 다시 분석하지 않습니다. 재시작 이후에도 유지되고 중복 동시 등록은 SQLite UNIQUE 제약으로 방지합니다.
+`release_gate`는 passed/review/blocked이며 현재 `traffic_blocked=false`입니다. `targets[*].status=external`은 사용자가 제공한 기존 환경입니다. 그 환경의 배포·삭제·트래픽 차단은 엔진이 관리하지 않습니다. 자동수정은 거절하며 보고서의 fix는 제안만 표시합니다.
 
-## 구현 기능과 분석 한계
+**AWS 어댑터는 구현되어 있지만 엔진의 이미지 ECR 업로드/digest 공유 → AWS Target 호출은 아직 연결되지 않았습니다.** 기존 AWS URL이 있다면 비교 URL로 사용할 수 있습니다. AWS 배포까지 포함한 원클릭 완성이나 운영 보안 완료를 의미하지 않습니다.
 
-- Spring Boot Gradle/Kotlin Gradle/Maven, Next.js/Express/React/Vue, FastAPI/Django/Flask의 manifest 정적 분석을 재사용했습니다.
-- 팀 Analysis 필드 13개(`stack`, `port`, `java_version`, `database`, `database_name`, `health_path`, `uses_server_session`, `summary`, `routes`, `evidence`, `env`, `secret_env`, `warnings`)와 Project 필드 전체를 제공합니다.
-- 근거는 상대 파일 경로와 `source=rule/default`로 기록합니다. 포트·health_path 기본값과 미확인 세션 여부는 warnings로 표시합니다. Actuator 경로도 검증되지 않은 기본 후보입니다.
-- Spring Controller의 단순 매핑, 명시/암시 RequestParam 이름, JSON body 존재, 서버 세션 코드 참조를 추출합니다. 동적/배열 매핑은 추측하지 않고 생략하며 경고합니다. Java AST 전체 해석이나 실행 시 등록되는 라우트는 지원하지 않습니다.
-- 프로파일별 설정은 적용하지 않습니다. 다중 문서/포트/환경변수 충돌은 경고하고 확정할 수 없는 값을 생략하거나 명시된 기본값으로 대체합니다. 여러 앱이 있는 Repo는 루트 앱만 분석하거나 모호하면 400을 반환합니다.
-- 파일당 1MB, 설정 및 Java 각각 250파일, 디렉터리 각각 5,000개 제한을 적용합니다. symlink/junction을 따라 외부 파일을 탐색하지 않습니다.
-- 비밀번호/API key/token 값과 `.env.example` 값은 Project나 로그에 출력하지 않습니다. `env`는 허용된 비민감 Spring 설정만 제공합니다. JDBC URL의 인증정보·query는 전달하지 않습니다. `secret_env`와 `secrets`는 이름만 사용하고 secrets.value는 항상 `••••••••`입니다. 미분류 환경변수 참조도 보수적으로 이름만 보관합니다.
-- `analysis_cost`는 AI 호출이 없으므로 모두 0입니다. Summary는 정적 규칙 요약입니다.
-- `ports={}`는 실제 호스트 포트를 아직 할당하지 않았다는 뜻이며 `analysis.port`는 앱 포트 후보입니다. `last_deployment=null`을 유지합니다.
+## API
 
-## 기존 코드 재사용
+- `POST /api/projects`: repo, 선택적 name/targets로 분석·등록
+- `GET /api/projects`, `GET /api/projects/{id}`: 프로젝트 조회
+- `POST /api/projects/{id}/deployments`: 202 비동기 로컬 배포
+- `POST /api/projects/{id}/comparisons`: 202 기존 URL 비교
+- `GET /api/deployments?project_id=...`, `GET /api/deployments/{id}`: 결과/증거 조회
+- `GET /api/deployments/{id}/events`: SSE. 상태 또는 완료 단계 수 변화 후 전체 조회. 재연결 시 현재 상태부터, 과거 이벤트 재생 없음
+- `GET /api/health`: 엔진 상태
 
-읽기 전용 원본 `D:/workspaces/orca-workspace/deploy-orchestrator-mvp/app/analyzer.py`를 `engine/legacy_analyzer.py`로 이관했습니다.
-기존 manifest/Dockerfile/Compose/Spring 설정 분석, 충돌 처리, clone 오류 비노출, 스캔 제한을 재사용하고 근거 수집 hook, Windows junction 제외, clone 저장 위치를 보강했습니다. DeployConfig/DatabaseConfig는 내부 호환 타입으로만 유지하고 API에는 팀 Analysis/Project로 변환합니다. requirements.txt의 의존성 구성도 재사용했습니다.
+배포 요청 예시:
 
-개인 STEP 2~3의 Orchestrator/HTTP Adapter는 동기 호출 및 SUCCESS/Health PASS/개인 ShakedownResult 계약을 사용합니다. 팀의 비동기 POST→GET 폴링 및 StepDiff/Verdict/Report 계약과 바로 호환되지 않아 그대로 이관하지 않았습니다. 기존 229개 테스트가 이 Worktree에 모두 이관되거나 통과했다는 의미는 아닙니다.
-
-## 검증 및 Mock 기능
-
-`apps/engine`에서:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m compileall -q engine tests
+```json
+{"targets":["local"],"shakedown":true,"autofix":false,"comparison":{"name":"candidate","url":"https://candidate.example.com"},"options":{}}
 ```
 
-Worktree 루트에서는:
+비교만 실행:
 
-```powershell
-python -m pytest -c apps/engine/pytest.ini apps/engine/tests -q
-python -m compileall -q apps/engine/engine apps/engine/tests
+```json
+{"baseline":{"name":"local","url":"http://127.0.0.1:18080"},"candidate":{"name":"candidate","url":"https://candidate.example.com"}}
 ```
 
-**60개 테스트 통과**, Python 문법 검사 통과. Windows 실제 `localhost:8700` HTTP로 health, Project 등록·상세·목록, CORS를 확인했습니다. 테스트에서는 Git clone 성공/실패/timeout을 Mock으로 대체합니다. 실제 GitHub 네트워크 clone은 이번 검증에 포함하지 않았습니다.
-현재 설치된 Starlette의 TestClient/httpx 조합에서 deprecation warning 1개가 발생하지만 테스트 실패는 없습니다.
+서로 다른 이름/URL이 필요합니다. HTTP(S) origin만 허용하며 자격 증명·경로·쿼리·fragment는 거절합니다. 같은 서비스의 별칭인지까지는 판단하지 않으므로 실제로 독립된 환경인지 확인하세요. 같은 프로젝트에서 배포/비교가 실행 중이면 409입니다. shakedown=true는 comparison이 필수이며 autofix=true는 400입니다.
 
-Mock 배포 API/Mock Shakedown 실행은 **미구현**입니다. 빈 배포 목록과 501 응답을 Mock 성공으로 표시하지 않습니다. 배포 상세/이벤트 SSE API도 아직 구현하지 않았습니다. 따라서 Mock 실패 시 Shakedown 미호출 테스트는 배포 Mock 구현 시 추가해야 합니다.
+## 배포·장애 처리
 
-## 10/9 실제 연동 및 팀 확인 사항
+- 로컬 경로 또는 공개 GitHub HTTPS 저장소, 분석된 앱 디렉터리의 Dockerfile 필요. 이 모노레포는 `samples/kty-board` 경로 사용.
+- 실제 checkout을 재분석합니다. Dockerfile 코드를 실행하므로 신뢰하는 저장소만 사용하세요.
+- 로컬 배포는 PostgreSQL 샘플용: replicas=1, sticky_sessions=false. DB 비밀번호는 Local Target의 `db_password` secret reference 사용. 프로파일별 env 자동 전달은 미지원.
+- 배포마다 새 이미지/스택/볼륨을 만듭니다. 기존 DB를 이어 쓰는 업데이트와 성공 배포 자동 정리는 미지원.
+- 빌드 900초, Local readiness 300초, 시운전 폴링 180초, 개별 HTTP 요청 20초 제한. 시운전 서비스 자체 마감 시간에는 진행 중 HTTP/접속 재시도를 취소합니다. 이미 접수된 쓰기를 되돌리지는 않습니다.
+- 배포/비교 중 예외가 나면 이번 요청으로 만든 Local Target만 DELETE 시도합니다. 기존 외부 대상은 삭제하지 않습니다. BLOCKED/WARN 판정만으로 리소스를 삭제하지 않습니다. Local Target DELETE는 진단 로그·DB 볼륨을 보존합니다.
+- 재시작 시 미완료 기록은 failed로 전환. 자동 재실행하지 않습니다. SQLite 기록은 `apps/engine/.data`에 저장됩니다.
+- 엔진/Target/Shakedown 서비스는 loopback에 유지합니다. 엔진은 localhost/127.0.0.1:3700 Origin만 허용하고 내부 호출은 9101/9201로 고정됩니다. 이는 프로덕션 인증 체계가 아닙니다.
 
-1. Local/AWS 담당자가 구현하는 Target API의 POST 202 → GET 폴링 연결. `ready`는 공개 URL의 health check를 인프라가 통과했다는 의미를 그대로 사용하고 Engine은 기능 검사나 중복 health check를 구현하지 않습니다.
-2. 모든 대상 ready 후 Shakedown 담당자의 POST 202 → GET 폴링 연결. StepDiff/Verdict/Report를 전달하고 Engine에서 Playwright·단계 비교·AI 원인 보고서를 생성하지 않습니다.
-3. 공통 이미지 빌드·레지스트리 업로드 책임과 image 공급 방식 확정. 실제 빌드, 자동 수정·재배포, 승격은 현재 지원하지 않습니다.
-4. secret_env 이름 → 인프라 secret_refs 이름 매핑 확정. 현재 응답의 마스킹 값은 실제 secret이 등록되었음을 의미하지 않습니다. 비민감 환경변수 참조의 별도 입력 흐름도 협의해야 합니다.
-5. Analysis의 DB 이름과 Target API database.engine enum 간 Adapter 매핑 확인. 기존 분석기의 `postgresql`은 Target의 `postgres`와 이름이 다르고, mariadb/mongodb/sqlite는 Target enum에 없습니다. 공통 Contracts를 임의로 변경하지 않았습니다.
-6. 호스트 포트 할당/Project.ports 책임, 활성 Spring 프로파일 선택, Shakedown WARN 처리, timeout/409/SSE 정책을 연동 때 확인합니다.
-7. engine.yaml은 targets 생략 기본값을 허용하고 TypeScript CreateProjectRequest는 필수로 선언합니다. 현재 Python은 OpenAPI 기본값을 적용하고 Dashboard 입력은 그대로 받습니다. fixture analysis_cost.items는 TS CostLedger에 없어 응답에 포함하지 않습니다. 향후 계약 통일이 필요하면 공통 담당자와 협의합니다.
+## 검증
 
-Docker/AWS/Cloudflare 실제 배포, 공통 이미지 빌드, AI 호출, commit/push/merge는 수행하지 않았습니다. 모든 파일 변경은 `apps/engine` 안에만 있습니다.
+```sh
+apps/engine/.venv/bin/python -m pytest apps/engine/tests -q
+npm test -w @shakedown/shakedown
+npm run build:web
+npm run lint:web
+```
+
+실제 컨테이너 통합 재현은 `docs/integration-audit-2026-10-08.md`를 참고하세요. 정적 분석은 단순 manifest/annotation 기반이며 실행 시 설정을 확정하지 않습니다. PASS는 실행한 HTTP 시나리오에만 해당하며 브라우저 JS 동작·보안·AWS 운영 적합성을 보장하지 않습니다.

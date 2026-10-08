@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Isolated PostgreSQL + two real app containers; no AWS calls. Removes only its own resources."""
 import http.client as http_client
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import threading
+import urllib.request
 import json, os, secrets, subprocess, tempfile, time, urllib.parse
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
@@ -46,6 +49,57 @@ def check(condition, message):
     assert condition, message
     checks.append(message); print('PASS:', message, flush=True)
 
+def engine_compare(ports, expected):
+    """Optional real Engine → Shakedown test against two round-robin app instances."""
+    engine = os.environ.get('ENGINE_SMOKE_URL')
+    if not engine: return
+    parsed = urllib.parse.urlsplit(engine)
+    if parsed.hostname not in {'127.0.0.1', 'localhost'} or parsed.scheme != 'http':
+        raise ValueError('ENGINE_SMOKE_URL must be a loopback HTTP engine')
+    baseline = os.environ['ENGINE_SMOKE_BASELINE']
+    project = os.environ['ENGINE_SMOKE_PROJECT']
+    lock = threading.Lock()
+    counter = [0]
+    class Proxy(BaseHTTPRequestHandler):
+        def log_message(self, *_): pass
+        def forward(self):
+            with lock:
+                port = ports[counter[0] % len(ports)]; counter[0] += 1
+            upstream = http_client.HTTPConnection('127.0.0.1', port, timeout=10)
+            size = int(self.headers.get('Content-Length', '0'))
+            headers = {k:v for k,v in self.headers.items() if k.lower() not in {'host','connection'}}
+            upstream.request(self.command, self.path, self.rfile.read(size) if size else None, headers)
+            response = upstream.getresponse(); body = response.read()
+            self.send_response(response.status)
+            for k,v in response.getheaders():
+                if k.lower() not in {'connection','transfer-encoding','content-length'}: self.send_header(k,v)
+            self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+            upstream.close()
+        do_GET = do_POST = forward
+    proxy = ThreadingHTTPServer(('127.0.0.1',0), Proxy)
+    thread = threading.Thread(target=proxy.serve_forever, daemon=True); thread.start()
+    def api(path, payload=None):
+        request = urllib.request.Request(engine + path, data=json.dumps(payload).encode() if payload else None, headers={'Content-Type':'application/json'})
+        with urllib.request.urlopen(request, timeout=20) as response: return json.load(response)
+    try:
+        d = api('/api/projects/' + project + '/comparisons', {'baseline':{'name':'local','url':baseline}, 'candidate':{'name':'candidate','url':f'http://127.0.0.1:{proxy.server_port}'}})
+        end = time.monotonic()+190
+        while time.monotonic()<end:
+            d = api('/api/deployments/'+d['id'])
+            if d['status'] in {'promoted','warned','blocked','failed'}: break
+            time.sleep(.25)
+        assert d['status'] == ('promoted' if expected == 'PASS' else 'blocked'), d.get('error',d['status'])
+        attempt = d['attempts'][0]
+        check(attempt['verdict']['status'] == expected and len(attempt['steps']) == 8, 'Engine → Shakedown → 8-step ' + expected)
+        if expected == 'BLOCKED':
+            check(attempt['report']['by']=='rule', 'BLOCKED includes the rule-based cause report')
+            instances = {h['instance'] for step in attempt['steps'] for h in step['cloud']['hops'] if h.get('instance')}
+            check(len(instances)==2, 'shakedown hop evidence identifies both real instances')
+        assert d['traffic_blocked'] is False
+        print('Deployment evidence:', d['id'], flush=True)
+    finally:
+        proxy.shutdown(); proxy.server_close(); thread.join()
+
 try:
     docker('network', 'create', NETWORK)
     with tempfile.TemporaryDirectory(prefix=PREFIX) as directory:
@@ -71,11 +125,13 @@ try:
         cross = http(b, '/board', cookie=cookie)
         check(cross[0] == 302 and cross[1]['location'].endswith('/'), 'memory session fails on another healthy instance')
         check(http(a, '/')[1]['x-instance-id'] != http(b, '/')[1]['x-instance-id'], 'response evidence distinguishes two instances')
+        engine_compare([a,b], 'BLOCKED')
         docker('rm', '-f', '-v', first, second)
         first,a = app(appenv, 'jdbc-a', 'session-jdbc'); second,b = app(appenv, 'jdbc-b', 'session-jdbc')
         login = http(a, '/login', 'POST', {'email':email,'password':userpass}); assert login[0] == 302
         cookie = login[1]['set-cookie'].split(';')[0]
         check(all(http(port, '/board', cookie=cookie)[0] == 200 for port in [a,b] * 5), 'JDBC session passes 10 alternating requests across instances')
+        engine_compare([a,b], 'PASS')
         title = 'persistent-' + PREFIX
         written = http(b, '/api/posts/write', 'POST', {'title':title,'content':'durable evidence'}, cookie)
         check(written[0] == 302 and written[1]['location'].endswith('/board'), 'authenticated cross-instance post creation succeeds')

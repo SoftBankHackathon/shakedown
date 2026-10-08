@@ -1,0 +1,756 @@
+{
+  "id": "dep_comparison_example",
+  "project_id": "prj_example",
+  "created": 1791466985.1215072,
+  "status": "promoted",
+  "shakedown": true,
+  "autofix": false,
+  "options": {},
+  "targets": {
+    "local": {
+      "status": "external",
+      "label": "Existing environment (not managed by engine)",
+      "url": "http://127.0.0.1:18080"
+    },
+    "candidate": {
+      "status": "external",
+      "label": "Existing environment (not managed by engine)",
+      "url": "https://candidate.example.test"
+    }
+  },
+  "attempts": [
+    {
+      "n": 1,
+      "options": {},
+      "steps": [
+        {
+          "index": 1,
+          "baseline": "local",
+          "candidate": "candidate",
+          "title": "Open sign-up page",
+          "local": {
+            "index": 1,
+            "title": "Open sign-up page",
+            "status": "passed",
+            "error": null,
+            "final_path": "/join",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/join",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "path",
+                "ok": true,
+                "detail": "ended on /join"
+              }
+            ],
+            "elapsed_ms": 2
+          },
+          "cloud": {
+            "index": 1,
+            "title": "Open sign-up page",
+            "status": "passed",
+            "error": null,
+            "final_path": "/join",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/join",
+                "status": 200,
+                "instance": "example-instance"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "path",
+                "ok": true,
+                "detail": "ended on /join"
+              }
+            ],
+            "elapsed_ms": 6
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 2,
+          "baseline": "local",
+          "candidate": "candidate",
+          "title": "Create a test account",
+          "local": {
+            "index": 2,
+            "title": "Create a test account",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/join",
+                "status": 302,
+                "instance": null
+              },
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "elapsed_ms": 10
+          },
+          "cloud": {
+            "index": 2,
+            "title": "Create a test account",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/join",
+                "status": 302,
+                "instance": "example-instance"
+              },
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": "example-instance"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "elapsed_ms": 27
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 3,
+          "baseline": "local",
+          "candidate": "candidate",
+          "title": "Open sign-in page",
+          "local": {
+            "index": 3,
+            "title": "Open sign-in page",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "elapsed_ms": 3
+          },
+          "cloud": {
+            "index": 3,
+            "title": "Open sign-in page",
+            "status": "passed",
+            "error": null,
+            "final_path": "/",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/",
+                "status": 200,
+                "instance": "example-instance"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "elapsed_ms": 7
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 4,
+          "baseline": "local",
+          "candidate": "candidate",
+          "title": "Sign in",
+          "local": {
+            "index": 4,
+            "title": "Sign in",
+            "status": "passed",
+            "error": null,
+            "final_path": "/board",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/login",
+                "status": 302,
+                "instance": null
+              },
+              {
+                "method": "GET",
+                "path": "/board",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "elapsed_ms": 13
+          },
+          "cloud": {
+            "index": 4,
+            "title": "Sign in",
+            "status": "passed",
+            "error": null,
+            "final_path": "/board",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/login",
+                "status": 302,
+                "instance": "example-instance"
+              },
+              {
+                "method": "GET",
+                "path": "/board",
+                "status": 200,
+                "instance": "example-instance"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              }
+            ],
+            "elapsed_ms": 42
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 5,
+          "baseline": "local",
+          "candidate": "candidate",
+          "title": "Open the editor",
+          "local": {
+            "index": 5,
+            "title": "Open the editor",
+            "status": "passed",
+            "error": null,
+            "final_path": "/write",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/write",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "path",
+                "ok": true,
+                "detail": "ended on /write"
+              }
+            ],
+            "elapsed_ms": 3
+          },
+          "cloud": {
+            "index": 5,
+            "title": "Open the editor",
+            "status": "passed",
+            "error": null,
+            "final_path": "/write",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/write",
+                "status": 200,
+                "instance": "example-instance"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "path",
+                "ok": true,
+                "detail": "ended on /write"
+              }
+            ],
+            "elapsed_ms": 7
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 6,
+          "baseline": "local",
+          "candidate": "candidate",
+          "title": "Publish a post",
+          "local": {
+            "index": 6,
+            "title": "Publish a post",
+            "status": "passed",
+            "error": null,
+            "final_path": "/board",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/api/posts/write",
+                "status": 302,
+                "instance": null
+              },
+              {
+                "method": "GET",
+                "path": "/board",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'[shakedown] post 1132f7' shown"
+              }
+            ],
+            "elapsed_ms": 16
+          },
+          "cloud": {
+            "index": 6,
+            "title": "Publish a post",
+            "status": "passed",
+            "error": null,
+            "final_path": "/board",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/api/posts/write",
+                "status": 302,
+                "instance": "example-instance"
+              },
+              {
+                "method": "GET",
+                "path": "/board",
+                "status": 200,
+                "instance": "example-instance"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'[shakedown] post 1132f7' shown"
+              }
+            ],
+            "elapsed_ms": 36
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 7,
+          "baseline": "local",
+          "candidate": "candidate",
+          "title": "Open the new post",
+          "local": {
+            "index": 7,
+            "title": "Open the new post",
+            "status": "passed",
+            "error": null,
+            "final_path": "/posts/4",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/posts/4",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'Shakedown body 1132f7. If you can read this, writes reach the DB.' shown"
+              }
+            ],
+            "elapsed_ms": 7
+          },
+          "cloud": {
+            "index": 7,
+            "title": "Open the new post",
+            "status": "passed",
+            "error": null,
+            "final_path": "/posts/1",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "GET",
+                "path": "/posts/1",
+                "status": 200,
+                "instance": "example-instance"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'Shakedown body 1132f7. If you can read this, writes reach the DB.' shown"
+              }
+            ],
+            "elapsed_ms": 22
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        },
+        {
+          "index": 8,
+          "baseline": "local",
+          "candidate": "candidate",
+          "title": "Leave a comment",
+          "local": {
+            "index": 8,
+            "title": "Leave a comment",
+            "status": "passed",
+            "error": null,
+            "final_path": "/posts/4/view",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/api/comments",
+                "status": 302,
+                "instance": null
+              },
+              {
+                "method": "GET",
+                "path": "/posts/4/view",
+                "status": 200,
+                "instance": null
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'shakedown comment 1132f7' shown"
+              }
+            ],
+            "elapsed_ms": 15
+          },
+          "cloud": {
+            "index": 8,
+            "title": "Leave a comment",
+            "status": "passed",
+            "error": null,
+            "final_path": "/posts/1/view",
+            "final_status": 200,
+            "hops": [
+              {
+                "method": "POST",
+                "path": "/api/comments",
+                "status": 302,
+                "instance": "example-instance"
+              },
+              {
+                "method": "GET",
+                "path": "/posts/1/view",
+                "status": 200,
+                "instance": "example-instance"
+              }
+            ],
+            "checks": [
+              {
+                "name": "http",
+                "ok": true,
+                "detail": "HTTP 200"
+              },
+              {
+                "name": "text",
+                "ok": true,
+                "detail": "'shakedown comment 1132f7' shown"
+              }
+            ],
+            "elapsed_ms": 35
+          },
+          "kind": "same",
+          "severity": "none",
+          "reasons": [],
+          "classified_by": "rule"
+        }
+      ],
+      "duration_s": 1.054238292039372,
+      "verdict": {
+        "status": "PASS",
+        "first_divergence": null,
+        "summary": "Both environments behaved the same on every step."
+      },
+      "report": null
+    }
+  ],
+  "timings": {
+    "total_s": 1.059614896774292
+  },
+  "ai_cost": {
+    "calls": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "krw": 0
+  },
+  "mode": "comparison",
+  "shakedown_id": "sd_example",
+  "scenario": {
+    "app_understanding": "Rule-based journey (AI unavailable)",
+    "steps": [
+      {
+        "title": "Open sign-up page",
+        "action": "visit",
+        "path": "/join",
+        "form_action": null,
+        "fields": [],
+        "link_text": null,
+        "expect": {
+          "path_startswith": "/join",
+          "text_contains": []
+        }
+      },
+      {
+        "title": "Create a test account",
+        "action": "submit_form",
+        "path": null,
+        "form_action": "/join",
+        "fields": [
+          {
+            "name": "email",
+            "value": "{{email}}"
+          },
+          {
+            "name": "nickname",
+            "value": "{{nickname}}"
+          },
+          {
+            "name": "password",
+            "value": "{{password}}"
+          }
+        ],
+        "link_text": null,
+        "expect": {
+          "path_startswith": null,
+          "text_contains": []
+        }
+      },
+      {
+        "title": "Open sign-in page",
+        "action": "visit",
+        "path": "/",
+        "form_action": null,
+        "fields": [],
+        "link_text": null,
+        "expect": {
+          "path_startswith": null,
+          "text_contains": []
+        }
+      },
+      {
+        "title": "Sign in",
+        "action": "submit_form",
+        "path": null,
+        "form_action": "/login",
+        "fields": [
+          {
+            "name": "email",
+            "value": "{{email}}"
+          },
+          {
+            "name": "password",
+            "value": "{{password}}"
+          }
+        ],
+        "link_text": null,
+        "expect": {
+          "path_startswith": null,
+          "text_contains": []
+        }
+      },
+      {
+        "title": "Open the editor",
+        "action": "visit",
+        "path": "/write",
+        "form_action": null,
+        "fields": [],
+        "link_text": null,
+        "expect": {
+          "path_startswith": "/write",
+          "text_contains": []
+        }
+      },
+      {
+        "title": "Publish a post",
+        "action": "submit_form",
+        "path": null,
+        "form_action": "/api/posts/write",
+        "fields": [
+          {
+            "name": "title",
+            "value": "{{title}}"
+          },
+          {
+            "name": "content",
+            "value": "{{content}}"
+          }
+        ],
+        "link_text": null,
+        "expect": {
+          "path_startswith": null,
+          "text_contains": [
+            "{{title}}"
+          ]
+        }
+      },
+      {
+        "title": "Open the new post",
+        "action": "click_link",
+        "path": null,
+        "form_action": null,
+        "fields": [],
+        "link_text": "{{title}}",
+        "expect": {
+          "path_startswith": null,
+          "text_contains": [
+            "{{content}}"
+          ]
+        }
+      },
+      {
+        "title": "Leave a comment",
+        "action": "submit_form",
+        "path": null,
+        "form_action": "/api/comments",
+        "fields": [
+          {
+            "name": "content",
+            "value": "{{comment}}"
+          }
+        ],
+        "link_text": null,
+        "expect": {
+          "path_startswith": null,
+          "text_contains": [
+            "{{comment}}"
+          ]
+        }
+      }
+    ]
+  },
+  "scenario_source": "fallback",
+  "release_gate": "passed",
+  "traffic_blocked": false,
+  "finished": 1791466986.181122
+}
