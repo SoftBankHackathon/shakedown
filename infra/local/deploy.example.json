@@ -1,0 +1,10 @@
+{
+  "deployment_id": "dep_localdemo",
+  "project_id": "prj_board",
+  "image": "shakedown/kty-board:local",
+  "port": 8080,
+  "health_path": "/health",
+  "database": { "engine": "postgres", "name": "board_db" },
+  "secret_refs": { "SPRING_DATASOURCE_PASSWORD": "db_password" },
+  "options": { "replicas": 1, "sticky_sessions": false, "tz": "Asia/Seoul" }
+}

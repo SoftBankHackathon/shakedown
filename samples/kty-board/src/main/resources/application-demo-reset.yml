@@ -1,0 +1,6 @@
+# Demo only: reproduce data loss on app restart with the SAME PostgreSQL engine.
+# Normal configuration uses update and retains rows.
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: create
