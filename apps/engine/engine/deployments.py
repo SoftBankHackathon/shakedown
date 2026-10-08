@@ -13,14 +13,33 @@ import uuid
 import httpx
 from engine.analyzer import RepoAnalyzer
 from engine.models import Model, Project
-from pydantic import Field
+from pydantic import Field, field_validator
+from urllib.parse import urlsplit
 from typing import Literal
 
-TERMINAL = {'deployed', 'promoted', 'blocked', 'failed'}
+TERMINAL = {'deployed', 'promoted', 'warned', 'blocked', 'failed'}
+
+class Endpoint(Model):
+    name: str = Field(min_length=1, max_length=40, pattern=r'^[a-z][a-z0-9_-]*$')
+    url: str
+
+    @field_validator('url')
+    @classmethod
+    def valid_url(cls, value):
+        p = urlsplit(value)
+        if p.scheme not in {'http', 'https'} or not p.hostname or p.username or p.password or p.query or p.fragment or p.path not in {'', '/'}:
+            raise ValueError('Use an HTTP(S) origin without credentials, path, query or fragment.')
+        return value.rstrip('/')
+
+class CompareRequest(Model):
+    baseline: Endpoint
+    candidate: Endpoint
+
 
 class DeployRequest(Model):
     shakedown: bool = False
     autofix: bool = False
+    comparison: Endpoint | None = None
     targets: list[Literal['local']] = Field(default_factory=lambda: ['local'], min_length=1, max_length=1)
     options: dict[str, dict] = Field(default_factory=dict)
 
@@ -79,8 +98,20 @@ class LocalRunner:
         except (httpx.HTTPError, ValueError):
             raise DeploymentError('Local Target request failed; check the service on 127.0.0.1:9101 and its deployment logs.') from None
 
+class ShakedownClient:
+    def call(self, method, path, body=None):
+        try:
+            with httpx.Client(timeout=20, trust_env=False) as client:
+                response = client.request(method, 'http://127.0.0.1:9201' + path, json=body)
+                response.raise_for_status()
+                return response.json()
+        except (httpx.HTTPError, ValueError):
+            raise DeploymentError('Shakedown request failed; check 127.0.0.1:9201. No PASS was recorded.') from None
+
 class DeploymentStore:
-    def __init__(self, path: Path, runner=None, poll_seconds=1, timeout=300):
+    def __init__(self, path: Path, runner=None, poll_seconds=1, timeout=300, shakedown=None, shakedown_timeout=180):
+        self.shakedown = shakedown or ShakedownClient()
+        self.shakedown_timeout = shakedown_timeout
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self.runner = runner or LocalRunner()
@@ -88,8 +119,9 @@ class DeploymentStore:
         self.pool = ThreadPoolExecutor(max_workers=2)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS deployments (id TEXT PRIMARY KEY, project_id TEXT, status TEXT, payload TEXT)')
-            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS active_project ON deployments(project_id) WHERE status NOT IN ('deployed','promoted','blocked','failed')")
-            rows = db.execute("SELECT payload FROM deployments WHERE status NOT IN ('deployed','promoted','blocked','failed')").fetchall()
+            db.execute('DROP INDEX IF EXISTS active_project')
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS active_project ON deployments(project_id) WHERE status NOT IN ('deployed','promoted','warned','blocked','failed')")
+            rows = db.execute("SELECT payload FROM deployments WHERE status NOT IN ('deployed','promoted','warned','blocked','failed')").fetchall()
             for row in rows:
                 d = json.loads(row[0]); d.update(status='failed', finished=time.time(), error='Engine restarted during deployment. Inspect Local Target resources before retrying.')
                 db.execute('UPDATE deployments SET status=?, payload=? WHERE id=?', ('failed', json.dumps(d), d['id']))
@@ -116,8 +148,12 @@ class DeploymentStore:
         return [json.loads(r[0]) for r in rows]
 
     def start(self, project: Project, request: DeployRequest):
-        if request.shakedown or request.autofix:
-            raise DeploymentError('Shakedown and autofix are not connected. Disable both to deploy locally.')
+        if request.autofix:
+            raise DeploymentError('Automatic fixes are not supported; review the suggested fix manually.')
+        if request.shakedown != (request.comparison is not None):
+            raise DeploymentError('Shakedown requires an existing comparison endpoint; omit it for deploy-only.')
+        if request.comparison and request.comparison.name == 'local':
+            raise DeploymentError('The comparison endpoint must have a different name from local.')
         if 'local' not in project.targets:
             raise DeploymentError('Project must include the local target.')
         opts = {'replicas': 1, 'sticky_sessions': False, 'tz': 'Asia/Seoul'}
@@ -132,17 +168,17 @@ class DeploymentStore:
         if set(opts) != {'replicas','sticky_sessions','tz'} or opts['replicas'] != 1 or opts['sticky_sessions'] is not False:
             raise DeploymentError('Local deployment supports one replica without sticky sessions.')
         d = dict(id='dep_' + uuid.uuid4().hex, project_id=project.id, created=time.time(), status='queued',
-                 shakedown=False, autofix=False, options={'local': opts}, targets={'local': {'status':'pending','label':'Local Docker'}},
+                 shakedown=request.shakedown, autofix=False, options={'local': opts}, targets={'local': {'status':'pending','label':'Local Docker'}},
                  attempts=[], timings={}, ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0))
         try:
             with self.connect() as db:
                 db.execute('INSERT INTO deployments VALUES (?,?,?,?)', (d['id'], project.id, d['status'], json.dumps(d)))
         except sqlite3.IntegrityError:
             raise Busy('A deployment is already running for this project.') from None
-        self.pool.submit(self.run, project, json.loads(json.dumps(d)))
+        self.pool.submit(self.run, project, json.loads(json.dumps(d)), request.comparison)
         return d
 
-    def run(self, project, d):
+    def run(self, project, d, comparison=None):
         submitted = False
         try:
             d['status'] = 'building'; self.save(d)
@@ -162,7 +198,6 @@ class DeploymentStore:
                 state = self.runner.call('GET', '/deployments/' + d['id'])
                 if state.get('status') == 'failed': raise DeploymentError('Local Target deployment failed; inspect its logs.')
                 if state.get('status') == 'ready':
-                    from urllib.parse import urlsplit
                     url = urlsplit(state.get('url', ''))
                     if url.scheme != 'https' or not (url.hostname or '').endswith('.trycloudflare.com'):
                         raise DeploymentError('Local Target returned an invalid public URL.')
@@ -173,6 +208,8 @@ class DeploymentStore:
                     break
                 time.sleep(self.poll_seconds)
             else: raise DeploymentError('Local deployment readiness timed out.')
+            if comparison:
+                self.compare(d, Endpoint(name='local', url=d['targets']['local']['url']), comparison, project)
         except Exception as exc:
             d['status'] = 'failed'
             d['error'] = str(exc) if isinstance(exc, DeploymentError) else 'Deployment failed; inspect the local engine environment.'
@@ -182,6 +219,82 @@ class DeploymentStore:
                 except Exception: d['error'] += ' Cleanup failed; inspect Local Target before retrying.'
         finally:
             d['finished'] = time.time(); d['timings']['total_s'] = d['finished'] - d['created']; self.save(d)
+
+    def start_comparison(self, project, request: CompareRequest):
+        if request.baseline.name == request.candidate.name or request.baseline.url == request.candidate.url:
+            raise DeploymentError('Use two distinct environments with distinct names.')
+        d = dict(id='dep_' + uuid.uuid4().hex, project_id=project.id, created=time.time(), status='queued',
+                 shakedown=True, autofix=False, options={}, targets={}, attempts=[], timings={},
+                 ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0), mode='comparison')
+        try:
+            with self.connect() as db:
+                db.execute('INSERT INTO deployments VALUES (?,?,?,?)', (d['id'], project.id, d['status'], json.dumps(d)))
+        except sqlite3.IntegrityError:
+            raise Busy('A deployment or comparison is already running for this project.') from None
+        self.pool.submit(self.run_comparison, project, json.loads(json.dumps(d)), request)
+        return d
+
+    def run_comparison(self, project, d, request):
+        try:
+            self.compare(d, request.baseline, request.candidate, project)
+        except Exception as exc:
+            d['status'] = 'failed'
+            d['error'] = str(exc) if isinstance(exc, DeploymentError) else 'Comparison failed; no PASS was recorded.'
+        finally:
+            d['finished'] = time.time(); d['timings']['total_s'] = d['finished'] - d['created']; self.save(d)
+
+    def compare(self, d, baseline, candidate, project):
+        if baseline.url == candidate.url:
+            raise DeploymentError('Cannot compare an environment with itself.')
+        # Registered URLs are existing environments. Never deploy/delete someone else's resources.
+        for target in (baseline, candidate):
+            if target.name not in d['targets']:
+                d['targets'][target.name] = dict(status='external', label='Existing environment (not managed by engine)', url=target.url)
+        d['status'] = 'shakedown'
+        d['attempts'] = [dict(n=1, options=d['options'], steps=[])]
+        self.save(d)
+        body = dict(deployment_id=d['id'], project_id=project.id, baseline=baseline.model_dump(),
+                    candidates=[candidate.model_dump()], hints={'uses_server_session': project.analysis.uses_server_session})
+        started = time.monotonic()
+        state = self.shakedown.call('POST', '/shakedowns', body)
+        id = state.get('shakedown_id', '')
+        import re
+        if not re.fullmatch(r'sd_[a-zA-Z0-9]+', id):
+            raise DeploymentError('Invalid shakedown ID returned by runner.')
+        d['shakedown_id'] = id
+        while True:
+            if time.monotonic() - started >= self.shakedown_timeout:
+                raise DeploymentError('Shakedown timed out; no PASS was recorded.')
+            attempt = d['attempts'][0]
+            for key in ('scenario', 'scenario_source', 'ai_cost'):
+                if key in state: d[key] = state[key]
+            attempt['steps'] = state.get('steps', [])
+            attempt['duration_s'] = time.monotonic() - started
+            self.save(d)
+            if state.get('status') == 'failed':
+                raise DeploymentError('Shakedown failed (baseline unavailable or scenario failed); inspect runner logs and recorded steps.')
+            if state.get('status') == 'done':
+                verdict = state.get('verdict', {})
+                result = verdict.get('status')
+                steps = attempt['steps']
+                expected = len(d.get('scenario', {}).get('steps', []))
+                if not expected or len(steps) != expected or result not in {'PASS', 'WARN', 'BLOCKED'}:
+                    raise DeploymentError('Incomplete or invalid shakedown result; no PASS was recorded.')
+                if any(step.get('local', {}).get('status') != 'passed' for step in steps):
+                    raise DeploymentError('Baseline did not pass; comparison cannot be promoted.')
+                if result in {'PASS', 'WARN'} and any(step.get('cloud', {}).get('status') != 'passed' or step.get('severity') == 'critical' for step in steps):
+                    raise DeploymentError('Shakedown verdict contradicts its evidence; no PASS was recorded.')
+                attempt['verdict'] = verdict
+                attempt['report'] = state.get('report')
+                d['status'] = {'PASS':'promoted', 'WARN':'warned', 'BLOCKED':'blocked'}[result]
+                d['release_gate'] = 'blocked' if result == 'BLOCKED' else 'review' if result == 'WARN' else 'passed'
+                d['traffic_blocked'] = False
+                self.save(d)
+                return
+            if state.get('status') != 'running':
+                raise DeploymentError('Unknown shakedown state; no PASS was recorded.')
+            time.sleep(self.poll_seconds)
+            state = self.shakedown.call('GET', '/shakedowns/' + id)
 
     def close(self):
         self.pool.shutdown(wait=True)

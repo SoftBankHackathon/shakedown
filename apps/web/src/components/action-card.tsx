@@ -85,7 +85,7 @@ export const ActionCard = memo(function ActionCard({ deployment: d, projectName 
   const fixed = d.attempts.find((a) => a.applied_fix)?.applied_fix;
 
   const buildState: State = built ? "passed" : d.status === "building" ? "running" : d.status === "failed" ? "failed" : "pending";
-  const verdictState: State = d.status === "deployed" ? "pending" : done ? (d.status === "promoted" ? "passed" : "failed")
+  const verdictState: State = ["deployed", "warned"].includes(d.status) ? "pending" : done ? (d.status === "promoted" ? "passed" : "failed")
     : ["analyzing", "fixing"].includes(d.status) ? "running" : "pending";
 
   return (
@@ -109,7 +109,7 @@ export const ActionCard = memo(function ActionCard({ deployment: d, projectName 
 
       <div className="mt-5 overflow-x-auto">
         <div className="flex min-w-[760px] items-start gap-3">
-          <Stage name={t("pipe.source")}>
+          {d.mode !== "comparison" && <><Stage name={t("pipe.source")}>
             <Box title={projectName} state="passed" sub="GitHub" />
           </Stage>
           <Arrow />
@@ -117,13 +117,13 @@ export const ActionCard = memo(function ActionCard({ deployment: d, projectName 
             <Box title={t("pipe.image")} state={buildState} sub={built ? formatSeconds(d.timings.build_s!) : undefined} />
           </Stage>
           <Arrow />
-          <Stage name={t("stage.deploying")}>
+          </>}<Stage name={d.mode === "comparison" ? t("live.compareTitle") : t("stage.deploying")}>
             {names.map((name) => {
               const s = d.targets[name].status;
               const state: State = s === "ready" ? "passed" : s === "deploying" ? "running" : s === "failed" ? "failed" : "pending";
               const url = d.targets[name].url;
               const sub = s === "deploying" && fixed?.target === name ? t("pipe.redeploy", { fix: fixed.option })
-                : s === "ready" && url ? url.replace(/^https?:\/\//, "") : undefined;
+                : (s === "ready" || s === "external") && url ? url.replace(/^https?:\/\//, "") : undefined;
               return <Box key={name} title={targetLabel(name)} state={state} sub={sub} />;
             })}
           </Stage>

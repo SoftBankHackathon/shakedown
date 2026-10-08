@@ -15,6 +15,7 @@ const progressKey = (d: Deployment) =>
 
 export default function Home() {
   const t = useT();
+  const [comparisonUrl, setComparisonUrl] = useState("");
   const [repo, setRepo] = useState("");
   const [targets, setTargets] = useState<TargetName[]>(MOCK ? DEFAULT_TARGETS : ["local"]);
   const [actions, setActions] = useState<ActionRow[]>([]);
@@ -74,7 +75,7 @@ export default function Home() {
     try {
       const project = await api.createProject({ repo: repo.trim(), targets });
       name = project.name;
-      const deployment = await api.deploy(project.id, { shakedown: MOCK, autofix: MOCK, options: {}, targets: MOCK ? targets : ["local"] });
+      const deployment = await api.deploy(project.id, { shakedown: MOCK || !!comparisonUrl.trim(), autofix: MOCK, options: {}, targets: MOCK ? targets : ["local"], comparison: !MOCK && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
       setActions((cur) => [{ deployment, projectName: project.name }, ...cur]);
     } catch (err) {
       // The engine owns the "one running deployment per project" rule and answers 409.
@@ -129,6 +130,7 @@ export default function Home() {
             )}
           </button>
         </div>
+        {!MOCK && <label className="block text-sm">{t("live.candidate")}<input type="url" value={comparisonUrl} onChange={(e) => setComparisonUrl(e.target.value)} placeholder="https://comparison.example.com" className="mt-2 w-full rounded-lg border border-line bg-bg p-3" /><span className="text-xs text-muted">{t("live.compareHint")} {t("live.externalHint")}</span></label>}
         <fieldset>
           <legend className="text-xs font-semibold uppercase tracking-wide text-muted">{t("home.targets")}</legend>
           <div className="mt-2 flex flex-wrap gap-2">

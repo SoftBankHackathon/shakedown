@@ -63,7 +63,7 @@ HOST=0.0.0.0 PORT=9201 npm start -w @shakedown/shakedown   # 엔진이 다른 PC
 | 5 | 그 밖 | 처음 달라진 단계 기준 일반 설명 | 없음 |
 
 - `auto_applicable`은 모두 false입니다. 아직 어느 대상도 이 설정을 자동으로 적용하지 못하기 때문입니다
-- `hop.instance`(응답한 서버 이름)는 인프라가 헤더를 주지 않아 항상 null이고, 보고서는 이 값에 기대지 않습니다
+- `hop.instance`는 응답의 `X-Instance-Id`를 기록하며 헤더가 없으면 null입니다. 규칙 보고서의 세션 원인은 휴리스틱 추정이므로 hop 증거와 실제 인프라 설정을 함께 확인해야 합니다.
 
 ### AI 보고서 (Claude)
 
@@ -84,6 +84,8 @@ npm start -w @shakedown/shakedown                     # .env를 자동으로 읽
 - AI가 낸 수정안도 `auto_applicable: false`입니다. 사람이 확인한 뒤 적용합니다
 - 비용은 `ai_cost`(호출 수, 토큰, 원화)에 기록합니다. 실측: 보고서 1건 약 7초, 입력 1,889·출력 435 토큰, 약 23원
 
+시운전 마감 시간에는 진행 중인 HTTP 요청과 접속 재시도를 취소합니다. 이미 서버가 접수한 쓰기를 되돌리지는 않으므로 테스트 전용 환경을 사용하세요.
+
 ## 테스트
 
 ```bash
@@ -96,3 +98,7 @@ npm test -w @shakedown/shakedown
 
 - 10/8: 주소 2개를 넣으면 PASS / BLOCKED 결과 JSON (이 README의 CLI)
 - 10/9: 엔진용 API(`POST /shakedowns`, 포트 9201), 원인 보고서가 대시보드에 표시됨
+
+### Quick Tunnel DNS
+
+Local Target과 동일하게 HTTPS `*.trycloudflare.com`의 로컬 DNS miss에만 1.1.1.1/1.0.0.1 조회를 사용합니다. 정상 시스템 DNS와 다른 호스트는 그대로 사용합니다. 원래 hostname/SNI 및 TLS 인증서 검증을 유지하며 OS DNS 설정을 바꾸거나 이미 전송한 POST를 재시도하지 않습니다.

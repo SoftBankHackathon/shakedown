@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from engine.deployments import DeploymentStore, DeployRequest, DeploymentError, Busy, TERMINAL
+from engine.deployments import DeploymentStore, DeployRequest, CompareRequest, DeploymentError, Busy, TERMINAL
 from engine.analyzer import AnalysisError
 from engine.models import CreateProjectRequest, Project
 from engine.projects import DATA_DIR, ProjectStore
@@ -86,6 +86,18 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
         except DeploymentError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
+    @api.post('/api/projects/{project_id}/comparisons', status_code=202)
+    def compare(project_id: str, body: CompareRequest):
+        found = api.state.store.get(project_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail='Project not found.')
+        try:
+            return api.state.deployments.start_comparison(found, body)
+        except Busy as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except DeploymentError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
     @api.get('/api/deployments/{deployment_id}')
     def deployment(deployment_id: str):
         found = api.state.deployments.get(deployment_id)
@@ -101,11 +113,12 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
             while True:
                 d = api.state.deployments.get(deployment_id)
                 status = d['status']
-                if status != previous:
+                progress = (status, len(d.get('attempts', [{}])[-1].get('steps', [])) if d.get('attempts') else 0)
+                if progress != previous:
                     event = dict(ts=time.time(), kind='stage', status=status, message=status)
                     yield 'data: ' + json.dumps(event) + '\n\n'
                     yield 'data: ' + json.dumps(dict(ts=time.time(), kind='log', source='engine', line=status)) + '\n\n'
-                    previous = status
+                    previous = progress
                 if status in TERMINAL:
                     yield 'data: ' + json.dumps(dict(ts=time.time(), kind='done', status=status)) + '\n\n'
                     return

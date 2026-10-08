@@ -36,6 +36,7 @@ export function DeployReport({ dep }: { dep: Deployment }) {
     );
   }
 
+  if (dep.status === "warned" || dep.status === "failed") return <Section title={t("report.deployTitle")}><p>{dep.status === "warned" ? t("dep.warned") : t("dep.failed")}</p></Section>;
   if (dep.status === "deployed") return <Section title={t("report.deployTitle")}><p>{t("dep.deployed")}</p></Section>;
 
   const names = orderTargets(Object.keys(dep.targets));

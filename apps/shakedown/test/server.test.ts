@@ -182,9 +182,8 @@ test("실행 중 오류가 나면 failed와 오류 메시지를 돌려준다", a
 });
 
 test("마감 시간을 넘기면 failed로 끝내고, 그 뒤에 끝난 단계로 덮어쓰지 않는다", async () => {
-  const silent = createServer(() => {
-    /* 응답하지 않음 */
-  });
+  let requests = 0;
+  const silent = createServer(() => { requests++; });
   const base = await api({ deadlineMs: 200 });
   const { body } = await post(base, request(await board(), await listen(silent)));
   const done = await waitDone(base, body.shakedown_id);
@@ -193,9 +192,11 @@ test("마감 시간을 넘기면 failed로 끝내고, 그 뒤에 끝난 단계�
   assert.deepEqual(done.steps, []);
   assert.equal(done.verdict, undefined);
 
-  // 연결을 끊으면 뒤에 남은 실행이 마저 끝나며 진행 상황을 알린다. 기록은 그대로여야 한다.
+  // Deadline cancellation must prevent preflight retries and all subsequent writes.
+  const atDeadline = requests;
   silent.closeAllConnections();
   await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(requests, atDeadline);
   assert.deepEqual(await (await fetch(`${base}/shakedowns/${body.shakedown_id}`)).json(), done);
 });
 
