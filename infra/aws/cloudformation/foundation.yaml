@@ -1,0 +1,262 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Shakedown single-project demo foundation (ECS Fargate, ALB, private RDS)
+Parameters:
+  Name:
+    Type: String
+    Default: shakedown-board
+    AllowedPattern: '[a-z][a-z0-9-]{2,29}'
+  MysqlVersion:
+    Type: String
+    Default: 8.4.8
+    AllowedPattern: '8\.4\.[0-9]+'
+  DatabaseName:
+    Type: String
+    Default: board_db
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9_]{0,63}'
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: {Ref: Name}}]
+  Gateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: {VpcId: {Ref: Vpc}, InternetGatewayId: {Ref: Gateway}}
+  PublicA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: {Ref: Vpc}
+      CidrBlock: 10.42.0.0/24
+      AvailabilityZone: {Fn::Select: [0, {Fn::GetAZs: ''}]}
+  PublicB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: {Ref: Vpc}
+      CidrBlock: 10.42.1.0/24
+      AvailabilityZone: {Fn::Select: [1, {Fn::GetAZs: ''}]}
+  PrivateA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: {Ref: Vpc}
+      CidrBlock: 10.42.10.0/24
+      AvailabilityZone: {Fn::Select: [0, {Fn::GetAZs: ''}]}
+  PrivateB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: {Ref: Vpc}
+      CidrBlock: 10.42.11.0/24
+      AvailabilityZone: {Fn::Select: [1, {Fn::GetAZs: ''}]}
+  PublicRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: {Ref: Vpc}}
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties: {RouteTableId: {Ref: PublicRoutes}, DestinationCidrBlock: 0.0.0.0/0, GatewayId: {Ref: Gateway}}
+  RouteA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: {Ref: PublicRoutes}, SubnetId: {Ref: PublicA}}
+  RouteB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: {Ref: PublicRoutes}, SubnetId: {Ref: PublicB}}
+  AlbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public demo HTTP entry
+      VpcId: {Ref: Vpc}
+      SecurityGroupIngress: [{IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0}]
+  AppSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: App ingress only from ALB; outbound for ECR logs and DB
+      VpcId: {Ref: Vpc}
+      SecurityGroupIngress: [{IpProtocol: tcp, FromPort: 8080, ToPort: 8080, SourceSecurityGroupId: {Ref: AlbSg}}]
+  DbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: MySQL only from ECS tasks
+      VpcId: {Ref: Vpc}
+      SecurityGroupIngress: [{IpProtocol: tcp, FromPort: 3306, ToPort: 3306, SourceSecurityGroupId: {Ref: AppSg}}]
+  DbSubnets:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Isolated subnets without an internet route
+      SubnetIds: [{Ref: PrivateA}, {Ref: PrivateB}]
+  DbSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Shakedown demo DB password (never read by adapter)
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"board_admin"}'
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\\'
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: mysql
+      EngineVersion: {Ref: MysqlVersion}
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: '20'
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: false
+      PubliclyAccessible: false
+      DBName: {Ref: DatabaseName}
+      MasterUsername: board_admin
+      MasterUserPassword: {Fn::Sub: '{{resolve:secretsmanager:${DbSecret}:SecretString:password}}'}
+      DBSubnetGroupName: {Ref: DbSubnets}
+      VPCSecurityGroups: [{Ref: DbSg}]
+      BackupRetentionPeriod: 1
+      AutoMinorVersionUpgrade: true
+      CopyTagsToSnapshot: true
+  Repository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: {Ref: Name}
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: {ScanOnPush: true}
+      EncryptionConfiguration: {EncryptionType: AES256}
+  Logs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: {Fn::Sub: '/shakedown/${Name}'}
+      RetentionInDays: 7
+  Cluster:
+    Type: AWS::ECS::Cluster
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: PublicRoute
+    Properties:
+      Scheme: internet-facing
+      Type: application
+      Subnets: [{Ref: PublicA}, {Ref: PublicB}]
+      SecurityGroups: [{Ref: AlbSg}]
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: {Ref: Vpc}
+      Port: 8080
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Matcher: {HttpCode: '200'}
+      TargetGroupAttributes:
+        - {Key: stickiness.enabled, Value: 'false'}
+        - {Key: load_balancing.algorithm.type, Value: round_robin}
+        - {Key: deregistration_delay.timeout_seconds, Value: '5'}
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: {Ref: Alb}
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig: {StatusCode: '403', ContentType: text/plain, MessageBody: 'Shakedown: deployment unavailable'}
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      Policies:
+        - PolicyName: image-logs-secret
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - {Effect: Allow, Action: 'ecr:GetAuthorizationToken', Resource: '*'}
+              - Effect: Allow
+                Action: ['ecr:BatchCheckLayerAvailability', 'ecr:GetDownloadUrlForLayer', 'ecr:BatchGetImage']
+                Resource: {Fn::GetAtt: [Repository, Arn]}
+              - Effect: Allow
+                Action: ['logs:CreateLogStream', 'logs:PutLogEvents']
+                Resource: {Fn::GetAtt: [Logs, Arn]}
+              - {Effect: Allow, Action: 'secretsmanager:GetSecretValue', Resource: {Ref: DbSecret}}
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: 'sts:AssumeRole'}]
+  AdapterPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Attach to the explicitly chosen hackathon adapter principal; no DB-secret read
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: ['ecs:RegisterTaskDefinition', 'ecs:DescribeTaskDefinition', 'ecs:DescribeServices', 'ecs:ListTasks', 'ecs:DescribeTasks']
+            Resource: '*'
+          - Effect: Allow
+            Action: ['ecs:CreateService', 'ecs:UpdateService', 'ecs:DeleteService']
+            Resource: {Fn::Sub: 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${Cluster}/${Name}'}
+          - Effect: Allow
+            Action: ['ecs:RunTask']
+            Resource: {Fn::Sub: 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${Name}:*'}
+            Condition: {ArnEquals: {'ecs:cluster': {Fn::GetAtt: [Cluster, Arn]}}}
+          - Effect: Allow
+            Action: ['ecs:StopTask']
+            Resource: {Fn::Sub: 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${Cluster}/*'}
+          - Effect: Allow
+            Action: ['iam:PassRole']
+            Resource: [{Fn::GetAtt: [ExecutionRole, Arn]}, {Fn::GetAtt: [TaskRole, Arn]}]
+            Condition: {StringEquals: {'iam:PassedToService': ecs-tasks.amazonaws.com}}
+          - Effect: Allow
+            Action: ['iam:CreateServiceLinkedRole']
+            Resource: {Fn::Sub: 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS*'}
+            Condition: {StringEquals: {'iam:AWSServiceName': ecs.amazonaws.com}}
+          - {Effect: Allow, Action: 'elasticloadbalancing:ModifyListener', Resource: {Ref: Listener}}
+          - Effect: Allow
+            Action: ['elasticloadbalancing:ModifyTargetGroup', 'elasticloadbalancing:ModifyTargetGroupAttributes']
+            Resource: {Ref: TargetGroup}
+          - {Effect: Allow, Action: 'elasticloadbalancing:DescribeTargetHealth', Resource: '*'}
+          - {Effect: Allow, Action: 'ecr:DescribeImages', Resource: {Fn::GetAtt: [Repository, Arn]}}
+          - {Effect: Allow, Action: ['logs:DescribeLogStreams', 'logs:GetLogEvents'], Resource: {Fn::GetAtt: [Logs, Arn]}}
+  ImagePublisherPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Separate build/push permissions for the engine or CI
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - {Effect: Allow, Action: 'ecr:GetAuthorizationToken', Resource: '*'}
+          - Effect: Allow
+            Action: ['ecr:BatchCheckLayerAvailability', 'ecr:InitiateLayerUpload', 'ecr:UploadLayerPart', 'ecr:CompleteLayerUpload', 'ecr:PutImage', 'ecr:DescribeImages', 'ecr:BatchGetImage', 'ecr:GetDownloadUrlForLayer']
+            Resource: {Fn::GetAtt: [Repository, Arn]}
+Outputs:
+  ClusterArn: {Value: {Fn::GetAtt: [Cluster, Arn]}}
+  RepositoryUri: {Value: {Fn::GetAtt: [Repository, RepositoryUri]}}
+  Repository: {Value: {Ref: Repository}}
+  ServiceName: {Value: {Ref: Name}}
+  ListenerArn: {Value: {Ref: Listener}}
+  TargetGroupArn: {Value: {Ref: TargetGroup}}
+  PublicUrl: {Value: {Fn::Sub: 'http://${Alb.DNSName}'}}
+  SubnetIds: {Value: {Fn::Join: [',', [{Ref: PublicA}, {Ref: PublicB}]]}}
+  SecurityGroupId: {Value: {Ref: AppSg}}
+  ExecutionRoleArn: {Value: {Fn::GetAtt: [ExecutionRole, Arn]}}
+  TaskRoleArn: {Value: {Fn::GetAtt: [TaskRole, Arn]}}
+  LogGroup: {Value: {Ref: Logs}}
+  DbHost: {Value: {Fn::GetAtt: [Database, Endpoint.Address]}}
+  DbName: {Value: {Ref: DatabaseName}}
+  DbUsername: {Value: board_admin}
+  DbPasswordSecretArn: {Value: {Ref: DbSecret}}
+  AdapterPolicyArn: {Value: {Ref: AdapterPolicy}}
+  ImagePublisherPolicyArn: {Value: {Ref: ImagePublisherPolicy}}

@@ -70,3 +70,12 @@ Java Spring Boot를 활용한 웹 백엔드 게시판 프로젝트입니다.
 2. Gradle 빌드 후 `BoardApplication` 실행
 3. MySQL 서버 실행 및 `board_db` 생성 필수
 4. 브라우저에서 `localhost:8080` 접속
+
+## Shakedown AWS 공유 세션 시연
+
+이 브랜치는 같은 이미지에서 `demo,session-memory`와 `demo,session-jdbc`를 선택할 수 있습니다.
+`demo`에서만 `X-Instance-Id`가 응답에 포함됩니다. DB URL/사용자/비밀번호는 `SPRING_DATASOURCE_*` 환경변수로 전달합니다. 저장소의 하드코딩된 DB 비밀번호는 제거했습니다.
+
+일반 실행은 DDL `validate`이므로 최초 DB에는 `SPRING_PROFILES_ACTIVE=schema-init`으로 한 번 실행해 게시판 및 Spring Session 테이블을 준비하세요. 초기화 프로세스는 완료 후 종료합니다. 서비스를 시작할 때마다 schema-init을 실행하지 않습니다. 원래의 로컬 개발처럼 JPA 자동 갱신이 필요하면 개발 환경에 한해 `SPRING_JPA_HIBERNATE_DDL_AUTO=update`를 명시하세요.
+
+전체 실행 예시와 실제 두 컨테이너 검증: [AWS 모듈 README](../../infra/aws/README.md). 앱 컨테이너를 재시작할 때 Docker의 임의 할당 host port가 달라질 수 있으므로 테스트는 포트를 다시 조회합니다. AWS는 ALB 주소를 유지합니다.

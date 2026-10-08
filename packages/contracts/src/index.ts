@@ -149,3 +149,30 @@ export type DeployRequest = {
   autofix: boolean;
   options: Partial<Record<TargetName, Partial<TargetOptions>>>;
 };
+
+
+/** Target API v0.1.1 proposal — distinct from the engine's DeployRequest. */
+export type TargetDeployRequest = {
+  deployment_id: string;
+  project_id: string;
+  image: string;
+  port: number;
+  health_path: string;
+  env?: Record<string, string>;
+  secret_refs?: Record<string, string>;
+  database?: { engine: "mysql" | "postgres"; name: string };
+  options?: Partial<TargetOptions>;
+};
+export type TargetDeployment = {
+  deployment_id: string;
+  target: TargetName;
+  status: TargetState["status"];
+  url?: string;
+  instances?: number;
+  started_at?: string;
+  ready_at?: string;
+  error?: string;
+  info?: Record<string, string>;
+  commands?: string[];
+};
+export type TargetLogLine = { ts: string; source: "deploy" | "app" | "db"; line: string };

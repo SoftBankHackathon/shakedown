@@ -1,24 +1,34 @@
 openapi: 3.1.0
 info:
   title: Shakedown Target API
-  version: 0.1.0
+  version: 0.1.1
   description: |
-    > **상태: 초안 (v0.1.0, 2026-10-08)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 초안 (v0.1.1, 2026-10-08)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     배포 대상(인프라)이 구현하는 API. 엔진(apps/engine)이 호출합니다.
 
     - `local` 구현: infra/local (김태윤) — Docker + Cloudflare Tunnel
-    - `aws` 구현: infra/aws (김재환) — App Runner + RDS
+    - `aws` 구현: infra/aws (김재환) — ECS Fargate + ALB + RDS
 
     흐름: 엔진이 `POST /deployments`로 배포를 요청 → 인프라는 바로 202를 돌려주고 뒤에서 배포
     → 엔진이 `GET /deployments/{id}`를 폴링 → `status=ready`가 되면 `url`로 시운전 시작.
 
     약속
     - `ready`는 "컨테이너가 떴다"가 아니라 **`url`로 외부에서 접속해 health_path가 200을 준다**는 뜻
-    - `url`은 **공개 주소**여야 함 (로컬은 Tunnel 주소, AWS는 App Runner 주소). localhost 금지
+    - `url`은 **공개 주소**여야 함 (로컬은 Tunnel 주소, AWS는 ALB 주소). localhost 금지
     - 비밀값(DB 비밀번호 등)은 `secret_refs`로 이름만 받고, 값은 인프라가 각자의 저장소에서 꺼냄
     - 같은 `deployment_id`로 다시 요청하면 새로 만들지 않고 기존 결과를 돌려줌(멱등)
+
+    AWS 구현 제약 (v0.1.1 제안, 팀 통합 전)
+    - 미리 생성한 프로젝트 전용 스택, MySQL, replicas 1~2, sticky_sessions=false
+    - 허용 ECR 저장소의 image@sha256:digest 필수. 태그를 digest로 고정하는 책임은 엔진에 있음
+    - 환경변수는 SPRING_PROFILES_ACTIVE=demo,session-memory 또는 demo,session-jdbc만 허용
+    - DB 접속 정보는 인프라 설정에서 주입. secret_refs는 db_password 이름만 지원
+    - DELETE는 최신 배포의 ALB HTTP 403과 ECS 서비스 중지를 확인한 뒤 204
+    - 이전 배포 DELETE는 현재 서비스에 영향 없음. 삭제 후 GET은 404, 로그는 조회 가능
+    - 삭제된 ID 재사용, 같은 ID의 다른 요청, 동일 프로젝트 동시 변경은 409
+    - 재시작 시 미완료 배포는 공개 차단 후 failed. 새 ID로 재시도
 
     상태 확인 방식 (초안)
     - 엔진은 `GET /deployments/{deployment_id}`를 2~3초 간격으로 조회
@@ -59,13 +69,11 @@ paths:
             example:
               deployment_id: dep_53c6f5e052
               project_id: prj_59c0ee1d86
-              image: 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/shakedown/kty-board:dep_53c6f5e052
+              image: 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/shakedown-board@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
               port: 8080
               health_path: /
               env:
-                SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/board_db
-                SPRING_DATASOURCE_USERNAME: app
-                SPRING_JPA_HIBERNATE_DDL_AUTO: update
+                SPRING_PROFILES_ACTIVE: demo,session-memory
               secret_refs:
                 SPRING_DATASOURCE_PASSWORD: db_password
               database: { engine: mysql, name: board_db }
@@ -76,6 +84,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TargetDeployment" }
+        "409":
+          description: ID 충돌, 삭제된 ID 또는 프로젝트 동시 배포/정리
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "400":
           description: 요청 형식 오류 또는 지원하지 않는 옵션
           content:
@@ -97,26 +110,29 @@ paths:
                 deployment_id: dep_53c6f5e052
                 target: aws
                 status: ready
-                url: https://abcd1234.ap-northeast-2.awsapprunner.com
+                url: http://demo.ap-northeast-2.elb.amazonaws.com
                 instances: 2
                 started_at: "2026-10-09T05:12:03Z"
                 ready_at: "2026-10-09T05:13:41Z"
                 info:
-                  runtime: App Runner
+                  runtime: ECS Fargate
                   database: RDS MySQL 8.4
                   timezone: UTC
-                commands:
-                  - aws apprunner update-service --service-arn ... --source-configuration ...
         "404":
           description: 없는 배포
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
     delete:
-      summary: 배포 내리기 (데모 정리용)
+      summary: 공개 접근 차단 및 앱 배포 내리기 (DB와 로그 보존)
       operationId: deleteDeployment
       responses:
-        "204": { description: 삭제됨 }
+        "204": { description: 공개 차단과 앱 중지 완료. 이미 삭제된 ID도 204 }
+        "502":
+          description: 공개 차단 또는 AWS 정리 실패. DELETE 재시도 필요
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404":
           description: 없는 배포
           content:
