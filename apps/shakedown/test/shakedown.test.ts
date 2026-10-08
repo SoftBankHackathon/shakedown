@@ -1,5 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import type { StepDiff } from "@shakedown/contracts";
 import { runShakedown } from "../src/shakedown.ts";
 import { startFakeBoard } from "./fake-board.ts";
 
@@ -63,4 +64,19 @@ test("시나리오를 넘기면 그 시나리오로 실행하고 saved로 표시
   assert.equal(result.scenario_source, "saved");
   assert.equal(result.steps.length, 1);
   assert.equal(result.verdict.status, "PASS");
+});
+
+test("onProgress는 두 환경이 모두 끝낸 단계가 늘 때마다 그때까지의 비교를 넘긴다", async () => {
+  // 비교 환경만 느리게 해서, 기준 환경이 먼저 끝나도 두 쪽이 다 끝낸 단계까지만 알리는지 본다.
+  const slow = await startFakeBoard({ delayMs: 5 });
+  boards.push(slow);
+  const calls: StepDiff[][] = [];
+  const result = await runShakedown({
+    baseline: { name: "local", url: await board() },
+    candidate: { name: "aws", url: slow.url },
+    runId: "hhh888",
+    onProgress: (steps) => calls.push(steps),
+  });
+  assert.deepEqual(calls.map((c) => c.length), [1, 2, 3, 4, 5, 6, 7, 8]);
+  calls.forEach((c) => assert.deepEqual(c, result.steps.slice(0, c.length)));
 });

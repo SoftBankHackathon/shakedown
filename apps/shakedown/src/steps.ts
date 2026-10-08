@@ -69,8 +69,11 @@ export async function runStep(session: Session, step: Step, index: number): Prom
   }
 }
 
-/** 단계를 순서대로 실행한다. 한 단계가 실패하면 나머지는 skipped로 채운다. */
-export async function runScenario(session: Session, steps: Step[]): Promise<StepResult[]> {
+/**
+ * 단계를 순서대로 실행한다. 한 단계가 실패하면 나머지는 skipped로 채운다.
+ * onResult는 단계 결과가 하나 나올 때마다 불린다. API가 진행 상황을 보여 주는 데 쓴다.
+ */
+export async function runScenario(session: Session, steps: Step[], onResult?: (result: StepResult) => void): Promise<StepResult[]> {
   const results: StepResult[] = [];
   for (const [i, step] of steps.entries()) {
     if (results.some((r) => r.status !== "passed")) {
@@ -85,9 +88,11 @@ export async function runScenario(session: Session, steps: Step[]): Promise<Step
         checks: [],
         elapsed_ms: 0,
       });
+      onResult?.(results[i]);
       continue;
     }
     results.push(await runStep(session, step, i + 1));
+    onResult?.(results[i]);
   }
   return results;
 }
