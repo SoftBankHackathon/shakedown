@@ -7,7 +7,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class BoardProjectApplication {
 
 	public static void main(String[] args) {
-		SpringApplication.run(BoardProjectApplication.class, args);
+		var context = SpringApplication.run(BoardProjectApplication.class, args);
+		if (context.getEnvironment().matchesProfiles("schema-init")) context.close();
 	}
 
 }

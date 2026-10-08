@@ -50,7 +50,7 @@ curl -sS http://127.0.0.1:9101/deployments/dep_localdemo
 curl -sS http://127.0.0.1:9101/deployments/dep_localdemo/logs
 ```
 
-Implements `packages/contracts/openapi/target.yaml` v0.1.0:
+Implements `packages/contracts/openapi/target.yaml` v0.1.1:
 
 - POST returns 202; poll GET every 2–3 seconds. Status: pending → deploying → ready/failed.
 - `ready` requires the public Tunnel URL + `health_path` to return **200**, without following redirects.
@@ -60,13 +60,14 @@ Implements `packages/contracts/openapi/target.yaml` v0.1.0:
   comes from LOCAL_DB_PASSWORD or `secret_refs.SPRING_DATASOURCE_PASSWORD`.
 - Secret names resolve through LOCAL_SECRETS_FILE (JSON object); `db_password`
   falls back to LOCAL_DB_PASSWORD. Secret values are never stored in API state or responses.
-- Same deployment ID returns the existing result. A different ID for an actively
+- Same deployment ID and body return the existing result; a different body or deleted ID returns 409. A different ID for an actively
   deploying project returns 409. Subsequent deployments get isolated DB volumes.
 - `replicas` and `sticky_sessions` are accepted but not implemented; actual values
   are reported as one replica and no sticky sessions in `info`.
 - Logs are timestamped, redact configured secrets, and support `?since=<ISO timestamp>`.
 - `DELETE /deployments/{id}` waits for active deployment, removes its containers/network,
-  and preserves its DB volume. Logs/state are removed; failed cleanup remains retryable.
+  and preserves its DB volume. Logs and an ID tombstone are retained; repeated DELETE returns 204. Failed cleanup remains retryable.
+- Before app startup, the API runs `schema-init` to create PostgreSQL JDBC session tables.
 - State survives service restarts. In-progress deployments become failed on restart;
   inspect/remove them before retrying. Ready status records the last successful probe,
   not continuous monitoring.

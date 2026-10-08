@@ -46,12 +46,16 @@ test('async deployment, idempotency, project conflict, logs, delete',async t=>{
   assert.equal((await (await api('GET','/deployments/dep_test1')).json()).status,'deploying');
   release(); await service.settle();
   assert.equal(calls,1);
+  assert.equal((await api('POST','/deployments',{...request,port:9000})).status,409);
   const state=await (await api('GET','/deployments/dep_test1')).json();
   assert.equal(state.status,'ready');assert.match(state.url,/^https:/);
   assert.equal((await api('GET','/deployments/dep_test1/logs?since=no')).status,400);
   assert.ok((await (await api('GET','/deployments/dep_test1/logs')).json()).lines.length>=2);
   assert.equal((await api('DELETE','/deployments/dep_test1')).status,204);assert.equal(removed,1);
   assert.equal((await api('GET','/deployments/dep_test1')).status,404);
+  assert.equal((await api('DELETE','/deployments/dep_test1')).status,204);
+  assert.equal((await api('POST','/deployments',request)).status,409);
+  assert.equal((await api('GET','/deployments/dep_test1/logs')).status,200);
 });
 test('failure is queryable and state survives service recreation',async t=>{
   const runtime={async deploy(){throw new Error('unhealthy');},async logs(){return [];}};
@@ -78,6 +82,9 @@ test('delete during deploy waits for startup before removing resources',async t=
   assert.equal((await deletion).status,204);
   assert.equal(removed,true);
   assert.equal((await api('GET','/deployments/dep_test1')).status,404);
+  assert.equal((await api('DELETE','/deployments/dep_test1')).status,204);
+  assert.equal((await api('POST','/deployments',request)).status,409);
+  assert.equal((await api('GET','/deployments/dep_test1/logs')).status,200);
 });
 test('invalid requests and unknown secret refs never start Docker',async t=>{
   const {api}=await fixture(t,{validate(){throw new Error('Unknown secret reference');},deploy(){assert.fail('must not deploy');}});

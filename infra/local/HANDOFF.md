@@ -9,8 +9,8 @@
 | `infra/local` | PostgreSQL·앱·Cloudflare Tunnel 실행, 배포 Target API, 로그·정리, 자동 리허설 |
 | `samples/kty-board` | 기존 게시판의 PostgreSQL 전환, Docker 이미지, DB health, 데이터 유실 데모 프로필 |
 
-공통 계약은 [`target.yaml`](../../packages/contracts/openapi/target.yaml) v0.1.0을
-따르며, `packages/contracts`와 다른 담당자의 앱·인프라 코드는 수정하지 않았다.
+통합된 공통 계약은 [`target.yaml`](../../packages/contracts/openapi/target.yaml) v0.1.1을
+따른다. AWS PR과 통합하며 공용 게시판, PostgreSQL JDBC 세션 초기화, AWS PostgreSQL 설정을 함께 맞췄다.
 
 ## 가장 빠른 확인 방법
 
@@ -65,13 +65,13 @@ curl -sS http://127.0.0.1:9101/deployments/dep_localdemo
 - `pending → deploying → ready/failed`. `ready`일 때 `url`을 시운전 모듈에 전달한다.
 - `ready`는 **공개 URL + health_path의 HTTP 200**을 확인한 상태다. 리디렉션은
   성공으로 취급하지 않는다. 컨테이너 실행만으로 성공을 반환하지 않는다.
-- 동일 배포 ID는 기존 결과를 반환한다. 진행 중인 프로젝트에 다른 배포 ID로
+- 동일 배포 ID·본문은 기존 결과를 반환한다. 변경된 본문 또는 삭제된 ID는 409를 반환한다. 진행 중인 프로젝트에 다른 배포 ID로
   요청하면 `409`. 새 배포 ID는 별도 DB 볼륨을 사용한다.
 - `secret_refs.SPRING_DATASOURCE_PASSWORD=db_password`는 로컬 `.env`의
   `LOCAL_DB_PASSWORD`로 해석된다. 다른 비밀값은 `LOCAL_SECRETS_FILE` JSON에 정의한다.
 - DB 주소·사용자·비밀번호는 로컬의 실제 PostgreSQL과 일치하도록 설정된다.
 - `GET /deployments/{id}/logs`는 `ts/source/line` 목록을 제공한다. `since` 필터 지원.
-- `DELETE /deployments/{id}`는 배포 컨테이너와 네트워크를 제거하고 DB 볼륨은 보존한다.
+- `DELETE /deployments/{id}`는 배포 컨테이너와 네트워크를 제거하고 DB 볼륨·로그는 보존한다. 삭제된 ID 조회는 404, 반복 삭제는 204이다.
 
 응답 예시(실제 URL·시각은 실행별로 다름):
 
@@ -99,7 +99,7 @@ API는 `127.0.0.1:9101`에만 바인딩한다. 엔진을 같은 PC에서 실행�
 
 - `GET /health`: DB 연결까지 정상이어야 200.
 - `POST /join`: 폼 필드 `email`, `nickname`, `password`.
-- `POST /login`: 폼 필드 `email`, `password`. 이후 `JSESSIONID` 쿠키 유지.
+- `POST /login`: 폼 필드 `email`, `password`. 이후 `SESSION` 쿠키 유지.
 - `POST /api/posts/write`: 폼 필드 `title`, `content`, 로그인 쿠키 필요.
 - `GET /api/posts`: JSON 목록. 작성한 고유 제목이 실제 목록에 있는지 확인.
 - `GET /api/posts/{id}`: JSON 상세.
@@ -125,7 +125,7 @@ API는 `127.0.0.1:9101`에만 바인딩한다. 엔진을 같은 PC에서 실행�
 
 ## 검증 결과와 남은 범위
 
-검증한 구현 커밋: `2b2c413` (아래 결과 이후 변경은 인수인계 문서 정리).
+2026-10-08 PR #2/#4 통합본에서 Node 테스트 7개, 정상/버그/수정 리허설 7단계를 재검증했다. PostgreSQL JDBC 세션도 앱 2개 간 10회 교차 요청 및 재시작 후 보존을 확인했다. 수정한 Target API로 JDBC 모드 배포→외부 HTTPS 가입/로그인/글 작성까지 통과했으며, 삭제 후 로그 보존·404·재사용 409도 확인했다.
 
 | 확인 | 결과 |
 | --- | --- |
@@ -146,3 +146,11 @@ API는 `127.0.0.1:9101`에만 바인딩한다. 엔진을 같은 PC에서 실행�
 현재 제약: 로컬은 앱 1개 인스턴스만 실행하며 replicas/sticky_sessions 요청은 실제
 값(1/false)으로 보고한다. `ready`는 마지막 배포 검증 결과이며 지속 모니터링은 아니다.
 서비스 재시작 중 미완료 배포는 failed로 복구한다. Quick Tunnel 주소는 재생성 시 바뀐다.
+
+## AWS PR 통합 후
+
+공용 게시판은 PostgreSQL과 `SESSION` 쿠키를 사용한다. Local Target API도 배포 전에
+`schema-init`을 실행하므로 `demo,session-jdbc` 프로필을 받을 수 있다. 앱 재시작 시
+데이터 유실(`demo-reset`)과 두 서버 간 세션 유실(`session-memory`)은 서로 다른
+데모이며, 후자는 `session-jdbc`로 수정한다.
+AWS 어댑터는 ECS/ALB + RDS PostgreSQL로 맞췄으며 실제 클라우드 배포 검증은 남아 있다.

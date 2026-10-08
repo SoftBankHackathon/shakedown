@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +27,12 @@ export function validate(input) {
     try { new Intl.DateTimeFormat('en', { timeZone: opts.tz }); } catch { throw new Error('Invalid tz'); }
   }
   return input;
+}
+
+function fingerprint(input) {
+  const sorted = value => Array.isArray(value) ? value.map(sorted) : object(value)
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted(value[key])])) : value;
+  return createHash('sha256').update(JSON.stringify(sorted(input))).digest('hex');
 }
 
 export async function createService({ root, runtime }) {
@@ -79,10 +86,14 @@ export async function createService({ root, runtime }) {
         try { input = validate(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch (error) { return respond(res,400,{error:error.message}); }
         const id = input.deployment_id;
         if (deleting.has(id)) return respond(res,409,{error:'Deployment is being removed'});
-        if (records.has(id)) return respond(res,202,records.get(id).state);
+        if (records.has(id)) {
+          const existing = records.get(id);
+          if (existing.deleted || (existing.fingerprint && existing.fingerprint !== fingerprint(input))) return respond(res,409,{error:'Deployment ID is deleted or belongs to another request'});
+          return respond(res,202,existing.state);
+        }
         if ([...records.values()].some(r => r.project_id === input.project_id && ['pending','deploying'].includes(r.state.status))) return respond(res,409,{error:'Project deployment already in progress'});
         try { runtime.validate?.(input); } catch (error) { return respond(res,400,{error:error.message}); }
-        const record = { project_id: input.project_id, state: { deployment_id:id,target:'local',status:'pending',started_at:new Date().toISOString() }, lines:[] };
+        const record = { fingerprint: fingerprint(input), project_id: input.project_id, state: { deployment_id:id,target:'local',status:'pending',started_at:new Date().toISOString() }, lines:[] };
         records.set(id,record); // Reserve before the first await to enforce idempotency.
         const job = (async () => { await save(record); await run(record,input); })();
         jobs.set(id, job);
@@ -92,23 +103,27 @@ export async function createService({ root, runtime }) {
       const match = url.pathname.match(/^\/deployments\/(dep_[a-z0-9]+)(\/logs)?$/);
       if (!match || !records.has(match[1])) return respond(res,404,{error:'Not found'});
       const id = match[1], record = records.get(id);
-      if (req.method === 'GET' && !match[2]) return respond(res,200,record.state);
+      if (req.method === 'GET' && !match[2]) return record.deleted ? respond(res,404,{error:'Not found'}) : respond(res,200,record.state);
       if (req.method === 'GET' && match[2]) {
         const since = url.searchParams.get('since');
         if (since && Number.isNaN(Date.parse(since))) return respond(res,400,{error:'Invalid since timestamp'});
         let lines = [...record.lines];
-        try { lines.push(...await runtime.logs(id)); } catch { lines.push({ts:new Date().toISOString(),source:'deploy',line:'Container logs not available yet'}); }
+        try { if (!record.deleted) lines.push(...await runtime.logs(id)); } catch { lines.push({ts:new Date().toISOString(),source:'deploy',line:'Container logs not available yet'}); }
         lines = lines.filter(line=>!since || Date.parse(line.ts) >= Date.parse(since)).sort((a,b)=>Date.parse(a.ts)-Date.parse(b.ts));
         return respond(res,200,{lines});
       }
       if (req.method === 'DELETE' && !match[2]) {
+        if (record.deleted) return respond(res,204);
         if (deleting.has(id)) return respond(res,409,{error:'Deployment is being removed'});
         deleting.add(id);
         try {
           await jobs.get(id);
+          try { record.lines.push(...await runtime.logs(id)); } catch { /* deployment logs still available */ }
           await runtime.remove(id);
-          await rm(path.join(root,id), {recursive:true,force:true});
-          records.delete(id); return respond(res,204);
+          record.deleted = true;
+          await save(record);
+          await rm(path.join(root,id,'compose.json'), {force:true});
+          return respond(res,204);
         } finally { deleting.delete(id); }
       }
       return respond(res,405,{error:'Method not allowed'});

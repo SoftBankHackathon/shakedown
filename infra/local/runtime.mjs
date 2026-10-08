@@ -78,6 +78,9 @@ export class DockerRuntime {
     await chmod(file, 0o600);
     log('Starting PostgreSQL, app and Cloudflare Tunnel');
     try {
+      await this.command(request.deployment_id, ['up', '-d', '--wait', '--wait-timeout', '90', 'db']);
+      // Initialize shared JDBC session tables before app startup, also for PG.
+      await this.command(request.deployment_id, ['run', '--rm', '--no-deps', '-e', 'SPRING_PROFILES_ACTIVE=schema-init', '-e', 'SPRING_JPA_HIBERNATE_DDL_AUTO=update', 'app']);
       await this.command(request.deployment_id, ['up', '-d', '--wait', '--wait-timeout', '90']);
     } catch (e) {
       // exec errors may contain environment data; expose only redacted diagnostics.

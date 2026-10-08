@@ -1,7 +1,15 @@
 server:
   port: ${PORT:8080}
   forward-headers-strategy: framework
+  servlet:
+    session:
+      cookie:
+        name: SESSION
+        http-only: true
+        same-site: lax
 spring:
+  profiles:
+    default: session-memory
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/board_db}
     username: ${SPRING_DATASOURCE_USERNAME:board}

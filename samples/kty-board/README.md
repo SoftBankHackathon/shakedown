@@ -53,3 +53,18 @@ Explicit `SPRING_PROFILES_ACTIVE=demo-reset` uses `ddl-auto=create` and recreate
 all tables on every app start. Use only a separate disposable demo DB. See the local
 README for reproduction and the fix. The local rehearsal uses this deterministic PostgreSQL-only scenario;
 run `npm run demo` in `infra/local` to verify normal → bug → fix automatically.
+
+## Shared-session demo (Local + AWS)
+
+The same PostgreSQL image supports `demo,session-memory` and `demo,session-jdbc`.
+The `demo` profile adds an instance ID response header. With two app instances,
+memory sessions lose authentication across instances; JDBC sessions preserve it.
+Before first JDBC startup, run once with `SPRING_PROFILES_ACTIVE=schema-init`;
+it initializes entity and PostgreSQL session tables and exits. It can be repeated
+without deleting rows. The local Target API does this automatically. For standalone
+Compose, use `docker compose run --rm -e SPRING_PROFILES_ACTIVE=schema-init app`.
+Do not use demo-reset with shared-session verification: it is a separate, destructive
+DB configuration demonstration on an isolated database.
+
+The boot JAR is `board.jar`; the common Dockerfile runs Java 21 on either architecture.
+AWS requires a Linux AMD64 image digest; Local can use that same digest via Docker.

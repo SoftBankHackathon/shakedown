@@ -1,0 +1,18 @@
+{
+  "checked_at": "2026-10-08T20:40:08+0900",
+  "image": "shakedown/kty-board:local",
+  "checks": [
+    "schema initialization is repeatable without deleting data",
+    "memory session works on login instance",
+    "memory session fails on another healthy instance",
+    "response evidence distinguishes two instances",
+    "JDBC session passes 10 alternating requests across instances",
+    "authenticated cross-instance post creation succeeds",
+    "post is visible on instance port 32778",
+    "post is visible on instance port 32780",
+    "JDBC login survives app restart",
+    "post survives app restart"
+  ],
+  "database": "PostgreSQL 17",
+  "aws_verified": false
+}
