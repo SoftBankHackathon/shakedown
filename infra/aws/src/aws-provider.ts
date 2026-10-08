@@ -47,7 +47,7 @@ export class AwsProvider implements Provider {
       containerDefinitions: [{ name: 'app', image: request.image, essential: true,
         portMappings: [{ containerPort: c.port, protocol: 'tcp' }],
         environment: Object.entries({
-          SPRING_DATASOURCE_URL: `jdbc:mysql://${c.dbHost}:3306/${c.dbName}?sslMode=REQUIRED&connectionTimeZone=UTC`,
+          SPRING_DATASOURCE_URL: `jdbc:postgresql://${c.dbHost}:5432/${c.dbName}?sslmode=require`,
           SPRING_DATASOURCE_USERNAME: c.dbUsername,
           SPRING_JPA_HIBERNATE_DDL_AUTO: initialize ? 'update' : 'validate',
           SPRING_PROFILES_ACTIVE: initialize ? 'schema-init' : (request.env.SPRING_PROFILES_ACTIVE ?? 'demo,session-memory'),
@@ -88,7 +88,7 @@ export class AwsProvider implements Provider {
     await phase('public_health', log, () => this.waitHttp(request.health_path, 200, signal));
     log('public health check passed: HTTP 200 without cookies');
     return { url: c.publicUrl, instances: actual.count, info: {
-      runtime: 'ECS Fargate', database: 'RDS MySQL 8.4', timezone: actual.tz,
+      runtime: 'ECS Fargate', database: 'RDS PostgreSQL 17', timezone: actual.tz,
       session: actual.profile.includes('session-jdbc') ? 'jdbc' : 'memory', sticky_sessions: 'false',
       image_digest: actual.digest, task_definition: taskDefinition, transport: 'HTTP (demo)',
     } };

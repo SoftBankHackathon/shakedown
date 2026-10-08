@@ -27,7 +27,7 @@ repositories {
 dependencies {
     // Direct module: only session-jdbc profile enables the session filter.
     implementation 'org.springframework.session:spring-session-jdbc'
-    runtimeOnly 'com.mysql:mysql-connector-j'
+    runtimeOnly 'org.postgresql:postgresql'
     implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
 	implementation 'org.springframework.boot:spring-boot-h2console'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'

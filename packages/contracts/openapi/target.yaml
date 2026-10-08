@@ -21,7 +21,7 @@ info:
     - 같은 `deployment_id`로 다시 요청하면 새로 만들지 않고 기존 결과를 돌려줌(멱등)
 
     AWS 구현 제약 (v0.1.1 제안, 팀 통합 전)
-    - 미리 생성한 프로젝트 전용 스택, MySQL, replicas 1~2, sticky_sessions=false
+    - 미리 생성한 프로젝트 전용 스택, PostgreSQL, replicas 1~2, sticky_sessions=false
     - 허용 ECR 저장소의 image@sha256:digest 필수. 태그를 digest로 고정하는 책임은 엔진에 있음
     - 환경변수는 SPRING_PROFILES_ACTIVE=demo,session-memory 또는 demo,session-jdbc만 허용
     - DB 접속 정보는 인프라 설정에서 주입. secret_refs는 db_password 이름만 지원
@@ -76,7 +76,7 @@ paths:
                 SPRING_PROFILES_ACTIVE: demo,session-memory
               secret_refs:
                 SPRING_DATASOURCE_PASSWORD: db_password
-              database: { engine: mysql, name: board_db }
+              database: { engine: postgres, name: board_db }
               options: { replicas: 2, sticky_sessions: false, tz: UTC }
       responses:
         "202":
@@ -116,7 +116,7 @@ paths:
                 ready_at: "2026-10-09T05:13:41Z"
                 info:
                   runtime: ECS Fargate
-                  database: RDS MySQL 8.4
+                  database: RDS PostgreSQL 17
                   timezone: UTC
         "404":
           description: 없는 배포

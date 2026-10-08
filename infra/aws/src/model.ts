@@ -8,7 +8,7 @@ export const requestSchema = z.object({
   health_path: z.string().regex(/^\/(?!\/)[^\s?#\\]*$/).max(256),
   env: z.record(z.string(), z.string().max(4096)).default({}),
   secret_refs: z.record(z.string(), z.string()).default({}),
-  database: z.object({ engine: z.literal('mysql'), name: z.string() }).strict().optional(),
+  database: z.object({ engine: z.literal('postgres'), name: z.string() }).strict().optional(),
   options: z.object({
     replicas: z.number().int().min(1).max(2).default(1),
     sticky_sessions: z.literal(false).default(false),

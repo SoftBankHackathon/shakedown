@@ -116,17 +116,18 @@ test('secrets are filtered from deployment and app logs', async () => {
     store.log('dep_one', 'password=unsafe Authorization: Bearer unsafe');
     const response = await app.inject('/deployments/dep_one/logs');
     assert.equal(response.statusCode, 200); assert.ok(!response.body.includes('unsafe'));
-    assert.equal(redact('jdbc:mysql://user:unsafe@db:3306/x'), 'jdbc:mysql://[REDACTED]@db:3306/x');
+    assert.equal(redact('jdbc:postgresql://user:unsafe@db:5432/x'), 'jdbc:postgresql://[REDACTED]@db:5432/x');
   } finally { await app.close(); store.close(); }
 });
 
 test('AWS request restricts image, project, DB, profiles and plaintext secrets', () => {
   const c = { projectId: 'prj_board', port: 8080, repositoryUri: image.split('@')[0], dbName: 'board_db' } as Parameters<typeof validateRequest>[0];
   assert.doesNotThrow(() => validateRequest(c, input()));
-  for (const patch of [{ image: image.split('@')[0] + ':latest' }, { project_id: 'other' }, { env: { SPRING_DATASOURCE_PASSWORD: 'unsafe' } }, { env: { SPRING_PROFILES_ACTIVE: 'schema-init' } }, { secret_refs: { SPRING_DATASOURCE_PASSWORD: 'other' } }, { database: { engine: 'mysql', name: 'other' } }]) {
+  for (const patch of [{ image: image.split('@')[0] + ':latest' }, { project_id: 'other' }, { env: { SPRING_DATASOURCE_PASSWORD: 'unsafe' } }, { env: { SPRING_PROFILES_ACTIVE: 'schema-init' } }, { secret_refs: { SPRING_DATASOURCE_PASSWORD: 'other' } }, { database: { engine: 'postgres', name: 'other' } }]) {
     assert.throws(() => validateRequest(c, { ...input(), ...patch } as DeployRequest), { statusCode: 400 });
   }
-  assert.throws(() => requestSchema.parse({ ...input(), database: { engine: 'postgres', name: 'board_db' } }));
+  assert.throws(() => requestSchema.parse({ ...input(), database: { engine: 'mysql', name: 'board_db' } }));
+  assert.doesNotThrow(() => requestSchema.parse(input()));
   assert.throws(() => requestSchema.parse({ ...input(), health_path: '//outside.example' }));
   assert.throws(() => requestSchema.parse({ ...input(), options: { sticky_sessions: true } }));
   assert.equal(configSchema.shape.profile.safeParse('default').success, false);

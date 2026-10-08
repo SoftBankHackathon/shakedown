@@ -47,9 +47,10 @@ test('AWS SDK flow exposes only matching healthy tasks, uses secret references a
   });
   const result = await fake.provider.deploy(request, AbortSignal.timeout(2000), () => {});
   assert.equal(result.instances, 2); assert.equal(result.info.session, 'jdbc'); assert.equal(result.info.image_digest, image.split('@')[1]);
-  const definition = fake.definitions[0] as { containerDefinitions: { secrets: { valueFrom: string }[]; environment: { name: string }[] }[] };
+  const definition = fake.definitions[0] as { containerDefinitions: { secrets: { valueFrom: string }[]; environment: { name: string; value: string }[] }[] };
   assert.equal(definition.containerDefinitions[0].secrets[0].valueFrom, config.dbPasswordSecretArn + ':password::');
   assert.ok(!definition.containerDefinitions[0].environment.some(e => e.name.includes('PASSWORD')));
+  assert.equal(definition.containerDefinitions[0].environment.find(e => e.name === 'SPRING_DATASOURCE_URL')?.value, `jdbc:postgresql://${config.dbHost}:5432/${config.dbName}?sslmode=require`);
   assert.ok(fake.actions.lastIndexOf('ModifyListenerCommand') > fake.actions.indexOf('DescribeTargetHealthCommand'));
   await fake.provider.stop(() => {});
   assert.equal(fake.route, 403);

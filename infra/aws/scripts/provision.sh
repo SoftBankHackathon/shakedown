@@ -9,12 +9,12 @@ if [[ "$HACKATHON_PROVISION_PROFILE" == default ]]; then
 fi
 actual=$(aws --profile "$HACKATHON_PROVISION_PROFILE" --region ap-northeast-2 sts get-caller-identity --query Account --output text)
 [[ "$actual" == "$HACKATHON_ACCOUNT_ID" ]] || { echo 'Account mismatch' >&2; exit 1; }
-mysql_version="${HACKATHON_MYSQL_VERSION:-8.4.8}"
+postgres_version="${HACKATHON_POSTGRES_VERSION:?Choose an available RDS PostgreSQL 17 minor version}"
 # Region/account availability is verified before provisioning.
-available=$(aws --profile "$HACKATHON_PROVISION_PROFILE" --region ap-northeast-2 rds describe-orderable-db-instance-options --engine mysql --engine-version "$mysql_version" --db-instance-class db.t3.micro --query 'length(OrderableDBInstanceOptions)' --output text)
-[[ "$available" -gt 0 ]] || { echo 'Chosen MySQL version/db.t3.micro is unavailable in Seoul' >&2; exit 1; }
+available=$(aws --profile "$HACKATHON_PROVISION_PROFILE" --region ap-northeast-2 rds describe-orderable-db-instance-options --engine postgres --engine-version "$postgres_version" --db-instance-class db.t3.micro --query 'length(OrderableDBInstanceOptions)' --output text)
+[[ "$available" -gt 0 ]] || { echo 'Chosen PostgreSQL version/db.t3.micro is unavailable in Seoul' >&2; exit 1; }
 aws --profile "$HACKATHON_PROVISION_PROFILE" --region ap-northeast-2 cloudformation deploy \
   --stack-name "$HACKATHON_STACK" --template-file "$(dirname "$0")/../cloudformation/foundation.yaml" \
-  --parameter-overrides "Name=$HACKATHON_STACK" "MysqlVersion=$mysql_version" --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset
+  --parameter-overrides "Name=$HACKATHON_STACK" "PostgresVersion=$postgres_version" --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset
 aws --profile "$HACKATHON_PROVISION_PROFILE" --region ap-northeast-2 cloudformation describe-stacks \
   --stack-name "$HACKATHON_STACK" --query 'Stacks[0].Outputs' --output json

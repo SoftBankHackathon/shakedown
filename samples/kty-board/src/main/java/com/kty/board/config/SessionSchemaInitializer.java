@@ -19,15 +19,19 @@ public class SessionSchemaInitializer implements CommandLineRunner {
             var metadata = connection.getMetaData();
             boolean sessionExists;
             boolean attributesExist;
-            try (var tables = metadata.getTables(connection.getCatalog(), null, "SPRING_SESSION", new String[]{"TABLE"})) {
+            try (var tables = metadata.getTables(connection.getCatalog(), null, (metadata.storesLowerCaseIdentifiers() ? "spring_session" : "SPRING_SESSION"), new String[]{"TABLE"})) {
                 sessionExists = tables.next();
             }
-            try (var tables = metadata.getTables(connection.getCatalog(), null, "SPRING_SESSION_ATTRIBUTES", new String[]{"TABLE"})) {
+            try (var tables = metadata.getTables(connection.getCatalog(), null, (metadata.storesLowerCaseIdentifiers() ? "spring_session_attributes" : "SPRING_SESSION_ATTRIBUTES"), new String[]{"TABLE"})) {
                 attributesExist = tables.next();
             }
             if (sessionExists != attributesExist) throw new IllegalStateException("Partial session schema: inspect before retrying");
             if (sessionExists) return;
-            String vendor = metadata.getDatabaseProductName().equals("H2") ? "h2" : "mysql";
+            String vendor = switch (metadata.getDatabaseProductName()) {
+                case "H2" -> "h2";
+                case "PostgreSQL" -> "postgresql";
+                default -> throw new IllegalStateException("Unsupported session database: " + metadata.getDatabaseProductName());
+            };
             var resource = new ClassPathResource("org/springframework/session/jdbc/schema-" + vendor + ".sql");
             new ResourceDatabasePopulator(resource).execute(dataSource);
         }
