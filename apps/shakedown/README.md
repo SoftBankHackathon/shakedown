@@ -25,6 +25,29 @@ npm run shakedown -w @shakedown/shakedown -- --baseline http://localhost:18080 -
 
 결과 JSON: `{ scenario, scenario_source, steps: StepDiff[], verdict }`
 
+## 엔진용 API
+
+엔진(김도경)이 부르는 HTTP API입니다. 형식은 `packages/contracts/openapi/shakedown.yaml`을 그대로 따릅니다.
+
+```bash
+npm start -w @shakedown/shakedown        # 기본 127.0.0.1:9201
+HOST=0.0.0.0 PORT=9201 npm start -w @shakedown/shakedown   # 엔진이 다른 PC에 있을 때
+```
+
+| 요청 | 응답 |
+|---|---|
+| `POST /shakedowns` | 202 `{shakedown_id, status: "running", scenario, scenario_source, steps: [], ai_cost}` 후 뒤에서 실행 |
+| `GET /shakedowns/{id}` | 200 현재 상태. 실행 중에는 두 환경이 모두 끝낸 단계까지 `steps`가 채워짐. 모르는 id는 404 |
+
+- 요청에 `scenario`가 없거나 null이면 kty-board 기본 시나리오로 실행하고 `scenario_source: "fallback"`
+- 비교 대상(`candidates`)은 지금 1개만 받습니다. 2개 이상이면 422
+- 잘못된 요청은 400 `{error, detail}` (target.yaml과 같은 모양)
+- 시작 전에 두 주소가 응답하는지 최대 20초 다시 시도합니다(터널 주소가 늦게 잡히는 경우)
+- 기준 환경이 닿지 않거나 기준 환경에서 시나리오가 실패하면 비교할 수 없으므로 `status: "failed"`와 `error`
+- 비교 환경만 실패하면 `status: "done"`과 `verdict: BLOCKED`
+- 전체 실행은 150초 안에 끝냅니다. 넘으면 `status: "failed"`, `error: "timed out after 150s"` (엔진은 3분이 지나면 실패로 봅니다)
+- 기록은 메모리에만 있어서 서버를 다시 켜면 사라집니다(GET이 404)
+
 ## 테스트
 
 ```bash
