@@ -451,6 +451,42 @@ test("AWS gate refuses pending setup, recovers desired close and confirms both p
   f.store.close();
 });
 
+test("AWS gate never opens a binding that needs revalidation", async () => {
+  const f = fixture();
+  const cfg: any = { ...settings.endpoints[0], target: "aws" };
+  const j = f.store.create(cfg, "app.example.com");
+  j.data.everReady = true;
+  j.result.status = "needs_action";
+  j.result.https_url = "https://app.example.com";
+  j.result.error = { code: "REVALIDATION_FAILED", message: "stale" };
+  f.store.save(j);
+  const gates: boolean[] = [];
+  f.provider.gate = async (_c, o) => {
+    gates.push(o);
+  };
+  const m = new Manager(
+    { ...settings, endpoints: [cfg] },
+    f.store,
+    () => f.provider,
+    undefined,
+    async () => ({ status: 403 }),
+  );
+  await assert.rejects(
+    m.gate("project", true),
+    (e: any) =>
+      e instanceof HttpsError &&
+      e.code === "HTTPS_NOT_READY" &&
+      e.statusCode === 409,
+  );
+  assert.deepEqual(gates, []);
+  assert.deepEqual(await m.gate("project", false), {
+    configured: true,
+    url: "https://app.example.com",
+    blocked: true,
+  });
+  assert.deepEqual(gates, [false]);
+  f.store.close();
+});
 test("SQLite process lock rejects a second live process owner and releases atomically", () => {
   const dir = mkdtempSync(join(tmpdir(), "https-lock-")),
     path = join(dir, "state.sqlite");

@@ -86,4 +86,4 @@ npm run build:web
 git diff --check
 ```
 
-AWS 통합 테스트는 별도 검증 브랜치에 있고, 원래 HTTPS 브랜치에는 공급자/제어 응답/엔진 수정과 회귀 검사를 반영했다. 원격 push와 PR 생성은 사용자 승인 후 진행한다.
+AWS 통합 테스트는 별도 검증 브랜치에 있고, 원래 HTTPS 브랜치에는 공급자/제어 응답/엔진 수정과 회귀 검사를 반영했다. 원래 HTTPS 브랜치는 PR #21로 제출했다. PR #12가 먼저 병합되면 PR #21은 `apps/engine/engine/api.py`, `apps/web/src/app/projects/[id]/page.tsx`, `infra/aws/src/aws-provider.ts`, `infra/aws/src/config.ts`, `infra/aws/test/aws-provider.test.ts`, `packages/contracts/src/index.ts`에서 충돌하므로, 이 통합 브랜치의 해결본으로 갱신한 뒤 병합한다.

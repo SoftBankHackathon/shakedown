@@ -150,6 +150,13 @@ export class Manager {
         this.busy.delete(id);
       }
     }
+    // Never touch the load balancer for a binding whose revalidation failed.
+    if (open && job.result.status !== "ready")
+      throw new HttpsError(
+        "HTTPS_NOT_READY",
+        "HTTPS 재검증이 필요합니다. 다시 확인한 뒤 배포를 재개하세요.",
+        409,
+      );
     this.busy.add(id);
     try {
       const p = this.provider(job),
