@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shakedown Deploy Architecture</title>
+<style>
+  :root {
+    --bg: #0b1020; --bar: #111827; --line: #263042; --text: #e5e7eb; --muted: #94a3b8;
+    --chip: #1f2937; --accent: #38bdf8; --accent-text: #0b1020;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", "Hiragino Sans", sans-serif; }
+  .bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+    padding: 10px 16px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  .title { font-weight: 600; font-size: 15px; margin-right: auto; }
+  .group { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .group button { appearance: none; border: 0; background: var(--chip); color: var(--text); padding: 6px 12px;
+    font: inherit; cursor: pointer; min-width: 36px; }
+  .group button + button { border-left: 1px solid var(--line); }
+  .group button:hover { background: #273449; }
+  .group button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .stage { height: calc(100% - 52px); min-height: 520px; }
+  iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--bg); }
+  @media (max-width: 640px) { .hint { display: none; } .title { font-size: 14px; } }
+</style>
+</head>
+<body>
+<div class="bar">
+  <div class="title" id="title">Shakedown Deploy 전체 아키텍처</div>
+  <div class="group" role="group" aria-label="Language">
+    <button type="button" data-lang="ko">한국어</button>
+    <button type="button" data-lang="ja">日本語</button>
+    <button type="button" data-lang="en">English</button>
+  </div>
+  <div class="group" role="group" aria-label="Zoom">
+    <button type="button" data-view="out" id="zoom-out">−</button>
+    <button type="button" data-view="reset" id="zoom-reset">⟲</button>
+    <button type="button" data-view="in" id="zoom-in">+</button>
+  </div>
+  <div class="group"><button type="button" id="fullscreen">⛶</button></div>
+  <span class="hint" id="hint"></span>
+</div>
+<div class="stage"><iframe id="diagram" title="Shakedown Deploy architecture diagram"></iframe></div>
+<script>
+(function () {
+  var TEXT = {
+    ko: { title: 'Shakedown Deploy 전체 아키텍처', out: '축소', reset: '원래 크기', inn: '확대', full: '전체 화면', hint: '⌘/Ctrl + 휠, 트랙패드 핀치로도 확대' },
+    ja: { title: 'Shakedown Deploy 全体アーキテクチャ', out: '縮小', reset: '元の大きさ', inn: '拡大', full: '全画面', hint: '⌘/Ctrl + ホイール、ピンチでも拡大' },
+    en: { title: 'Shakedown Deploy Architecture', out: 'Zoom out', reset: 'Reset zoom', inn: 'Zoom in', full: 'Full screen', hint: '⌘/Ctrl + wheel or pinch to zoom' }
+  };
+  var frame = document.getElementById('diagram');
+  function pick() {
+    var q = new URLSearchParams(location.search).get('lang');
+    if (TEXT[q]) return q;
+    try { var s = localStorage.getItem('shakedown-arch-lang'); if (TEXT[s]) return s; } catch (e) {}
+    return 'ko';
+  }
+  function setLang(lang) {
+    var t = TEXT[lang];
+    document.documentElement.lang = lang;
+    document.getElementById('title').textContent = t.title;
+    document.title = t.title;
+    document.getElementById('zoom-out').title = t.out;
+    document.getElementById('zoom-reset').title = t.reset;
+    document.getElementById('zoom-in').title = t.inn;
+    document.getElementById('fullscreen').title = t.full;
+    document.getElementById('hint').textContent = t.hint;
+    document.querySelectorAll('[data-lang]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.lang === lang)); });
+    if (frame.getAttribute('src') !== lang + '.html') frame.setAttribute('src', lang + '.html');
+    try { localStorage.setItem('shakedown-arch-lang', lang); } catch (e) {}
+  }
+  document.querySelectorAll('[data-lang]').forEach(function (b) { b.addEventListener('click', function () { setLang(b.dataset.lang); }); });
+  document.querySelectorAll('[data-view]').forEach(function (b) {
+    b.addEventListener('click', function () { frame.contentWindow && frame.contentWindow.postMessage({ archify: 'view', dir: b.dataset.view }, '*'); });
+  });
+  document.getElementById('fullscreen').addEventListener('click', function () {
+    var el = document.documentElement;
+    if (document.fullscreenElement) document.exitFullscreen(); else if (el.requestFullscreen) el.requestFullscreen();
+  });
+  setLang(pick());
+})();
+</script>
+</body>
+</html>
