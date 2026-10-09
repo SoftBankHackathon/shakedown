@@ -112,3 +112,47 @@ def test_failed_command_hides_its_output(monkeypatch):
     monkeypatch.setattr(gcp_runner.subprocess, 'run', fail)
     with pytest.raises(DeploymentError) as error: GcpRunner.capture(['gcloud', 'auth', 'print-access-token'])
     assert 'TOKEN_DO_NOT_LOG' not in str(error.value) and 'No credentials were logged' in str(error.value)
+
+
+def fake_publish(monkeypatch, runner, digest='sha256:' + 'a' * 64):
+    """Replace preflight, Docker and gcloud with recorders. Returns the ordered list of (args, kwargs)."""
+    calls = []
+    monkeypatch.setattr(runner, 'preflight', lambda p: calls.append((['preflight'], {})))
+    monkeypatch.setattr(runner, 'build', lambda p, image, platform=None: calls.append((['build', image, platform], {})) or p.analysis)
+    def capture(args, **kwargs):
+        calls.append((args, kwargs))
+        if args[:3] == ['gcloud', 'auth', 'print-access-token']: return 'TOKEN_DO_NOT_LOG'
+        if 'describe' in args: return digest
+        if 'context' in args: return 'unix:///tmp/docker.sock'
+        return ''
+    monkeypatch.setattr(runner, 'capture', capture)
+    monkeypatch.setattr(runner, 'command', lambda args, timeout, env=None: calls.append((args, {'env': env})))
+    return calls
+
+def test_publish_builds_amd64_pushes_then_pins_the_registry_digest(monkeypatch, configured, project):
+    runner = GcpRunner(); calls = fake_publish(monkeypatch, runner)
+    analysis, image = runner.build_publish(project, 'dep_test')
+    assert analysis == project.analysis and image == DIGEST
+    tag = PREFIX + 'kty-board:dep_test'
+    steps = [args for args, _ in calls]
+    assert steps[:2] == [['preflight'], ['build', tag, 'linux/amd64']]
+    login = steps.index(['docker', 'login', '--username', 'oauth2accesstoken', '--password-stdin', 'https://asia-northeast3-docker.pkg.dev'])
+    push = steps.index(['docker', 'push', tag])
+    describe = steps.index(['gcloud', 'artifacts', 'docker', 'images', 'describe', tag, '--format=value(image_summary.digest)'])
+    pull = steps.index(['docker', 'pull', '--platform', 'linux/amd64', DIGEST])
+    assert login < push < describe < pull
+
+def test_publish_keeps_the_token_on_stdin_in_a_temporary_docker_config(monkeypatch, configured, project):
+    runner = GcpRunner(); calls = fake_publish(monkeypatch, runner)
+    runner.build_publish(project, 'dep_test')
+    assert not any('TOKEN_DO_NOT_LOG' in ' '.join(args) for args, _ in calls)
+    login = next(kw for args, kw in calls if 'login' in args)
+    push = next(kw for args, kw in calls if 'push' in args)
+    assert login['input'] == b'TOKEN_DO_NOT_LOG' and push['env']['DOCKER_CONFIG'] == login['env']['DOCKER_CONFIG']
+    assert 'DOCKER_CONTEXT' not in push['env'] and not Path(login['env']['DOCKER_CONFIG']).exists()
+
+@pytest.mark.parametrize('digest', ['', 'latest', 'sha256:abc', 'sha256:' + 'A' * 64])
+def test_publish_rejects_an_invalid_digest_before_pull(monkeypatch, configured, project, digest):
+    runner = GcpRunner(); calls = fake_publish(monkeypatch, runner, digest)
+    with pytest.raises(DeploymentError, match='digest'): runner.build_publish(project, 'dep_test')
+    assert not any('pull' in args for args, _ in calls)

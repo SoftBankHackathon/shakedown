@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 
 import httpx
 
@@ -57,6 +58,32 @@ class GcpRunner(LocalRunner):
         health = self.call('GET', '/health')
         if not health or health.get('target') != 'gcp' or health.get('ok') is not True:
             raise DeploymentError('GCP adapter is not ready on 127.0.0.1:9103.')
+
+    def build_publish(self, project, deployment_id):
+        self.preflight(project)
+        config = self.config()
+        repository = config['imagePrefixes'][0] + 'kty-board'
+        tag = repository + ':' + deployment_id
+        analysis = self.build(project, tag, platform='linux/amd64')
+        if analysis.port != config['port'] or (analysis.database_name or 'board_db') != config['dbName']:
+            raise DeploymentError('Checked-out application no longer matches the GCP service.')
+        registry = repository.split('/')[0]
+        # A private, temporary Docker config keeps the access token out of the user's Docker config.
+        with tempfile.TemporaryDirectory(prefix='shakedown-gar-') as auth:
+            env = {**os.environ, 'DOCKER_CONFIG': auth}
+            if not env.get('DOCKER_HOST') or env.get('DOCKER_CONTEXT'):
+                env['DOCKER_HOST'] = self.capture(['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'])
+            env.pop('DOCKER_CONTEXT', None)
+            token = self.capture(['gcloud', 'auth', 'print-access-token'])
+            self.capture(['docker', 'login', '--username', 'oauth2accesstoken', '--password-stdin', 'https://' + registry], input=token.encode(), env=env)
+            self.command(['docker', 'push', tag], 900, env=env)
+            digest = self.capture(['gcloud', 'artifacts', 'docker', 'images', 'describe', tag, '--format=value(image_summary.digest)'])
+            if not re.fullmatch(r'sha256:[a-f0-9]{64}', digest):
+                raise DeploymentError('Artifact Registry did not return a valid image digest.')
+            image = repository + '@' + digest
+            # Cache the exact manifest for the local adapter while credentials are available.
+            self.command(['docker', 'pull', '--platform', 'linux/amd64', image], 300, env=env)
+        return analysis, image
 
     def valid_url(self, url):
         config = self.config()
