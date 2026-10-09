@@ -16,7 +16,7 @@ export const TARGETS: TargetInfo[] = [
   { id: "aws", label: "AWS", available: true, default: true },
   { id: "onprem", label: "On-prem", available: false, default: false },
   { id: "gcp", label: "GCP", available: false, default: false },
-  { id: "azure", label: "Azure", available: false, default: false },
+  { id: "azure", label: "Azure", available: true, default: false },
 ];
 
 export const DEFAULT_TARGETS = TARGETS.filter((t) => t.default).map((t) => t.id);

@@ -41,6 +41,8 @@ servers:
     description: infra/local (기본 포트 제안)
   - url: http://localhost:9102
     description: infra/aws (기본 포트 제안)
+  - url: http://localhost:9103
+    description: infra/azure (기본 포트 제안)
 paths:
   /health:
     get:
