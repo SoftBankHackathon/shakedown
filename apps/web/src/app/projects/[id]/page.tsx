@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { useT } from "@/components/i18n";
 import { AiTag, Badge, Mono, RuleTag, Section } from "@/components/ui";
 import { api, API, MOCK, ApiError, errorMessage, formatSeconds, type Deployment, type Project, type TargetName, type TargetOptions } from "@/lib/api";
-import { DEFAULT_TARGET_OPTIONS, DEFAULT_TARGETS, TARGETS, targetLabel, TIMEZONES } from "@/lib/targets";
+import { DEFAULT_TARGET_OPTIONS, DEFAULT_TARGETS, pickTarget, TARGETS, targetLabel, TIMEZONES } from "@/lib/targets";
 
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
@@ -146,8 +146,7 @@ export default function ProjectPage() {
                 {TARGETS.filter((x) => x.available).map((target) => (
                   <label key={target.id} className="text-sm">
                     <input type="checkbox" checked={liveTargets.includes(target.id)} onChange={(e) => {
-                      setLiveTargets((current) => TARGETS.filter((x) => x.available &&
-                        (x.id === target.id ? e.target.checked : current.includes(x.id))).map((x) => x.id));
+                      setLiveTargets((current) => e.target.checked ? pickTarget(current, target.id) : current.filter((x) => x !== target.id));
                       setOpts({});
                     }} /> {target.label}
                   </label>
