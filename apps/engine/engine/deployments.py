@@ -33,6 +33,9 @@ CLOUDS = ('aws', 'azure', 'gcp')
 # 차단 뒤 env를 바꿔 같은 이미지로 다시 배포할 수 있는 클라우드. AWS는 같은 경로를 타지만 실계정에서
 # 재배포(새 배포 ID로 ECS 서비스 재생성)를 아직 검증하지 않아서, 검증 전까지는 수정안을 제안만 한다.
 ENV_FIX_TARGETS = {'gcp'}
+# 엔진이 자동으로 적용하는 수정안 값 → 대상 API 본문의 env. 보고서가 다른 값을 내도 이 목록 밖은 적용하지 않는다.
+# 값은 GCP 어댑터가 받는 프로필 목록(infra/gcp/src/config.ts의 validateRequest)과 같다.
+ENV_FIXES = {'SPRING_PROFILES_ACTIVE=demo,session-jdbc': {'SPRING_PROFILES_ACTIVE': 'demo,session-jdbc'}}
 VERDICT_RANK = ('PASS', 'WARN', 'BLOCKED')
 
 class Endpoint(Model):
@@ -64,6 +67,10 @@ class DeploymentError(Exception):
     pass
 
 class Busy(DeploymentError):
+    pass
+
+class NotFound(DeploymentError):
+    """대상 어댑터가 그 배포 ID를 모른다(404). 재배포 POST가 거절됐는지, 응답만 잃었는지 가르는 근거다."""
     pass
 
 class LocalRunner:
@@ -245,6 +252,33 @@ class DeploymentStore:
         self.pool.submit(self.run, project, json.loads(json.dumps(d)), request.comparison)
         return d
 
+    @staticmethod
+    def target_id(d, target):
+        # 대상 API에 실제로 쓴 배포 ID. 수정 재배포 뒤에는 새 ID라서, 그 뒤의 조회·로그·DELETE는 이 ID로 보낸다.
+        return d['targets'][target].get('deployment_id', d['id'])
+
+    def submit(self, d, target, body):
+        self.runner_for(target).call('POST', '/deployments', body)
+        # 받아들여진 본문을 남긴다. 수정 재배포는 이 본문(같은 이미지·포트·DB·옵션)에 env만 더해 다시 보낸다.
+        d['targets'][target].update(deployment_id=body['deployment_id'], request={k: v for k, v in body.items() if k != 'deployment_id'})
+        self.save(d)
+
+    def wait_ready(self, d, target):
+        runner = self.runner_for(target)
+        deadline = time.monotonic() + (max(self.timeout, 2700) if target == 'aws' and d.get('architecture') else self.timeout)
+        while time.monotonic() < deadline:
+            state = runner.call('GET', '/deployments/' + self.target_id(d, target))
+            if state.get('status') == 'failed': raise DeploymentError(f'{target} deployment failed; inspect its logs.')
+            if state.get('status') == 'ready':
+                url = urlsplit(state.get('url', ''))
+                valid = (url.scheme == 'https' and (url.hostname or '').endswith('.trycloudflare.com')) if target == 'local' else runner.valid_url(state.get('url', ''))
+                if not valid: raise DeploymentError(f'{target} returned an invalid public URL.')
+                d['targets'][target].update({k:v for k,v in state.items() if k in {'status','url','instances','info'}})
+                self.save(d)
+                return
+            time.sleep(self.poll_seconds)
+        raise DeploymentError(f'{target} deployment readiness timed out.')
+
     def cleanup(self, d, targets):
         blocked = []
         for target in reversed(targets):
@@ -252,12 +286,12 @@ class DeploymentStore:
             if target in CLOUDS:
                 try:
                     # Collect evidence before DELETE stops tasks. Do not persist raw application logs.
-                    runner.call('GET', '/deployments/' + d['id'] + '/logs')
+                    runner.call('GET', '/deployments/' + self.target_id(d, target) + '/logs')
                     d['targets'][target]['logs_collected'] = True
                 except Exception:
                     d['targets'][target]['logs_collected'] = False
             try:
-                runner.call('DELETE', '/deployments/' + d['id'])
+                runner.call('DELETE', '/deployments/' + self.target_id(d, target))
                 d['targets'][target]['cleanup'] = 'confirmed'
                 d['targets'][target]['status'] = 'stopped'
                 d['targets'][target]['instances'] = 0
@@ -289,7 +323,6 @@ class DeploymentStore:
             d['status'] = 'deploying'; self.save(d)
             start = time.monotonic()
             for target in d['targets']:
-                runner = self.runner_for(target)
                 d['targets'][target]['status'] = 'deploying'; self.save(d)
                 body = dict(deployment_id=d['id'], project_id=project.id, image=images.get(target, image), port=analysis.port,
                             health_path=analysis.health_path, database={'engine':'postgres','name':analysis.database_name or 'board_db'},
@@ -303,20 +336,8 @@ class DeploymentStore:
                     body['runtime']=project.runtime
                     body['port']=project.runtime['port']; body['health_path']=project.runtime['health_path']
                 submitted.append(target)
-                runner.call('POST', '/deployments', body)
-                deadline = time.monotonic() + (max(self.timeout, 2700) if target == 'aws' and d.get('architecture') else self.timeout)
-                while time.monotonic() < deadline:
-                    state = runner.call('GET', '/deployments/' + d['id'])
-                    if state.get('status') == 'failed': raise DeploymentError(f'{target} deployment failed; inspect its logs.')
-                    if state.get('status') == 'ready':
-                        url = urlsplit(state.get('url', ''))
-                        valid = (url.scheme == 'https' and (url.hostname or '').endswith('.trycloudflare.com')) if target == 'local' else runner.valid_url(state.get('url', ''))
-                        if not valid: raise DeploymentError(f'{target} returned an invalid public URL.')
-                        d['targets'][target].update({k:v for k,v in state.items() if k in {'status','url','instances','info'}})
-                        self.save(d)
-                        break
-                    time.sleep(self.poll_seconds)
-                else: raise DeploymentError(f'{target} deployment readiness timed out.')
+                self.submit(d, target, body)
+                self.wait_ready(d, target)
             d['timings']['deploy_s'] = time.monotonic() - start
             d['status'] = 'deployed'
             baseline, *others = d['targets']
@@ -339,6 +360,86 @@ class DeploymentStore:
             self.cleanup(d, submitted)
         finally:
             d['finished'] = time.time(); d['timings']['total_s'] = d['finished'] - d['created']; self.save(d)
+
+    def apply_fix(self, project, id):
+        """차단된 배포에 규칙 수정안(env)을 한 번 적용한다. 클라우드만 새 ID로 다시 배포하고 2회차 시운전을 돌린다."""
+        d = self.get(id)
+        if d['status'] != 'blocked':
+            raise Busy(f'Only a blocked deployment can be fixed; this one is {d["status"]}.')
+        # GCP 어댑터는 서비스 하나만 다룬다. 옛 차단 배포를 고치면 더 새 배포가 쓰는 서비스를 덮어쓴다.
+        if self.list(d['project_id'])[0]['id'] != id:
+            raise Busy('Only the latest deployment of this project can be fixed; start a new deployment instead.')
+        cloud = next((name for name in d['options'] if name != 'local'), None)
+        target = d['targets'].get(cloud, {})
+        if 'local' not in d['options'] or cloud not in ENV_FIX_TARGETS or 'request' not in target:
+            raise DeploymentError('Fixes are applied only to a Local + GCP deployment made by the engine; apply this fix manually.')
+        if len(d['attempts']) != 1:
+            raise DeploymentError('This deployment was already fixed once; start a new deployment.')
+        if target.get('cleanup') != 'confirmed':
+            raise DeploymentError(f'The blocked {cloud} deployment was not confirmed stopped; retry its DELETE on the adapter first.')
+        fix = (d['attempts'][0].get('report') or {}).get('fix') or {}
+        if not (fix.get('auto_applicable') is True and fix.get('target') == cloud and fix.get('option') == 'env' and fix.get('value') in ENV_FIXES):
+            raise DeploymentError('This fix is not automatically applicable; apply it manually.')
+        self.runner_for(cloud).preflight(project)
+        d['attempts'][0]['applied_fix'] = fix
+        d['status'] = 'fixing'
+        d.pop('finished', None)
+        # 1회차 총시간은 수정이 끝나면 2회차 작업 시간을 더해 다시 채운다. 그 사이에는 지금 값처럼 보이지 않게 뺀다.
+        spent = d['timings'].pop('total_s', 0)
+        with self.connect() as db:
+            # 확인한 뒤 같은 프로젝트의 새 배포가 끼어들었거나 이미 다른 요청이 수정을 시작했으면 바꾸지 않는다.
+            changed = db.execute("UPDATE deployments SET status=?, payload=? WHERE id=? AND status='blocked' "
+                                 "AND rowid=(SELECT MAX(rowid) FROM deployments WHERE project_id=?)",
+                                 (d['status'], json.dumps(d), id, d['project_id'])).rowcount
+        if changed != 1:
+            raise Busy('The deployment changed while applying the fix; reload it and try again.')
+        self.pool.submit(self.run_fix, project, json.loads(json.dumps(d)), cloud, ENV_FIXES[fix['value']], spent)
+        return d
+
+    def run_fix(self, project, d, cloud, env, spent=0):
+        started = time.time()
+        target = d['targets'][cloud]
+        # 1회차 차단 기록(정리 확인됨). 재배포 POST가 거절돼 새 ID가 어댑터에 없으면 이 기록으로 되돌린다.
+        blocked, traffic_blocked = dict(target), d.get('traffic_blocked')
+        # 새 ID는 엔진 배포 ID와 같은 36자 모양이다(접미사로 늘리면 AWS ECS clientToken 36자 제한을 넘는다).
+        new_id = 'dep_' + uuid.uuid4().hex
+        managed, accepted = ['local', cloud], False
+        try:
+            # POST 전에 새 ID를 기록한다. 응답을 못 받은 실패(시간 초과·연결 끊김)는 어댑터가 이미 접수해 배포를
+            # 시작했을 수 있어서, 실패 처리가 이 ID로 정리해야 공개 주소가 기록 없이 다시 열린 채로 남지 않는다.
+            # 새 배포가 공개 주소를 다시 열 것이므로 1회차 정리 기록과 차단 표시는 더 이상 지금 상태가 아니다.
+            for key in ('cleanup', 'logs_collected'): target.pop(key, None)
+            target.update(status='deploying', deployment_id=new_id); d['traffic_blocked'] = False; self.save(d)
+            # 빌드하지 않는다. 1회차 본문(같은 digest·포트·DB·옵션)에 env만 더한다.
+            deploying = time.monotonic()
+            self.submit(d, cloud, {**blocked['request'], 'deployment_id': new_id, 'env': env})
+            accepted = True
+            self.wait_ready(d, cloud)
+            # 대시보드의 분해(빌드·배포·시운전)가 총시간을 설명하도록 재배포 시간을 배포 시간에 더한다.
+            d['timings']['deploy_s'] = d['timings'].get('deploy_s', 0) + time.monotonic() - deploying
+            # 2회차 수정안은 자동으로 다시 적용하지 않으므로 can_apply_env 힌트를 주지 않는다.
+            self.compare(d, Endpoint(name='local', url=d['targets']['local']['url']), [Endpoint(name=cloud, url=target['url'])], project)
+            if d['status'] == 'blocked':
+                self.cleanup(d, [cloud])
+        except Exception as exc:
+            d['status'] = 'failed'
+            d['error'] = str(exc) if isinstance(exc, DeploymentError) else 'Fix redeploy failed; inspect the engine environment.'
+            if not accepted:
+                try:
+                    self.runner_for(cloud).call('GET', '/deployments/' + new_id)
+                except NotFound:
+                    # 어댑터가 새 ID를 모른다 = POST가 거절됐다. 지울 것이 없으니 1회차 정리 기록을 그대로 둔다
+                    # (그 ID로 DELETE하면 404가 정리 실패로 기록돼 이미 확인된 차단이 failed로 바뀐다).
+                    d['targets'][cloud], d['traffic_blocked'] = blocked, traffic_blocked
+                    managed.remove(cloud)
+                except Exception:
+                    pass  # 접수됐는지 모른다. 아래 정리가 새 ID로 DELETE하고, 실패하면 정리 실패로 남긴다.
+            for name in managed:
+                d['targets'][name].update(status='failed', error=d['error'])
+            self.cleanup(d, managed)
+        finally:
+            # 차단 뒤 수정 버튼을 누르기까지 기다린 시간은 작업 시간이 아니므로 빼고, 1회차 총시간에 이번 작업 시간만 더한다.
+            d['finished'] = time.time(); d['timings']['total_s'] = spent + d['finished'] - started; self.save(d)
 
     def start_comparison(self, project, request: CompareRequest):
         if request.baseline.name == request.candidate.name or request.baseline.url == request.candidate.url:
@@ -372,8 +473,9 @@ class DeploymentStore:
             if target.name not in d['targets']:
                 d['targets'][target.name] = dict(status='external', label='Existing environment (not managed by engine)', url=target.url)
         d['status'] = 'shakedown'
-        attempt = dict(n=1, options=d['options'], steps=[], duration_s=0)
-        d['attempts'] = [attempt]
+        # 수정 적용 뒤의 시운전은 1회차 기록 뒤에 2회차로 덧붙인다.
+        attempt = dict(n=len(d['attempts']) + 1, options=d['options'], steps=[], duration_s=0)
+        d['attempts'].append(attempt)
         self.save(d)
         results, verdicts, reports = {}, {}, {}
         for candidate in candidates:
@@ -391,6 +493,8 @@ class DeploymentStore:
     def shakedown_one(self, d, attempt, baseline, candidate, project, can_apply_env=False):
         """One baseline/candidate run. Its rows are appended to the attempt (each row names its candidate)."""
         prior = list(attempt['steps'])
+        # 시운전은 이번 실행의 AI 비용만 알려 준다. 앞 회차·앞 클라우드 비용을 잃지 않게 시작 전까지의 합에 더한다.
+        cost_before = d['ai_cost']
         hints = {'uses_server_session': project.analysis.uses_server_session}
         if can_apply_env:
             # 시운전은 이 힌트가 있을 때만 env 수정안을 자동 적용 가능(auto_applicable)으로 표시한다.
@@ -408,8 +512,12 @@ class DeploymentStore:
         while True:
             if time.monotonic() - started >= self.shakedown_timeout:
                 raise DeploymentError('Shakedown timed out; no PASS was recorded.')
-            for key in ('scenario', 'scenario_source', 'ai_cost'):
+            for key in ('scenario', 'scenario_source'):
                 if key in state: d[key] = state[key]
+            if 'ai_cost' in state:
+                d['ai_cost'] = {k: cost_before.get(k, 0) + state['ai_cost'].get(k, 0) for k in ('calls', 'input_tokens', 'output_tokens', 'krw')}
+                # 원화는 시운전이 소수 둘째 자리로 보내므로 더한 뒤에도 같은 자리로 맞춘다(0.1+0.2가 0.30000000000000004가 되지 않게).
+                d['ai_cost']['krw'] = round(d['ai_cost']['krw'], 2)
             steps = state.get('steps', [])
             attempt['steps'] = prior + steps
             attempt['duration_s'] = spent + time.monotonic() - started

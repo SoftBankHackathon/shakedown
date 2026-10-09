@@ -80,6 +80,10 @@ export type TargetState = {
   logs_collected?: boolean;
   commands?: string[];
   error?: string | null;
+  /** Target API에 실제로 쓴(받아들여진) 배포 ID. 차단 뒤 수정 재배포를 하면 새 ID로 바뀌고, 그 뒤 조회·DELETE는 이 ID로 한다. */
+  deployment_id?: string;
+  /** 받아들여진 Target API 본문(deployment_id 제외). 수정 재배포는 이 본문에 env만 더해 같은 이미지로 다시 보낸다. */
+  request?: Omit<TargetDeployRequest, "deployment_id">;
 };
 
 export type Step = {
