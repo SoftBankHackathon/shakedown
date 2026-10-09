@@ -65,6 +65,11 @@ HOST=0.0.0.0 PORT=9201 npm start -w @shakedown/shakedown   # 엔진이 다른 PC
 
 - `auto_applicable`은 로그인 풀림 수정안만, 엔진이 요청에 `hints.can_apply_env: true`를 보냈을 때 true입니다(엔진이 env를 바꿔 같은 이미지로 다시 배포할 수 있는 대상, 지금은 엔진이 관리하는 GCP). 나머지는 모두 false(사람이 확인 후 적용)
 - `hop.instance`는 응답의 `X-Instance-Id`를 기록하며 헤더가 없으면 null입니다. 규칙 보고서의 세션 원인은 휴리스틱 추정이므로 hop 증거와 실제 인프라 설정을 함께 확인해야 합니다.
+- 로그인 풀림 보고서는 로그인을 받은 hop(`POST /login`, 앞 단계에서 끝났으면 그 단계에서 찾음)과 로그인 화면으로 튕긴 hop의 `instance`가 둘 다 있고 서로 다르면 근거 한 줄을 더합니다. 예: `POST /login was handled by instance i-aaaa1111, GET /board by instance i-bbbb2222: 2 different instances served one user's requests.` 둘 중 하나가 없거나 같으면 더하지 않고 confidence도 그대로입니다.
+- `X-Instance-Id`는 샘플 앱(`samples/kty-board`)의 `demo` 프로필이 켜졌을 때만 나옵니다. 값은 `HOSTNAME`(Docker 컨테이너 ID 등), 없으면 서버 프로세스마다 무작위 `i-xxxxxxxx`(Cloud Run)입니다. 실제 범위는 이렇습니다.
+  - 어느 소스가 빌드되나: 엔진은 프로젝트로 등록한 `repo`를 빌드합니다(로컬 경로면 그 폴더, GitHub 주소면 clone한 저장소). 위 값은 이 저장소의 `samples/kty-board`를 경로로 등록했을 때 얘기입니다. 대시보드 입력 예시의 `https://github.com/xodbs1021/kty-board-project`처럼 다른 저장소를 등록하면 그 저장소의 필터가 들어갑니다. 그 저장소에 이 변경이 없으면 Cloud Run에서는 서버를 구별할 ID가 나오지 않아(옛 필터면 두 대 모두 `local`, 필터가 없으면 헤더 없음) 근거 줄이 생기지 않습니다.
+  - AWS·GCP 어댑터: env가 없으면 `demo,session-memory`로 띄우므로 헤더가 나옵니다. 근거 줄은 이 비교 환경 hop에서만 만듭니다.
+  - 엔진이 띄우는 Local: 엔진이 Local에 env를 넘기지 않아(`apps/engine/engine/deployments.py`의 배포 요청 본문에 `env` 없음) 앱 기본 프로필(`session-memory`)만 켜집니다. `demo`가 꺼져 있으니 헤더가 없고 Local hop의 `instance`는 늘 null입니다. Local은 기준 환경이고 1대라서 근거 줄에는 영향이 없습니다.
 
 ### AI 보고서 (Claude)
 
