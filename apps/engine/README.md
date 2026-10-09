@@ -168,3 +168,29 @@ API:
 예: npm lockfile 누락 시 `failure.code=MISSING_LOCKFILE`, `failure.details={"missing_files":["package-lock.json"],"package_manager":"npm"}`을 전달합니다. 고정 지침은 누락 파일을 있다고 가정하거나 임의의 의존성/실행 대상을 만들지 말고, 근거가 부족하면 null을 반환하도록 요구합니다. 이 지침 준수와 실제 앱 동작을 정적 검사만으로 보장하지는 않습니다. 원본 코드/README/환경값/명령 로그는 요청에 넣지 않습니다.
 
 계획 응답에 `fallback_diagnostic`과 `prompt_version`을 포함해 어떤 진단과 규격으로 생성했는지 확인할 수 있습니다. 프롬프트 본문이나 키를 별도 로그로 저장하지 않습니다.
+
+## AWS 아키텍처 판단 (설계 계획, 배포 적용 전)
+
+프로젝트 화면에서 서비스 형태, 피크 RPS, 가용성, 트래픽 변화, 우선순위를 입력해 세 설계안을 비교합니다. 저장소를 다시 분석해 프레임워크/DB/서버 세션/의존성 이름과 README의 제한된 키워드를 추출합니다. README 원문이나 코드·환경값은 API로 전송하지 않습니다. README 키워드는 미검증 힌트이며 실제 기능이나 수요의 증명이 아닙니다.
+
+| 설계안 | 태스크당 자원 | 태스크 / AZ | 확장 | 관계형 DB 필요 시 |
+| --- | --- | --- | --- | --- |
+| small | 0.5 vCPU / 1 GiB | 1 / 1 | 고정 | Single-AZ RDS |
+| medium | 1 vCPU / 2 GiB | 2–4 / 2 | 목표 추적 | Multi-AZ RDS |
+| large | 2 vCPU / 4 GiB | 3–12 / 3 | 목표 추적 | Multi-AZ RDS, 읽기 복제본 검토 |
+
+세 안은 ALB + ECS Fargate HTTP 서비스의 초기 설계 프리셋입니다. 수치는 AWS 처리량 보장이 아닙니다. 피크 10 RPS 이하/100 이하/100 초과로 초기 후보를 나누는 **제품 내 가정**이며 반드시 부하 테스트로 조정해야 합니다. 고가용성 또는 급증 트래픽은 최소 medium을 요구합니다. 코드 크기로 수요를 추측하지 않으며, RPS/가용성/트래픽 미정이면 잠정 추천만 반환하고 선택 저장을 막습니다. 비용 견적은 제공하지 않습니다.
+
+Claude가 연결되어 있고 `use_ai=true`이면 `aws-architecture.v1` 고정 요청(카탈로그·근거·운영 요구·규칙 최소 등급·허용안·응답 스키마)을 한 번 전송합니다. AI는 `template_id`, 한국어 `reasons`, 실제 `evidence_ids`만 반환할 수 있습니다. 임의 리소스/명령/새 템플릿이나 최소 등급 미달 선택은 거절합니다. 미연결 또는 use_ai=false이면 규칙 결과임을 명시합니다. API 오류나 규격 위반을 AI 성공으로 대체하지 않습니다.
+
+로컬 DB/파일 영속성 위험 또는 지원 밖 DB는 선택을 차단합니다. 감지된 서버 세션은 다중 태스크 전 앱 수정 검토 항목으로 표시합니다. 정적 사이트/워커/배치 및 미확정 서비스는 HTTP 세 안에 억지로 배치하지 않고 별도 설계 필요로 반환합니다. 캐시·큐·읽기 복제본을 규모만으로 추가하지 않습니다.
+
+계획 및 선택은 `architecture.sqlite3`에 저장되어 재시작 후에도 남습니다. 프로젝트가 다른 계획이나 최신이 아닌 계획은 선택할 수 없습니다. 저장된 근거는 작성 당시의 스냅샷이며 레포/요구가 바뀌면 다시 판단해야 합니다.
+
+- POST `/api/projects/{id}/architecture-plans`: ArchitectureRequest
+- GET `/api/projects/{id}/architecture-plans/latest`: 최근 계획 또는 null
+- POST `/api/projects/{id}/architecture-plans/{plan_id}/select`: `{template_id: small|medium|large}`
+
+**선택 저장은 인프라 생성이나 배포 설정 적용이 아닙니다.** `deployment.ready=false`로 반환합니다. 현재 AWS 데모 어댑터는 고정 CPU/메모리, 준비된 ALB/RDS, 최대 2태스크 계약을 사용합니다. 이 계획을 실제 배포하려면 템플릿별 IaC/어댑터 연결, HTTPS·네트워크·DB·부하 검증을 별도로 구현해야 합니다. 기존 Action은 저장된 계획을 적용하지 않습니다. 유료 Claude 호출과 실제 AWS 배포는 테스트 대역으로 대체했으며 실제 검증하지 않았습니다.
+
+설계 참고: [ECS 목표 추적 확장](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-autoscaling-targettracking.html), [ECS AZ 분산](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-rebalancing.html), [RDS Multi-AZ](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZSingleStandby.html). Multi-AZ DB 인스턴스의 standby는 읽기 트래픽을 처리하지 않습니다.

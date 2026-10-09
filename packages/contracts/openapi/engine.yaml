@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Engine API
-  version: 0.1.2
+  version: 0.1.3
   description: |
-    > **상태: 통합 제안 (v0.1.2, 2026-10-09)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 통합 제안 (v0.1.3, 2026-10-09)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     엔진(apps/engine, 김도경)이 구현하고 대시보드(apps/web, 서동옥)가 호출하는 API.
@@ -410,8 +410,222 @@ paths:
         schema:
           type: string
 
+  /api/projects/{project_id}/architecture-plans:
+    post:
+      summary: 저장소와 운영 요구로 AWS 설계안을 판단하고 저장 (배포하지 않음)
+      parameters:
+      - &arch001
+        name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchitectureRequest'
+      responses:
+        '200':
+          description: 소·중·대 판단 결과; ready=false
+          content:
+            application/json:
+              schema: &arch002
+                $ref: '#/components/schemas/ArchitecturePlan'
+        '400':
+          description: 입력·분석·AI 판단 오류
+        '404':
+          description: 프로젝트 없음
+  /api/projects/{project_id}/architecture-plans/latest:
+    get:
+      summary: 최근 설계안과 선택 상태 조회; 없으면 null
+      parameters:
+      - *arch001
+      responses:
+        '200':
+          description: 최근 설계안
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - *arch002
+                - type: 'null'
+        '404':
+          description: 프로젝트 없음
+  /api/projects/{project_id}/architecture-plans/{plan_id}/select:
+    post:
+      summary: 운영 요구를 충족하는 최신 설계안 선택 저장; 배포 설정 미변경
+      parameters:
+      - *arch001
+      - name: plan_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchitectureSelection'
+      responses:
+        '200':
+          description: 선택 상태가 저장된 설계안
+          content:
+            application/json:
+              schema: *arch002
+        '400':
+          description: 누락 입력·차단 조건·다른 프로젝트·오래된 계획·허용되지 않은 설계안
+        '404':
+          description: 프로젝트 없음
 components:
   schemas:
+    ArchitectureRequest:
+      additionalProperties: false
+      properties:
+        workload:
+          default: auto
+          enum:
+          - auto
+          - http
+          - worker
+          - batch
+          - static
+          title: Workload
+          type: string
+        peak_rps:
+          anyOf:
+          - maximum: 10000000
+            minimum: 0
+            type: integer
+          - type: 'null'
+          default: null
+          title: Peak Rps
+        availability:
+          default: unknown
+          enum:
+          - unknown
+          - best_effort
+          - high
+          title: Availability
+          type: string
+        traffic:
+          default: unknown
+          enum:
+          - unknown
+          - steady
+          - bursty
+          title: Traffic
+          type: string
+        priority:
+          default: balanced
+          enum:
+          - balanced
+          - cost
+          - availability
+          title: Priority
+          type: string
+        use_ai:
+          default: true
+          title: Use Ai
+          type: boolean
+      title: ArchitectureRequest
+      type: object
+    ArchitectureSelection:
+      additionalProperties: false
+      properties:
+        template_id:
+          enum:
+          - small
+          - medium
+          - large
+          title: Template Id
+          type: string
+      required:
+      - template_id
+      title: ArchitectureSelection
+      type: object
+    ArchitecturePlan:
+      type: object
+      required:
+      - id
+      - project_id
+      - schema_version
+      - created
+      - source
+      - status
+      - recommended_template
+      - selected_template
+      - templates
+      - assessment
+      - facts
+      - requirements
+      - deployment
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        schema_version:
+          const: aws-architecture.v1
+        created:
+          type: number
+        source:
+          enum:
+          - rule
+          - ai
+        status:
+          enum:
+          - needs_input
+          - proposed
+          - selected
+        recommended_template:
+          enum:
+          - small
+          - medium
+          - large
+          - null
+        selected_template:
+          enum:
+          - small
+          - medium
+          - large
+          - null
+        requirements:
+          $ref: '#/components/schemas/ArchitectureRequest'
+        reasons:
+          type: array
+          items:
+            type: string
+        evidence_ids:
+          type: array
+          items:
+            type: string
+        templates:
+          type: array
+          items:
+            type: object
+          description: '고정 설계안: CPU/메모리/최소·최대 태스크/AZ/자동 확장/DB/검토 사항'
+        assessment:
+          type: object
+          description: minimum_tier, eligible_templates, missing_inputs, blockers, warnings,
+            reasons
+        facts:
+          type: object
+          description: 소스 분석과 운영 입력 근거; 원본 코드·README 본문·환경값 미포함
+        evidence_fingerprint:
+          type: string
+        deployment:
+          type: object
+          required:
+          - ready
+          - reason
+          properties:
+            ready:
+              const: false
+            reason:
+              type: string
     Endpoint:
       type: object
       required: [name, url]

@@ -221,3 +221,24 @@ export type ImageBuild = {
   source: ImagePlan["source"];
   error?: string;
 };
+
+
+export type ArchitectureTier = "small" | "medium" | "large";
+export type ArchitectureRequest = {
+  workload: "auto" | "http" | "worker" | "batch" | "static";
+  peak_rps: number | null;
+  availability: "unknown" | "best_effort" | "high";
+  traffic: "unknown" | "steady" | "bursty";
+  priority: "balanced" | "cost" | "availability";
+  use_ai: boolean;
+};
+export type ArchitecturePlan = {
+  id: string; project_id: string; created: number; schema_version: string;
+  source: "rule" | "ai"; status: "needs_input" | "proposed" | "selected";
+  recommended_template: ArchitectureTier | null; selected_template: ArchitectureTier | null;
+  requirements: ArchitectureRequest; reasons: string[]; evidence_ids: string[];
+  assessment: { minimum_tier: ArchitectureTier; eligible_templates: ArchitectureTier[]; missing_inputs: string[]; blockers: string[]; warnings: string[]; reasons: string[] };
+  facts: { stack: string; workload: string; workload_source: string; signals: { database: string | null; server_session: boolean; local_storage: boolean; queue_dependency: boolean; readme_hints: string[] }; evidence: {id: string; value: unknown; source: string}[]; analysis_warnings: string[] };
+  templates: { id: ArchitectureTier; name: string; cpu: number; memory_mib: number; min_tasks: number; max_tasks: number; availability_zones: number; autoscaling: boolean; database: string; tradeoff: string }[];
+  deployment: {ready: false; reason: string}; evidence_fingerprint: string;
+};

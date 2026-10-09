@@ -12,6 +12,7 @@ from engine.llm import LlmConnection, ConnectionRequest, LlmError
 from engine.image_builder import ImageBuilder, PlanRequest, BuildError
 from engine.analyzer import AnalysisError
 from engine.models import CreateProjectRequest, Project
+from engine.architecture import ArchitecturePlanner, ArchitectureRequest, ArchitectureSelection, ArchitectureError
 from engine.projects import DATA_DIR, ProjectStore
 
 
@@ -24,6 +25,7 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
             api.state.deployments = DeploymentStore(api.state.store.path.parent / "deployments.sqlite3")
         api.state.deployments.runner.llm = api.state.llm
         api.state.deployments.aws.llm = api.state.llm
+        api.state.architecture = ArchitecturePlanner(api.state.store.path.parent / 'architecture.sqlite3', api.state.deployments.runner, api.state.llm)
         api.state.images = ImageBuilder(api.state.store.path.parent / 'image-plans', api.state.llm, api.state.deployments.runner)
         yield
         api.state.images.close()
@@ -40,8 +42,10 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
     @api.exception_handler(RequestValidationError)
     async def invalid_request(_request, _exc):
         # Pydantic errors include raw input; never serialize them or log bodies.
-        return JSONResponse(status_code=400, content={'detail': 'Invalid request body; check repo, name and targets.'})
+        detail = '아키텍처 입력을 확인하세요. RPS는 0 이상의 정수이며 서비스 형태·가용성·트래픽 옵션은 제공된 값이어야 합니다.' if '/architecture-plans' in _request.url.path else 'Invalid request body; check repo, name and targets.'
+        return JSONResponse(status_code=400, content={'detail': detail})
 
+    @api.exception_handler(ArchitectureError)
     @api.exception_handler(LlmError)
     @api.exception_handler(BuildError)
     async def feature_error(_request, exc):
@@ -79,6 +83,25 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
         job=api.state.images.get(build_id)
         if job is None: raise HTTPException(status_code=404,detail='Build not found.')
         return job
+
+    @api.get('/api/projects/{project_id}/architecture-plans/latest')
+    def architecture_latest(project_id: str):
+        if api.state.store.get(project_id) is None: raise HTTPException(status_code=404, detail='Project not found.')
+        return api.state.architecture.latest(project_id)
+
+    @api.post('/api/projects/{project_id}/architecture-plans')
+    def architecture_plan(project_id: str, body: ArchitectureRequest):
+        project=api.state.store.get(project_id)
+        if project is None: raise HTTPException(status_code=404, detail='Project not found.')
+        try: return api.state.architecture.create(project, body)
+        except (ArchitectureError, LlmError): raise
+        except (AnalysisError, BuildError, DeploymentError) as exc: raise ArchitectureError(str(exc)) from None
+        except Exception: raise ArchitectureError('아키텍처 판단에 실패했습니다. 저장소 접근과 설정을 확인하세요.') from None
+
+    @api.post('/api/projects/{project_id}/architecture-plans/{plan_id}/select')
+    def architecture_select(project_id: str, plan_id: str, body: ArchitectureSelection):
+        if api.state.store.get(project_id) is None: raise HTTPException(status_code=404, detail='Project not found.')
+        return api.state.architecture.select(project_id,plan_id,body.template_id)
 
     @api.get('/api/health')
     def health():

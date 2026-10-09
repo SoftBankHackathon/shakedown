@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ArchitecturePlanner } from "@/components/architecture-planner";
 import { ImageBuilder } from "@/components/image-builder";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -205,6 +206,7 @@ export default function ProjectPage() {
         </div>
       </div>
 
+      <ArchitecturePlanner projectId={id} />
       <ImageBuilder projectId={id} />
 
       <Section title={t("project.deployments")}>
