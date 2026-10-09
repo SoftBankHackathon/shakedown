@@ -190,10 +190,19 @@ export class GcpProvider implements Provider {
   async stop(log: Log) {
     // 엔진은 DELETE를 20초만 기다린다. 그 안에 끝내거나 실패를 돌려주려고 전체를 19초로 묶는다.
     const signal = AbortSignal.timeout(19_000);
-    if (!(await this.run.getService(signal))) { log('Cloud Run service not found; nothing to stop'); return; }
+    const current = await this.run.getService(signal);
+    if (!current) { log('Cloud Run service not found; nothing to stop'); return; }
     try {
-      await this.run.setInstances(0, signal);
-      log('Cloud Run manual instance count set to 0');
+      // 이미 수동이면(계획 없는 배포·small) 실측한 마스크로 대수만 0으로 바꾼다. 서버가 min/max 값을 채워 돌려줘도 모드만 본다.
+      // 수동 본문은 마스크 없는 전체 교체라 min/max가 남지 않고, 이 경로는 2026-10-09 실측과 같은 요청이어야 하기 때문이다.
+      // 그 밖(자동 확장, 또는 모드를 알 수 없음 = API 기본값 AUTOMATIC)이면 수동 0대로 바꾸며 min/max도 지운다.
+      const automatic = current.scaling?.scalingMode !== 'MANUAL';
+      await this.run.setInstances(0, signal, automatic).catch((error: unknown) => {
+        // 0대 PATCH가 거절되거나 제한 시간을 넘기면 Manager가 프로젝트를 잠근다. 운영자가 할 일을 그 배포 로그에 남긴다.
+        log('Cloud Run scale-to-0 failed; retry DELETE, or scale down by hand as in infra/gcp/README.md "비용 멈추기" step 1');
+        throw error;
+      });
+      log(automatic ? 'Cloud Run set to manual scaling with 0 instances (automatic min/max cleared)' : 'Cloud Run manual instance count set to 0');
       await this.waitClosed(signal);
       log('public URL closed: no success response');
     } finally {

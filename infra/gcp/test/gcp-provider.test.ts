@@ -6,7 +6,9 @@ import { CloudRun, type RunJob, type RunService } from '../src/cloud-run.js';
 import { architectures, type Tier } from '../src/architecture.js';
 import { configSchema } from '../src/config.js';
 import { GcpError } from '../src/gcp-http.js';
+import { Manager } from '../src/manager.js';
 import { requestSchema, type DeployRequest, type LogLine } from '../src/model.js';
+import { Store } from '../src/store.js';
 
 const config = configSchema.parse({
   gcpProject: 'shakedown-511106', gcpProjectNumber: '700410260240', region: 'asia-northeast3',
@@ -40,7 +42,9 @@ class FakeRun extends CloudRun {
   logError: Error | undefined;
   since: string | undefined;
   revision: string | undefined;
-  override async setInstances(count: number) { this.actions.push(`setInstances:${count}`); this.instances.push(count); }
+  clearedAutomatic: boolean[] = [];
+  scaleError: Error | undefined;
+  override async setInstances(count: number, _signal: AbortSignal, clearAutomatic = false) { this.actions.push(`setInstances:${count}`); this.instances.push(count); this.clearedAutomatic.push(clearAutomatic); if (this.scaleError) throw this.scaleError; }
   override async readLogs(revision: string, since: string | undefined) { this.revision = revision; this.since = since; if (this.logError) throw this.logError; return this.logLines; }
   project = { name: 'projects/700410260240', projectId: 'shakedown-511106' };
   override async getProject() { return this.project; }
@@ -376,4 +380,51 @@ test('plan deploys make the same Cloud Run calls and add only a verify_scaling p
   const plain = setup(), plainLines: string[] = [];
   await plain.provider.deploy(input(), AbortSignal.timeout(2_000), line => plainLines.push(line));
   assert.ok(!plainLines.some(l => l.includes('verify_scaling')));
+});
+
+test('stop keeps the measured count-only mask for a manual service and clears automatic min/max only after a plan deploy', async () => {
+  // 계획 없는 배포가 남긴 수동 서비스: 2026-10-09에 실측한 마스크(대수만) 그대로 내린다.
+  const plain = setup(200, 503), plainLines: string[] = [];
+  await plain.provider.deploy(input(), AbortSignal.timeout(2_000), () => {});
+  await plain.provider.stop(line => plainLines.push(line));
+  assert.deepEqual(plain.run.clearedAutomatic, [false]);
+  assert.ok(plainLines.includes('Cloud Run manual instance count set to 0'));
+  // 자동 확장(medium) 서비스: 수동 0대로 바꾸면서 서비스 min/max도 지운다.
+  const medium = setup(200, 503), mediumLines: string[] = [];
+  await medium.provider.deploy(planInput('medium'), AbortSignal.timeout(2_000), () => {});
+  await medium.provider.stop(line => mediumLines.push(line));
+  assert.deepEqual(medium.run.clearedAutomatic, [true]);
+  assert.ok(mediumLines.includes('Cloud Run set to manual scaling with 0 instances (automatic min/max cleared)'));
+  // 서버가 수동 서비스에 min/max 값을 채워 돌려줘도 계획 없는 배포의 내리기는 실측한 마스크를 벗어나지 않는다.
+  const filled = setup(503);
+  filled.run.current = { template: { containers: [{ image: OLD_IMAGE }] }, scaling: { scalingMode: 'MANUAL', manualInstanceCount: 2, minInstanceCount: 1, maxInstanceCount: 100 } };
+  await filled.provider.stop(() => {});
+  assert.deepEqual(filled.run.clearedAutomatic, [false]);
+  await plain.provider.settled(); await medium.provider.settled(); await filled.provider.settled();
+});
+
+test('a plan deploy refused at update_service is cleaned up with the measured mask when the service was still manual', async () => {
+  // Cloud Run이 자동 확장 본문을 거절해도(400) 서비스는 이전의 수동 상태 그대로다. 실패 정리는 실측된 마스크로 0대를 만든다.
+  const { run, provider } = setup(503);
+  run.current = { template: { containers: [{ image: OLD_IMAGE }] }, scaling: { scalingMode: 'MANUAL', manualInstanceCount: 2 } };
+  run.putService = async service => { run.actions.push('putService'); run.services.push(service); throw new GcpError(400, 'Cloud Run service update failed: HTTP 400'); };
+  const store = new Store(':memory:'), manager = new Manager(store, provider);
+  try {
+    manager.create(planInput('medium')); await manager.drain();
+    assert.equal(store.result('dep_plan').status, 'failed');
+    assert.deepEqual(run.clearedAutomatic, [false]);
+    assert.ok(!store.row('dep_plan')?.deleting, 'the project is not left locked');
+  } finally { await provider.settled(); store.close(); }
+});
+
+test('when the scale-to-0 PATCH is refused, stop logs how to scale down by hand, rejects and still revokes public access', async () => {
+  // 넓은 마스크(자동 확장 서비스용)는 아직 실측 전이다. 거절되면 Manager가 프로젝트를 잠그므로 운영자가 할 일을 배포 로그에 남긴다.
+  const { run, provider } = setup(503);
+  run.scaleError = new GcpError(400, 'Cloud Run scaling update failed: HTTP 400');
+  const lines: string[] = [];
+  await assert.rejects(provider.stop(line => lines.push(line)), (e: unknown) => e instanceof GcpError && e.status === 400);
+  assert.ok(lines.some(l => l.startsWith('Cloud Run scale-to-0 failed;') && l.includes('README')), lines.join('\n'));
+  await settle();
+  assert.ok(run.actions.includes('setPublic:false'));
+  await provider.settled();
 });

@@ -77,13 +77,23 @@ test('a finished operation with an error rejects with its message', async () => 
   await assert.rejects(run.putService({ template: { containers: [] } }, signal), /Revision failed to start/);
 });
 
-test('setInstances changes only scaling.manualInstanceCount', async () => {
+test('setInstances changes only scaling.manualInstanceCount by default, as measured on 2026-10-09', async () => {
   const { run, calls } = fake({ status: 200, data: { name: OPERATION, done: true } });
   await run.setInstances(0, signal);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, 'PATCH');
   assert.equal(calls[0].url, `${SERVICE}?updateMask=scaling.manualInstanceCount`);
   assert.deepEqual(calls[0].body, { scaling: { manualInstanceCount: 0 } });
+});
+
+test('setInstances with clearAutomatic switches to manual scaling with that count and clears automatic min/max', async () => {
+  const { run, calls } = fake({ status: 200, data: { name: OPERATION, done: true } });
+  await run.setInstances(0, signal, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'PATCH');
+  // 마스크에 있고 본문에 없는 min/max는 지워진다. 계획 배포(자동 확장)를 내린 뒤 서비스 min대가 남지 않게 한다.
+  assert.equal(calls[0].url, `${SERVICE}?updateMask=scaling.scalingMode,scaling.manualInstanceCount,scaling.minInstanceCount,scaling.maxInstanceCount`);
+  assert.deepEqual(calls[0].body, { scaling: { scalingMode: 'MANUAL', manualInstanceCount: 0 } });
 });
 
 test('setPublic(true) adds allUsers and keeps etag and every other binding', async () => {
