@@ -75,6 +75,8 @@ function awsFake(c: Context) {
               {
                 IsDefault: !("gateRuleArn" in c.job.config),
                 RuleArn: (c.job.config as any).gateRuleArn,
+                Priority: "1",
+                Conditions: [{ Field: "source-ip", SourceIpConfig: { Values: ["0.0.0.0/0", "::/0"] } }],
                 Actions: ruleActions,
               },
             ],
@@ -184,7 +186,7 @@ for (const mode of ["listener", "rule"])
         await p.apply(c);
         assert.equal(f.listeners[1].DefaultActions[0].Type, "forward");
         await p.redirect(c);
-        assert.equal(f.listeners[0].DefaultActions[0].Type, "redirect");
+        assert.equal(f.listeners[0].DefaultActions[0].Type, mode === "rule" ? "forward" : "redirect");
         await p.gate(c, false);
         assert.equal(
           f.listeners[1].DefaultActions[0].FixedResponseConfig.StatusCode,

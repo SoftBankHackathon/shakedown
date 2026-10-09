@@ -62,6 +62,7 @@ class HttpsClient:
             return reported
         u = urlsplit(b.get('https_url') or '')
         if (b.get('project_id') != project or b.get('target') != target or b.get('status') != 'ready'
+                or ('traffic_blocked' in b and b['traffic_blocked'] is not False)
                 or u.scheme != 'https' or u.hostname != b.get('domain') or u.port or u.username or u.password
                 or u.path not in {'', '/'} or u.query or u.fragment
                 or not b.get('certificate') or not b.get('checked_at')):

@@ -26,6 +26,8 @@ export class HttpsControl {
       url?: string;
       blocked?: boolean;
     };
+    if (typeof result.configured !== "boolean")
+      throw new Error("Invalid HTTPS gate response.");
     if (!result.configured) return;
     const u = new URL(result.url ?? "");
     if (
@@ -36,6 +38,7 @@ export class HttpsControl {
       u.pathname !== "/" ||
       u.search ||
       u.hash ||
+      typeof result.blocked !== "boolean" ||
       result.blocked === open
     )
       throw new Error("Invalid HTTPS gate response.");

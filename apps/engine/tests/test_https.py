@@ -26,7 +26,8 @@ def test_verified_domain_is_selected_and_unregistered_domain_is_rejected():
 @pytest.mark.parametrize('patch',[{'status':'certificate_pending'},{'certificate':None},{'target':'local'},
     {'https_url':'https://app.example.com@evil.example.com'}, {'https_url':'http://app.example.com'},
     {'https_url':'https://app.example.com/path'},{'https_url':'https://app.example.com:444'},
-    {'certificate':{'expires_at':'2000-01-01T00:00:00Z'}}])
+    {'certificate':{'expires_at':'2000-01-01T00:00:00Z'}},
+    {'traffic_blocked':True}, {'traffic_blocked':None}])
 def test_pending_or_invalid_registry_cannot_fallback_to_plain_http(patch):
     b=registry();b.update(patch)
     with pytest.raises(HttpsError):

@@ -108,6 +108,21 @@ export class AwsProvider implements Provider {
         "RESOURCE_MISMATCH",
         "GateRuleArn이 등록된 리스너에 없습니다.",
       );
+    if (cfg.gateRuleArn) {
+      const gate = rules.find((r: any) => r.RuleArn === cfg.gateRuleArn);
+      const conditions = gate.Conditions ?? [];
+      const ips = conditions[0]?.SourceIpConfig?.Values ?? [];
+      // The default forward keeps ECS associated with the ALB. It is safe only
+      // behind a rule matching every IPv4 and IPv6 client, before all defaults.
+      if (gate.IsDefault || String(gate.Priority) !== "1" ||
+          conditions.length !== 1 || conditions[0].Field !== "source-ip" ||
+          ips.length !== 2 || !ips.includes("0.0.0.0/0") || !ips.includes("::/0") ||
+          http.DefaultActions.length !== 1 || http.DefaultActions[0].Type !== "forward" ||
+          (http.DefaultActions[0].TargetGroupArn !== cfg.targetGroupArn &&
+           !(http.DefaultActions[0].ForwardConfig?.TargetGroups?.length === 1 &&
+             http.DefaultActions[0].ForwardConfig.TargetGroups[0].TargetGroupArn === cfg.targetGroupArn)))
+        throw new HttpsError("RESOURCE_CONFLICT", "전체 IPv4/IPv6를 제어하는 우선순위 1 게이트와 기존 대상 그룹 연결이 필요합니다.", 409);
+    }
     if (!d.httpActions) {
       d.httpActions = http.DefaultActions;
       d.gateActions = cfg.gateRuleArn
@@ -359,7 +374,7 @@ export class AwsProvider implements Provider {
         "--actions",
         JSON.stringify(actions),
       ]);
-    await this.call(c, "elbv2", "modify-listener", [
+    if (!cfg.gateRuleArn) await this.call(c, "elbv2", "modify-listener", [
       "--listener-arn",
       cfg.listenerArn,
       "--default-actions",
@@ -402,7 +417,7 @@ export class AwsProvider implements Provider {
           "--actions",
           JSON.stringify(actions),
         ]);
-      await this.call(c, "elbv2", "modify-listener", [
+      if (!cfg.gateRuleArn) await this.call(c, "elbv2", "modify-listener", [
         "--listener-arn",
         cfg.listenerArn,
         "--default-actions",
@@ -462,7 +477,7 @@ export class AwsProvider implements Provider {
           JSON.stringify(d.gateActions),
         ]);
       }
-      await this.call(c, "elbv2", "modify-listener", [
+      if (!cfg.gateRuleArn) await this.call(c, "elbv2", "modify-listener", [
         "--listener-arn",
         cfg.listenerArn,
         "--default-actions",

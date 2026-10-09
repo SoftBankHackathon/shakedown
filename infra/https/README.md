@@ -45,7 +45,7 @@ npm run dev:https
 - 준비된 공개 ALB, 전용 HTTP 80 리스너, 앱 Target Group, ALB 보안그룹, 계정/리전 일치가 필요하다.
 - 첫 앱 배포와 HTTP 헬스체크가 성공한 뒤 HTTPS 연결을 시작한다. DNS 대기 중 앱을 재배포·중지하면 부분 HTTPS 설정을 복원하고 확인 필요 상태로 둔다. 앱을 준비한 뒤 재확인한다. HTTPS 설정과 앱 배포를 동시에 변경하지 않는다.
 - ACM DNS 인증서와 인증용 CNAME을 만들고 443 리스너에 연결한다. TLS 1.2/1.3 정책을 사용한다.
-- HTTP 리스너의 기본 동작 또는 명시적인 gateRuleArn을 사용한다. 다른 라우팅 규칙이 있는 리스너는 거절한다.
+- HTTP 리스너의 기본 동작 또는 명시적인 gateRuleArn을 사용한다. 규칙 방식에서는 우선순위 1의 전체 IPv4/IPv6 source-ip 게이트만 허용한다. 기본 forward는 ECS의 ALB 대상 그룹 연결을 유지하고, HTTP 리다이렉트·차단은 게이트 규칙에서 제어한다. 다른 라우팅 규칙이 있는 리스너는 거절한다.
 - ALB 443 인바운드를 추가할 때 연결 ID로 생성한 규칙만 기록·복원한다.
 - 전용 CLI profile만 사용한다. default와 pokeclip은 거절한다.
 - 필요한 범주: STS GetCallerIdentity, ACM RequestCertificate/DescribeCertificate, ELB DescribeLoadBalancers/DescribeListeners/DescribeRules/DescribeTags/CreateListener/AddTags/ModifyListener/ModifyRule/DeleteListener, EC2 DescribeSecurityGroupRules/AuthorizeSecurityGroupIngress/RevokeSecurityGroupIngress. 계정·리전·관련 ARN으로 권한을 제한한다.
