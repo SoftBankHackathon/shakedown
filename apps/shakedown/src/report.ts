@@ -69,6 +69,15 @@ function instanceLine(login: Hop | undefined, bounced: Hop): string | null {
     `${bounced.method} ${bounced.path} by instance ${bounced.instance}: 2 different instances served one user's requests.`;
 }
 
+// instanceLine이 만드는 줄의 모양. 만드는 곳과 알아보는 곳을 한 파일에 둬서 문장을 바꿀 때 함께 바뀌게 한다.
+// 서버 ID는 앱이 정하는 아무 문자열이라("web 1", 헤더가 두 번 와서 ", "로 이어진 값) 자리마다 아무 글자나 받는다.
+const SWITCHED = /^.+ was handled by instance .+, .+ by instance .+: 2 different instances served one user's requests\.$/s;
+
+/** 규칙 보고서 evidence에 있는 서버 전환 근거 줄. ai-report가 AI 답에 이 줄을 지킬 때 쓴다. */
+export function switchLine(evidence: string[]): string | undefined {
+  return evidence.find((line) => SWITCHED.test(line));
+}
+
 /** 방금 쓴 값(글 제목·본문·댓글)이 비교 환경에서만 다시 보이지 않는다. */
 function lostWrite(r: StepResult): boolean {
   const ok = r.final_status !== null && r.final_status < 400;
