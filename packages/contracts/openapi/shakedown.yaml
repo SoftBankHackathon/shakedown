@@ -93,7 +93,11 @@ components:
           $ref: "#/components/schemas/Scenario"
         hints:
           type: object
-          description: 엔진의 레포 분석 결과 중 시나리오 작성에 도움이 되는 정보 (비밀값 금지)
+          description: |
+            엔진의 레포 분석 결과 중 시나리오 작성에 도움이 되는 정보 (비밀값 금지). 알려진 키:
+            - `uses_server_session` (boolean): 앱이 서버 세션(HttpSession)을 쓰는지
+            - `can_apply_env` (boolean): true면 엔진이 이 candidate의 env를 바꿔 같은 이미지로 다시 배포할 수 있음.
+              이때만 규칙 보고서의 env 수정안이 `auto_applicable: true`가 됨
           additionalProperties: true
     Shakedown:
       type: object
@@ -207,7 +211,7 @@ components:
             value: { type: string, description: "option=env면 KEY=VALUE 한 개(비밀이 아닌 환경변수). 같은 이미지에 이 env만 더해 다시 배포함. 예 SPRING_PROFILES_ACTIVE=demo,session-jdbc" }
             description: { type: string }
             native: { type: string, description: 대상 환경에서의 실제 설정 이름 }
-            auto_applicable: { type: boolean }
+            auto_applicable: { type: boolean, description: "true면 엔진이 이 수정안을 그대로 적용할 수 있음(hints.can_apply_env=true인 env 수정안만). AI 보고서도 이 fix는 바꾸지 않음" }
         confidence: { type: string, enum: [high, medium, low] }
         by: { type: string, enum: [rule, ai] }
     CostLedger:

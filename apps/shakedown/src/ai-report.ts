@@ -51,6 +51,8 @@ const SYSTEM = [
   "Answer in English with: headline (one sentence), cause (two or three sentences), evidence (short facts taken from the data),",
   "fix (one setting change on the candidate environment, or null if the data does not support one) and confidence (high, medium or low).",
   "In fix, target is the environment name. Always set auto_applicable to false; a person reviews and applies the fix.",
+  // aiReport는 자동 적용 가능한 규칙 수정안을 그대로 유지한다. AI가 다른 수정안을 권하는 문장을 쓰지 않게 미리 알린다.
+  "If rule_report.fix.auto_applicable is true, that fix is applied as is, so explain the cause consistently with it.",
 ].join(" ");
 
 export type AiInput = { diffs: StepDiff[]; verdict: Verdict; fallback: Report | null; hints?: Record<string, unknown> };
@@ -157,5 +159,11 @@ export async function aiReport(input: AiInput, options: AiOptions): Promise<{ re
   // 거절이면 content가 비었거나 스키마를 안 지킬 수 있어서, 내용을 읽기 전에 거른다.
   if (response.stop_reason === "refusal") return { report: input.fallback, cost: spent };
   const raw = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-  return { report: parseReport(raw) ?? input.fallback, cost: spent };
+  const parsed = parseReport(raw);
+  // 엔진이 그대로 적용할 수정안은 규칙이 정한다. AI가 값을 바꾸거나 지우면 허용되지 않은 설정이 적용되거나
+  // 적용 버튼이 사라지므로, 규칙 수정안이 자동 적용 가능이면 fix만 규칙 것으로 덮는다. headline·cause·evidence와
+  // confidence는 AI 것을 쓴다(confidence는 AI가 자기 원인 설명을 얼마나 확신하는지라서 그 설명과 함께 간다).
+  const pinned = input.fallback?.fix?.auto_applicable ? input.fallback.fix : null;
+  if (parsed && pinned) return { report: { ...parsed, fix: pinned }, cost: spent };
+  return { report: parsed ?? input.fallback, cost: spent };
 }
