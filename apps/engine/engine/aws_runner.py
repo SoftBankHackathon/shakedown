@@ -94,7 +94,7 @@ class AwsRunner(LocalRunner):
 
     def call(self, method, path, body=None):
         try:
-            with httpx.Client(timeout=150 if method == 'DELETE' else 20, trust_env=False) as client:
+            with httpx.Client(timeout=630 if method == 'DELETE' else 20, trust_env=False) as client:
                 response = client.request(method, self.base + path, json=body)
                 response.raise_for_status()
                 return response.json() if response.content else None

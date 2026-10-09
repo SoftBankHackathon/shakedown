@@ -58,3 +58,20 @@ HTTPS, or the production catalog's CPU/memory/task presets. It preserves the exi
 provider's 0.5 vCPU/1GiB settings. Account-wide service-linked roles created implicitly
 by AWS can outlive a stack; delete only a role proven absent before the experiment
 and unused elsewhere. These roles themselves have no hourly resource charge.
+
+## Selected-plan product-path verification
+
+`plan-deployment-check.py` uses the same disposable foundation safeguards, initially
+Single-AZ RDS, then calls the real engine FastAPI routes to create/select a medium plan
+and submit `architecture_plan_id`. The unmodified engine builds/publishes the board image
+and calls the real loopback AWS adapter. It verifies the deployed CPU/memory, task/AZ count,
+RDS MultiAZ, scaling bounds/CPU target, and cross-instance JDBC session/write-read behavior.
+The HTTP route test client runs in process; this is not a browser-click test. Claude is
+not called again because the experiment isolates plan selection-to-deployment wiring.
+The adapter runs in a separate process with a temporary named profile using the explicit
+CLI identity. It does not prove the generated least-privilege IAM policy by assuming it.
+Cleanup first calls the product DELETE route, then removes only the experiment stack,
+including disposable DB/ECR/logs and any leftover task definitions. Confirm DELETE_COMPLETE
+and independently audit resources after the script exits. This is a bounded test, not a
+billing hard cap. The user allowed increasing the previous $3 total budget during this
+run; no additional experiment was started. Obtain a concrete spending limit for future runs.

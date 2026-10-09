@@ -154,7 +154,8 @@ export class AwsProvider implements Provider {
     }
   }
   async stop(log: Log) {
-    const c = this.config, signal = AbortSignal.timeout(120_000);
+    // ECS service deletion can remain DRAINING after tasks stop; allow control-plane convergence.
+    const c = this.config, signal = AbortSignal.timeout(600_000);
     await this.verifyAccount();
     await this.closeRoute(signal);
     log('public route blocked: HTTP 403 confirmed');
