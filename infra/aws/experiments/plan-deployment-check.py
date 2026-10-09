@@ -9,14 +9,17 @@ import httpx
 p=argparse.ArgumentParser()
 p.add_argument('--profile',required=True);p.add_argument('--account',required=True)
 p.add_argument('--stack',required=True);p.add_argument('--output',type=Path,required=True)
+p.add_argument('--tier',choices=['medium','large'],default='medium')
+p.add_argument('--task-recovery',action='store_true',help='Stop one experiment app task and verify replacement plus session/data continuity')
 p.add_argument('--resume',action='store_true',help='Resume this tagged experiment during foundation creation')
 a=p.parse_args()
 if not a.stack.startswith('shakedown-full-exp-'):raise SystemExit('Fresh experiment stack required')
 root=Path(__file__).resolve().parents[3];a.output.mkdir(parents=True,exist_ok=True)
+spec={'medium':{'cpu':'1024','memory':'2048','min':2,'max':4,'rps':50},'large':{'cpu':'2048','memory':'4096','min':3,'max':12,'rps':150}}[a.tier]
 start=time.monotonic();deadline=start+3600
 created=False;outputs={};service=False;scalable=False;stop_load=threading.Event();load_thread=None
 adapter=None; profile_dir=None
-result={'scope':'real engine API selected medium plan -> real AWS adapter -> real AWS resources','checks':{},'cleanup_errors':[]}
+result={'scope':'real engine API selected '+a.tier+' plan -> real AWS adapter -> real AWS resources','checks':{},'cleanup_errors':[]}
 
 def emit(event,**data):print(json.dumps({'event':event,**data},ensure_ascii=False),flush=True)
 def save(): (a.output/'result.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
@@ -136,9 +139,9 @@ try:
  resource_id='service/'+outputs['ClusterArn'].split('/')[-1]+'/'+a.stack
  with TestClient(create_app(store,ds)) as api:
   base='/api/projects/'+project.id
-  plan_response=api.post(base+'/architecture-plans',json={'peak_rps':50,'availability':'high','traffic':'steady','use_ai':False})
+  plan_response=api.post(base+'/architecture-plans',json={'peak_rps':spec['rps'],'availability':'high','traffic':'steady','use_ai':False})
   plan_response.raise_for_status();plan=plan_response.json()
-  selected=api.post(base+'/architecture-plans/'+plan['id']+'/select',json={'template_id':'medium'})
+  selected=api.post(base+'/architecture-plans/'+plan['id']+'/select',json={'template_id':a.tier})
   selected.raise_for_status();result['plan']=selected.json();save()
   dep=api.post(base+'/deployments',json={'targets':['aws'],'architecture_plan_id':plan['id']})
   dep.raise_for_status();dep_id=dep.json()['id'];emit('engine_deployment_started',deployment_id=dep_id)
@@ -159,11 +162,11 @@ try:
  policies=aws('application-autoscaling','describe-scaling-policies',{'ServiceNamespace':'ecs','ResourceId':resource_id})['ScalingPolicies']
  result['checks']['applied_resources']={'cpu':definition['cpu'],'memory':definition['memory'],'tasks':count,'healthy':healthy,'zones':sorted({t['availabilityZone'] for t in tasks}),'db_multi_az':db_state()['MultiAZ'],'scaling_min':target['MinCapacity'],'scaling_max':target['MaxCapacity'],'cpu_target':policies[0]['TargetTrackingScalingPolicyConfiguration']['TargetValue']}
  check=result['checks']['applied_resources']
- if not (check['cpu']=='1024' and check['memory']=='2048' and count==2 and healthy==2 and len(check['zones'])==2 and check['db_multi_az'] and check['scaling_min']==2 and check['scaling_max']==4 and check['cpu_target']==60):raise RuntimeError('Actual resources differ from medium plan')
- emit('medium_resources_verified');save()
+ if not (check['cpu']==spec['cpu'] and check['memory']==spec['memory'] and count==spec['min'] and healthy==spec['min'] and len(check['zones'])==spec['min'] and check['db_multi_az'] and check['scaling_min']==spec['min'] and check['scaling_max']==spec['max'] and check['cpu_target']==60):raise RuntimeError('Actual resources differ from selected plan')
+ emit('selected_resources_verified',tier=a.tier);save()
  url=outputs['PublicUrl'];count,tasks,healthy=healthy_tasks()
  zones=sorted({t['availabilityZone'] for t in tasks})
- if count!=2 or healthy!=2 or len(zones)!=2:raise RuntimeError('Two healthy app AZs not confirmed')
+ if count!=spec['min'] or healthy!=spec['min'] or len(zones)!=spec['min']:raise RuntimeError('Healthy app AZs not confirmed')
  result['checks']['app_multi_az']={'tasks':count,'healthy_targets':healthy,'zones':zones}
  client=httpx.Client(base_url=url,trust_env=False,timeout=10,follow_redirects=False)
  email='smoke-'+uuid.uuid4().hex+'@example.invalid';password=uuid.uuid4().hex
@@ -176,20 +179,35 @@ try:
   r=client.get('/board')
   if r.status_code!=200:raise RuntimeError('Session did not survive across targets')
   if r.headers.get('x-instance-id'):instances.add(r.headers['x-instance-id'])
-  if len(instances)>=2:break
- if len(instances)<2:raise RuntimeError('Cross-instance session evidence missing')
+  if len(instances)>=spec['min']:break
+ if len(instances)<spec['min']:raise RuntimeError('Cross-instance session evidence missing')
  write=client.post('/api/posts/write',data={'title':title,'content':'Disposable AWS verification'})
  if write.status_code!=302 or urlsplit(write.headers.get('location','')).path!='/board':raise RuntimeError('Write failed')
  if not any(post['title']==title for post in client.get('/api/posts').json()):raise RuntimeError('Read-back failed')
  result['checks']['rds_session_and_data']={'instance_count':len(instances),'write_read':True};save();emit('cross_az_session_and_data_passed')
+ if a.task_recovery:
+  original={t['taskArn'] for t in tasks};victim=tasks[0]['taskArn'];recovery_start=time.monotonic()
+  aws('ecs','stop-task',{'cluster':outputs['ClusterArn'],'task':victim,'reason':'Disposable selected-plan recovery verification'})
+  emit('task_recovery_started')
+  def recovered():
+   n,current,h=healthy_tasks()
+   return current if n==spec['min'] and h==spec['min'] and len({t['availabilityZone'] for t in current})==spec['min'] and victim not in {t['taskArn'] for t in current} and any(t['taskArn'] not in original for t in current) else None
+  replacement=wait(recovered,'app task replacement',600)
+  if client.get('/board').status_code!=200:raise RuntimeError('Session lost after replacement')
+  if not any(post['title']==title for post in client.get('/api/posts').json()):raise RuntimeError('Stored data lost after replacement')
+  result['checks']['task_recovery']={'seconds':round(time.monotonic()-recovery_start,2),'healthy_tasks':len(replacement),'zones':sorted({t['availabilityZone'] for t in replacement}),'session_and_data':True}
+  emit('task_recovery_passed');save()
  result['completed']=True;save();emit('checks_finished')
 except Exception as e:
  result['completed']=False;result['error']=str(e);emit('check_failed',error=str(e));save()
 finally:
  if adapter and adapter.poll() is None and 'dep_id' in globals():
   try:
+   delete_start=time.monotonic()
    response=httpx.delete('http://127.0.0.1:9102/deployments/'+dep_id,timeout=630)
    result['checks']['adapter_delete_status']=response.status_code
+   result['checks']['adapter_delete_seconds']=round(time.monotonic()-delete_start,2)
+   save()
    if response.status_code==204:scalable=False
    else:result['cleanup_errors'].append('adapter DELETE: HTTP '+str(response.status_code))
   except Exception as exc:result['cleanup_errors'].append('adapter DELETE: '+str(exc))

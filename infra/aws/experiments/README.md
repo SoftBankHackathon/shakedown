@@ -62,7 +62,7 @@ and unused elsewhere. These roles themselves have no hourly resource charge.
 ## Selected-plan product-path verification
 
 `plan-deployment-check.py` uses the same disposable foundation safeguards, initially
-Single-AZ RDS, then calls the real engine FastAPI routes to create/select a medium plan
+Single-AZ RDS, then calls the real engine FastAPI routes to create/select a medium or large plan (`--tier`, default medium)
 and submit `architecture_plan_id`. The unmodified engine builds/publishes the board image
 and calls the real loopback AWS adapter. It verifies the deployed CPU/memory, task/AZ count,
 RDS MultiAZ, scaling bounds/CPU target, and cross-instance JDBC session/write-read behavior.
@@ -75,3 +75,9 @@ including disposable DB/ECR/logs and any leftover task definitions. Confirm DELE
 and independently audit resources after the script exits. This is a bounded test, not a
 billing hard cap. The user allowed increasing the previous $3 total budget during this
 run; no additional experiment was started. Obtain a concrete spending limit for future runs.
+
+Use `--tier large --task-recovery` to verify three healthy AZs with 2 vCPU/4 GiB
+per task, scaling bounds 3–12, and replacement of one deliberately stopped app task.
+Recovery checks session/data after healthy capacity returns; it does not measure
+continuous availability or prove throughput. The DELETE response and elapsed time
+are captured separately from deployment success, followed by foundation cleanup.
