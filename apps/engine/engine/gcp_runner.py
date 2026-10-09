@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 
 import httpx
 
@@ -28,6 +29,34 @@ class GcpRunner(LocalRunner):
             return config
         except (OSError, ValueError, KeyError, TypeError, IndexError):
             raise DeploymentError('Invalid GCP adapter configuration; regenerate it with infra/gcp/scripts/provision.sh.') from None
+
+    @staticmethod
+    def capture(args, input=None, env=None):
+        try:
+            result = subprocess.run(args, input=input, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    timeout=120, check=True, env=env)
+            return result.stdout.decode().strip()
+        except (OSError, subprocess.SubprocessError, UnicodeError):
+            raise DeploymentError('GCP publishing command failed; check gcloud login, Artifact Registry permissions and Docker. No credentials were logged.') from None
+
+    def preflight(self, project):
+        config = self.config()
+        if project.id != config['projectId']:
+            raise DeploymentError(f'GCP service is bound to another project. Set adapter config projectId to {project.id} for this repository and restart the GCP adapter with a new GCP_ADAPTER_DB file (its state DB is bound to projectId).')
+        if getattr(project, 'runtime', None):
+            raise DeploymentError('GCP supports only the PostgreSQL sample contract; saved runtime settings are not supported yet. Clear the runtime or deploy to AWS.')
+        if project.analysis.port != config['port'] or (project.analysis.database_name or 'board_db') != config['dbName']:
+            raise DeploymentError('Application port/database must match the prepared GCP service.')
+        try:
+            active = self.capture(['gcloud', 'config', 'get', 'project'])
+        except DeploymentError:
+            # Nothing has been built yet: point at the engine's gcloud, not at registry publishing.
+            raise DeploymentError('gcloud CLI is not available to the engine; start the engine with the Google Cloud SDK on PATH and run gcloud auth login.') from None
+        if active != config['gcpProject']:
+            raise DeploymentError('gcloud active project does not match the configured GCP project; run gcloud config set project first.')
+        health = self.call('GET', '/health')
+        if not health or health.get('target') != 'gcp' or health.get('ok') is not True:
+            raise DeploymentError('GCP adapter is not ready on 127.0.0.1:9103.')
 
     def valid_url(self, url):
         config = self.config()
