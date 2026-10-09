@@ -1,0 +1,4 @@
+services:
+  admin: &admin
+    privileged: true
+  copy: *admin

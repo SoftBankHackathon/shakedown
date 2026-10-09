@@ -1,0 +1,6 @@
+services:
+  web:
+    image: example/web
+    privileged: false
+  worker:
+    image: example/worker

@@ -1,0 +1,129 @@
+{
+  "schema_version": "3.0",
+  "scope": "docker_semgrep_and_gitleaks_text_secrets",
+  "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined",
+  "decision": "DENY",
+  "scan_status": "SUCCESS",
+  "reason_code": "RISK_DETECTED",
+  "docker_compose": {
+    "schema_version": "1.0",
+    "scope": "docker_compose_privileged_only",
+    "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined",
+    "scan_status": "SUCCESS",
+    "decision": "DENY",
+    "files": [
+      {
+        "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined\\compose.yaml",
+        "decision": "DENY",
+        "findings": [
+          {
+            "decision": "DENY",
+            "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined\\compose.yaml",
+            "service": "app",
+            "rule_id": "DOCKER_COMPOSE_PRIVILEGED",
+            "reason_code": "PRIVILEGED_ENABLED",
+            "location": {
+              "line": 3,
+              "column": 17,
+              "path": [
+                "services",
+                "app",
+                "privileged"
+              ]
+            }
+          }
+        ],
+        "error": null
+      }
+    ],
+    "errors": []
+  },
+  "semgrep": {
+    "tool": "semgrep",
+    "scope": "local_python_mvp_rules",
+    "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined",
+    "scan_status": "SUCCESS",
+    "decision": "DENY",
+    "findings": [
+      {
+        "tool": "semgrep",
+        "rule_id": "security-gate-python-eval",
+        "severity": "HIGH",
+        "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined\\sample.py",
+        "line": 5,
+        "decision": "DENY",
+        "reason_code": "PYTHON_DYNAMIC_EVAL"
+      },
+      {
+        "tool": "semgrep",
+        "rule_id": "security-gate-python-shell-true",
+        "severity": "HIGH",
+        "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined\\sample.py",
+        "line": 9,
+        "decision": "DENY",
+        "reason_code": "PYTHON_SHELL_EXECUTION"
+      }
+    ],
+    "errors": [],
+    "scanned_files": 1
+  },
+  "gitleaks": {
+    "tool": "gitleaks",
+    "scope": "local_directory_text_secrets",
+    "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined",
+    "scan_status": "SUCCESS",
+    "decision": "DENY",
+    "version": "8.30.0",
+    "scanned_files": 3,
+    "findings": [
+      {
+        "tool": "gitleaks",
+        "rule_id": "security-gate-lab-api-token",
+        "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined\\settings.env",
+        "line": 2,
+        "severity": "HIGH",
+        "reason_code": "SECRET_EXPOSURE",
+        "decision": "DENY"
+      }
+    ],
+    "errors": []
+  },
+  "findings": [
+    {
+      "tool": "docker_compose",
+      "rule_id": "DOCKER_COMPOSE_PRIVILEGED",
+      "severity": "HIGH",
+      "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined\\compose.yaml",
+      "line": 3,
+      "decision": "DENY",
+      "reason_code": "PRIVILEGED_ENABLED"
+    },
+    {
+      "tool": "semgrep",
+      "rule_id": "security-gate-python-eval",
+      "severity": "HIGH",
+      "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined\\sample.py",
+      "line": 5,
+      "decision": "DENY",
+      "reason_code": "PYTHON_DYNAMIC_EVAL"
+    },
+    {
+      "tool": "semgrep",
+      "rule_id": "security-gate-python-shell-true",
+      "severity": "HIGH",
+      "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined\\sample.py",
+      "line": 9,
+      "decision": "DENY",
+      "reason_code": "PYTHON_SHELL_EXECUTION"
+    },
+    {
+      "tool": "gitleaks",
+      "rule_id": "security-gate-lab-api-token",
+      "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\combined\\settings.env",
+      "line": 2,
+      "severity": "HIGH",
+      "reason_code": "SECRET_EXPOSURE",
+      "decision": "DENY"
+    }
+  ]
+}

