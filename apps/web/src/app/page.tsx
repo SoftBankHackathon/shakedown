@@ -66,7 +66,7 @@ export default function Home() {
     if (!repo.trim()) { setError("레포 URL 또는 로컬 앱 경로를 입력하세요."); return; }
     setPending((n) => n + 1); setError(null);
     try {
-      const project = await api.createProject({repo: repo.trim(), targets: targets.length ? targets : ["local"]});
+      const project = await api.createProject({repo: repo.trim(), image_only: true, targets: targets.length ? targets : ["local"]});
       router.push(`/projects/${project.id}#image-builder`);
     } catch (e) { setError(errorMessage(e)); }
     finally { setPending((n) => n - 1); }

@@ -22,6 +22,8 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
             api.state.store = ProjectStore(DATA_DIR / 'projects.sqlite3')
         if api.state.deployments is None:
             api.state.deployments = DeploymentStore(api.state.store.path.parent / "deployments.sqlite3")
+        api.state.deployments.runner.llm = api.state.llm
+        api.state.deployments.aws.llm = api.state.llm
         api.state.images = ImageBuilder(api.state.store.path.parent / 'image-plans', api.state.llm, api.state.deployments.runner)
         yield
         api.state.images.close()

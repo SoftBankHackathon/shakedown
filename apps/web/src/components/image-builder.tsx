@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { API, MOCK, type ImagePlan as Plan, type ImageBuild as Build } from "@/lib/api";
 
 export function ImageBuilder({projectId}:{projectId:string}) {
-  const [ai,setAi]=useState(false);
   const [runtime,setRuntime]=useState("");
   const [entrypoint,setEntrypoint]=useState("");
   const [plan,setPlan]=useState<Plan|null>(null);
@@ -25,7 +24,7 @@ export function ImageBuilder({projectId}:{projectId:string}) {
   async function generate() {
     setBusy(true);setError("");setPlan(null);setBuild(null);
     try {
-      const r=await fetch(API+`/api/projects/${projectId}/image-plans`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({use_ai:ai,...(runtime?{runtime}:{}),...(entrypoint?{entrypoint}:{})})});
+      const r=await fetch(API+`/api/projects/${projectId}/image-plans`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...(runtime?{runtime}:{}),...(entrypoint?{entrypoint}:{})})});
       const result=await r.json();if(!r.ok)throw new Error(result.detail??"계획 생성 실패");setPlan(result);
     }catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}
   }
@@ -44,11 +43,11 @@ export function ImageBuilder({projectId}:{projectId:string}) {
       <label className="text-sm">런타임 버전 (선택)<input value={runtime} onChange={e=>setRuntime(e.target.value)} placeholder="자동 감지 · 예: 21, 22, 3.12" className="mt-1 w-full rounded border border-line bg-bg p-2" /></label>
       <label className="text-sm">FastAPI 실행 대상 (선택)<input value={entrypoint} onChange={e=>setEntrypoint(e.target.value)} placeholder="예: main:app" className="mt-1 w-full rounded border border-line bg-bg p-2" /></label>
     </div>
-    <label className="flex gap-2 text-sm"><input type="checkbox" checked={ai} onChange={e=>setAi(e.target.checked)} />Claude로 런타임·템플릿 선택 보조</label>
-    {ai && <p className="text-xs text-muted">감지한 프레임워크·런타임·포트·FastAPI 실행 대상 이름만 Claude에 전송합니다. 원본 소스·README·환경변수 값은 보내지 않습니다. API 요금이 발생할 수 있습니다.</p>}
+    <p className="text-xs text-muted">규칙으로 생성할 수 없으면 연결된 Claude를 자동 호출합니다. 파일명·의존성 이름·실행 대상 등 추출 정보만 보내며 원본 코드·README·환경변수 값은 보내지 않습니다. 이때 API 요금이 발생할 수 있습니다.</p>
     <button disabled={busy||running} onClick={()=>void generate()} className="rounded-lg border border-accent px-4 py-2 text-accent disabled:opacity-50">{busy&&!plan?"계획 생성 중…":"빌드 계획 생성"}</button>
     {plan && <div className="space-y-3 border-t border-line pt-4">
-      <p className="text-sm">생성 방식: {plan.source==="existing"?"기존 Dockerfile":plan.source==="ai-assisted"?"AI 보조 + 검증된 템플릿":"규칙 기반 템플릿"}{plan.runtime?` / 런타임 ${plan.runtime}`:""}</p>
+      <p className="text-sm">생성 방식: {plan.source==="existing"?"기존 Dockerfile":plan.source==="ai-fallback"?"AI 자동 생성 · 구조 검증 완료":"규칙 기반 템플릿"}{plan.runtime?` / 런타임 ${plan.runtime}`:""}</p>
+      {plan.fallback_reason && <p className="text-xs text-muted">AI 호출 이유: {plan.fallback_reason}</p>}
       <pre className="max-h-80 overflow-auto rounded-lg bg-bg p-4 text-xs leading-relaxed"><code>{plan.dockerfile}</code></pre>
       <ul className="space-y-1 text-xs text-muted">{plan.warnings.map(w=><li key={w}>{w}</li>)}</ul>
       <button disabled={busy||!!build} onClick={()=>void startBuild()} className="rounded-lg bg-accent px-4 py-2 text-white disabled:opacity-50">확인한 계획으로 이미지 빌드</button>

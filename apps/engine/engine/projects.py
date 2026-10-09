@@ -6,7 +6,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from engine.analyzer import AnalysisError, RepoAnalyzer
+from engine.analyzer import AnalysisError, RepoAnalyzer, ImageRepoAnalyzer
 from engine.models import CreateProjectRequest, Project, Secret
 
 WORKSPACE = Path(__file__).resolve().parents[3]
@@ -71,7 +71,7 @@ class ProjectStore:
                 row = db.execute('SELECT payload FROM projects WHERE repo = ?', (repo,)).fetchone()
             if row:
                 return Project.model_validate_json(row[0])
-            analysis = self.analyzer.analyze(repo)
+            analysis = (ImageRepoAnalyzer() if request.image_only else self.analyzer).analyze(repo)
             name = request.name.strip() if request.name else repo.rstrip('/\\').replace('\\', '/').rsplit('/', 1)[-1]
             project = Project(id='prj_' + uuid.uuid4().hex[:16], name=name, repo=repo,
                               created=time.time(), analysis=analysis, targets=request.targets,

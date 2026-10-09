@@ -59,6 +59,7 @@ paths:
               type: object
               required: [repo]
               properties:
+                image_only: { type: boolean, default: false, description: "이미지 생성 전용 등록: 미지원 단일 앱 스택 허용" }
                 repo: { type: string, description: "GitHub URL 또는 로컬 경로. 이미 등록된 레포면 기존 프로젝트를 돌려줌" }
                 name: { type: string }
                 targets:
@@ -303,7 +304,10 @@ paths:
                     enum:
                     - existing
                     - rule
-                    - ai-assisted
+                    - ai-fallback
+                  fallback_reason:
+                    type: string
+                    description: 규칙 생성 실패로 AI를 호출한 이유
                   dockerfile:
                     type: string
                   warnings:
@@ -331,7 +335,7 @@ paths:
               properties:
                 use_ai:
                   type: boolean
-                  default: false
+                  default: true
                 runtime:
                   type: string
                   maxLength: 16

@@ -48,3 +48,5 @@ Target API는 **v0.1.1 통합 제안**, Engine API는 **v0.1.1 통합 제안**, 
 
 ### 2026-10-09 — 엔진 v0.1.2 이미지 계획·API 설정
 Claude 연결 상태/연결 테스트/해제 및 이미지 계획/비동기 빌드/조회 경로를 추가했습니다. 키는 write-only이며 메모리에만 저장합니다. 이미지 built는 런타임 검증이나 배포 완료를 뜻하지 않습니다. 공유 타입에 LlmConnectionStatus, ImagePlan, ImageBuild를 추가했습니다.
+
+이미지 계획은 기존 Dockerfile → 규칙 → Claude 1회 fallback 순서입니다. use_ai 기본값은 true이며 false는 fallback을 금지합니다. source는 existing/rule/ai-fallback입니다. image_only 등록은 알 수 없는 단일 앱도 이미지 생성 단계로 진행하며 일반 배포 지원 범위를 확대하지 않습니다.

@@ -13,13 +13,13 @@ import uuid
 
 from pydantic import Field
 from engine.models import Model
-from engine.analyzer import RepoAnalyzer
+from engine.analyzer import ImageRepoAnalyzer
 
 class BuildError(ValueError):
     pass
 
 class PlanRequest(Model):
-    use_ai: bool = False
+    use_ai: bool = True
     runtime: str | None = Field(default=None,max_length=16)
     entrypoint: str | None = Field(default=None,max_length=120)
 
@@ -60,7 +60,7 @@ def python_apps(root):
     return found
 
 
-def make_plan(context, analysis, options=None, llm=None):
+def rule_plan(context, analysis, options=None):
     options=options or PlanRequest()
     if (context/'Dockerfile').exists():
         return dict(source='existing',template='existing',dockerfile=read(context/'Dockerfile'),warnings=['기존 Dockerfile을 사용합니다. 저장소 코드는 빌드 중 실행됩니다.'])
@@ -71,13 +71,6 @@ def make_plan(context, analysis, options=None, llm=None):
     entry=options.entrypoint
     warnings=[]
     source='rule'
-    if options.use_ai:
-        if llm is None: raise BuildError('Claude API를 먼저 연결하세요.')
-        suggestion=llm.suggest(dict(stack=stack,java_version=analysis.java_version,port=analysis.port,python_entrypoints=python_apps(context) if template=='fastapi' else []))
-        if suggestion.get('template') != template: raise BuildError('AI 제안이 감지된 스택과 일치하지 않습니다. 수동 설정을 사용하세요.')
-        version=options.runtime or suggestion.get('runtime')
-        entry=options.entrypoint or suggestion.get('entrypoint')
-        source='ai-assisted'
     port=analysis.port
     if template.startswith('spring-'):
         version=version or '21'
@@ -114,6 +107,27 @@ def make_plan(context, analysis, options=None, llm=None):
     return dict(source=source,template=template,runtime=version,entrypoint=entry or '',dockerfile=dockerfile,warnings=warnings)
 
 
+def make_plan(context, analysis, options=None, llm=None):
+    options = options or PlanRequest()
+    try:
+        return rule_plan(context, analysis, options)
+    except BuildError as exc:
+        # Do not replace an existing file that was unreadable/linked with an AI guess.
+        if (context / 'Dockerfile').exists() or (context / 'Dockerfile').is_symlink():
+            raise
+        if not options.use_ai or llm is None:
+            raise BuildError(f'{exc} 규칙으로 생성하지 못했습니다. API 설정에서 Claude를 연결하면 자동으로 보완합니다.') from None
+        from engine.docker_fallback import build_facts, validate_dockerfile
+        facts = build_facts(context, analysis, options)
+        suggestion = llm.suggest(facts)
+        dockerfile = validate_dockerfile(suggestion.get('dockerfile'), context)
+        return dict(source='ai-fallback', template='llm', dockerfile=dockerfile,
+                    fallback_reason=str(exc), warnings=[
+                        '규칙으로 생성하지 못해 Claude를 1회 호출했습니다.',
+                        'Dockerfile 구문·빌드 정책 검사를 통과했습니다. 실행 안전성이나 앱 동작을 보장하는 검사는 아닙니다.',
+                        '생성 내용을 검토한 뒤 신뢰하는 소스만 빌드하세요. 이미지 생성과 앱 실행 검증은 별개입니다.'])
+
+
 def snapshot(source,destination):
     destination.mkdir(parents=True,exist_ok=True,mode=0o700)
     count=total=0
@@ -147,7 +161,7 @@ class ImageBuilder:
 
     def plan(self,project,options):
         with self.runner.source(project.repo) as root:
-            analysis=RepoAnalyzer().analyze(str(root))
+            analysis=ImageRepoAnalyzer().analyze(str(root))
             context=app_context(root,analysis)
             plan=make_plan(context,analysis,options,self.llm)
             id='img_'+uuid.uuid4().hex

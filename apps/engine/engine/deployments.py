@@ -81,6 +81,7 @@ class LocalRunner:
             # Re-analyze the actual checkout, rather than trusting an earlier branch revision.
             analysis = RepoAnalyzer().analyze(str(root))
             from engine.image_builder import app_context, prepared, BuildError
+            from engine.llm import LlmError
             try:
                 context = app_context(root, analysis)
                 if analysis.database not in {'postgres', 'postgresql'}:
@@ -91,9 +92,9 @@ class LocalRunner:
                 if (context / 'Dockerfile').is_file():
                     build_at(context)
                 else:
-                    with prepared(context, analysis) as (staged, _plan):
+                    with prepared(context, analysis, llm=getattr(self, 'llm', None)) as (staged, _plan):
                         build_at(staged)
-            except BuildError as exc:
+            except (BuildError, LlmError) as exc:
                 raise DeploymentError(str(exc)) from None
             return analysis
 

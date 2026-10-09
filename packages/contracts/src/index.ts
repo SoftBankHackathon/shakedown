@@ -147,7 +147,7 @@ export type DeployEvent = { ts: number; kind: string; [k: string]: unknown };
 export const TERMINAL_STATUSES: ReadonlySet<Deployment["status"]> = new Set(["warned", "deployed", "promoted", "blocked", "failed"]);
 
 /** Body of POST /api/projects (engine.yaml). */
-export type CreateProjectRequest = { repo: string; name?: string; targets: TargetName[] };
+export type CreateProjectRequest = { repo: string; name?: string; image_only?: boolean; targets: TargetName[] };
 
 /** Body of POST /api/projects/{id}/deployments — the Action button (engine.yaml). */
 export type ComparisonEndpoint = { name: string; url: string };
@@ -201,8 +201,9 @@ export type LlmConnectionStatus = {
 export type ImagePlan = {
   id: string;
   project_id: string;
-  source: "existing" | "rule" | "ai-assisted";
+  source: "existing" | "rule" | "ai-fallback";
   template: string;
+  fallback_reason?: string;
   dockerfile: string;
   runtime?: string;
   entrypoint?: string;

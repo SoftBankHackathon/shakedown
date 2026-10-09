@@ -27,13 +27,13 @@ export default function Settings() {
       const result = await r.json();
       if (!r.ok) throw new Error(result.detail ?? "연결에 실패했습니다.");
       setStatus(result); setKey("");
-      setMessage(disconnect ? "현재 엔진의 API 연결을 해제했습니다." : "Claude 응답을 확인했습니다. 이미지 계획에서 AI 보조를 사용할 수 있습니다.");
+      setMessage(disconnect ? "현재 엔진의 API 연결을 해제했습니다." : "Claude 응답을 확인했습니다. 규칙으로 생성할 수 없을 때 자동으로 호출합니다.");
     } catch(e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   }
   return <div className="max-w-2xl space-y-6">
     <Link href="/" className="text-sm text-muted hover:underline">대시보드로</Link>
-    <div><h1 className="text-2xl font-semibold">AI API 연결</h1><p className="mt-2 text-muted">Docker 이미지 계획을 검토할 Claude 모델을 연결하세요.</p></div>
+    <div><h1 className="text-2xl font-semibold">AI API 연결</h1><p className="mt-2 text-muted">규칙으로 Dockerfile을 생성할 수 없을 때 사용할 Claude 모델을 연결하세요.</p></div>
     {MOCK && <p role="status" className="text-warn">데모 모드입니다. 실제 엔진을 연결하면 설정할 수 있습니다.</p>}
     <div className="border-y border-line py-4 flex justify-between gap-4"><span>Anthropic Claude</span><strong className={status?.verified ? "text-ok" : "text-muted"}>{status?.verified ? "연결 확인됨" : status?.configured ? "설정됨 · 테스트 필요" : "미연결"}</strong></div>
     <form className="space-y-5" onSubmit={(e) => {e.preventDefault(); void update();}}>

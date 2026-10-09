@@ -248,3 +248,19 @@ class RepoAnalyzer(LegacyAnalyzer):
             return ''
         e.warn('Complex Spring route annotations were omitted; route discovery is partial.')
         return None
+
+
+class ImageRepoAnalyzer(RepoAnalyzer):
+    """Permit unknown single apps for image planning without weakening deployment analysis."""
+    def _result(self, config, evidence, root, app_root):
+        if config.framework:
+            return super()._result(config, evidence, root, app_root)
+        if any('Multiple application roots' in warning or 'Conflicting framework' in warning for warning in evidence.warnings):
+            raise AnalysisError('Multiple or conflicting applications; select one application directory.')
+        from engine.models import Evidence as FileEvidence
+        manifest = next((p.relative_to(root).as_posix() for p in self._discover(root, evidence) if p.parent == app_root), None)
+        return Analysis(stack='unknown', port=config.port or 8080, java_version=None,
+                        database=None, database_name=None, health_path='/', uses_server_session=False,
+                        summary='이미지 계획 전용: 정적 규칙으로 스택을 확정하지 못했습니다.', routes=[],
+                        evidence=[FileEvidence(field='stack',value='unknown',file=manifest,source='rule')],
+                        env={},secret_env=[],warnings=['기본 포트 8080은 미검증입니다. 생성된 이미지의 실행 설정을 확인하세요.'])
