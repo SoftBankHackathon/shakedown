@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Security Gate STEP 1 report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scope", "target_path", "scan_status", "decision", "files", "errors"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "scope": {"const": "docker_compose_privileged_only"},
+    "target_path": {"type": "string"},
+    "scan_status": {"enum": ["SUCCESS", "FAILED", "NOT_APPLICABLE"]},
+    "decision": {"enum": ["ALLOW", "DENY", "REVIEW", "SCAN_FAILED"]},
+    "files": {"type": "array", "items": {"$ref": "#/$defs/file"}},
+    "errors": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z_]+$"}}
+  },
+  "allOf": [
+    {"if": {"properties": {"scan_status": {"const": "FAILED"}}},
+     "then": {"properties": {"decision": {"const": "SCAN_FAILED"}}}},
+    {"if": {"properties": {"scan_status": {"const": "NOT_APPLICABLE"}}},
+     "then": {"properties": {"decision": {"const": "REVIEW"}, "files": {"maxItems": 0}}}},
+    {"if": {"properties": {"decision": {"const": "ALLOW"}}},
+     "then": {"properties": {"scan_status": {"const": "SUCCESS"}, "errors": {"maxItems": 0},
+       "files": {"minItems": 1, "items": {"properties": {
+         "decision": {"const": "ALLOW"}, "findings": {"maxItems": 0}, "error": {"type": "null"}
+       }}}}}}
+  ],
+  "$defs": {
+    "file": {
+      "type": "object", "additionalProperties": false,
+      "required": ["file_path", "decision", "findings", "error"],
+      "properties": {
+        "file_path": {"type": "string"},
+        "decision": {"enum": ["ALLOW", "DENY", "REVIEW", "SCAN_FAILED"]},
+        "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+        "error": {"type": ["string", "null"]}
+      }
+    },
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["decision", "file_path", "service", "rule_id", "reason_code", "location"],
+      "properties": {
+        "decision": {"enum": ["DENY", "REVIEW"]},
+        "file_path": {"type": "string"}, "service": {"type": "string", "minLength": 1},
+        "rule_id": {"const": "DOCKER_COMPOSE_PRIVILEGED"},
+        "reason_code": {"enum": ["PRIVILEGED_ENABLED", "PRIVILEGED_UNRESOLVED"]},
+        "location": {
+          "type": "object", "additionalProperties": false,
+          "required": ["line", "column", "path"],
+          "properties": {
+            "line": {"type": "integer", "minimum": 1},
+            "column": {"type": "integer", "minimum": 1},
+            "path": {"type": "array", "prefixItems": [
+              {"const": "services"}, {"type": "string"}, {"const": "privileged"}
+            ], "items": false, "minItems": 3, "maxItems": 3}
+          }
+        }
+      }
+    }
+  }
+}
