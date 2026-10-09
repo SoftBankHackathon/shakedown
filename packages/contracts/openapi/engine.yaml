@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Engine API
-  version: 0.1.1
+  version: 0.1.2
   description: |
-    > **상태: 통합 제안 (v0.1.1, 2026-10-08)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 통합 제안 (v0.1.2, 2026-10-09)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     엔진(apps/engine, 김도경)이 구현하고 대시보드(apps/web, 서동옥)가 호출하는 API.
@@ -212,6 +212,189 @@ paths:
           content:
             text/event-stream:
               schema: { type: string }
+  /api/settings/llm:
+    get:
+      summary: 키를 제외한 Claude 연결 상태 조회
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  provider:
+                    const: anthropic
+                  configured:
+                    type: boolean
+                  model:
+                    type: string
+                  verified:
+                    type: boolean
+                  source:
+                    enum:
+                    - none
+                    - environment
+                    - memory
+        '400': &id001
+          description: 설정 또는 요청 오류
+  /api/settings/llm/connect:
+    post:
+      summary: 짧은 유료 API 테스트 후 메모리에 키와 모델 적용
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+        '400': *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - model
+              additionalProperties: false
+              properties:
+                model:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                api_key:
+                  type: string
+                  writeOnly: true
+                  format: password
+  /api/settings/llm/disconnect:
+    post:
+      summary: 현재 엔진의 메모리 연결 해제
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+        '400': *id001
+  /api/projects/{project_id}/image-plans:
+    post:
+      summary: 소스 복사본과 Dockerfile 계획 생성, 빌드는 실행하지 않음
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - id
+                - project_id
+                - source
+                - dockerfile
+                - build_status
+                properties:
+                  id:
+                    type: string
+                  project_id:
+                    type: string
+                  source:
+                    enum:
+                    - existing
+                    - rule
+                    - ai-assisted
+                  dockerfile:
+                    type: string
+                  warnings:
+                    type: array
+                    items:
+                      type: string
+                  build_status:
+                    const: not_built
+        '400': *id001
+        '404':
+          description: 프로젝트 또는 계획 없음/만료
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                use_ai:
+                  type: boolean
+                  default: false
+                runtime:
+                  type: string
+                  maxLength: 16
+                entrypoint:
+                  type: string
+                  maxLength: 120
+  /api/projects/{project_id}/image-plans/{plan_id}/build:
+    post:
+      summary: 검토한 계획으로 이미지 생성, 배포·실행은 수행하지 않음
+      responses:
+        '202':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+        '400': *id001
+        '404':
+          description: 프로젝트 또는 계획 없음/만료
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: plan_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/image-builds/{build_id}:
+    get:
+      summary: 이미지 빌드 상태 조회; built는 앱 실행 성공을 의미하지 않음
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  status:
+                    enum:
+                    - queued
+                    - building
+                    - built
+                    - failed
+                  image:
+                    type: string
+                  error:
+                    type: string
+        '400': *id001
+        '404':
+          description: 프로젝트 또는 계획 없음/만료
+      parameters:
+      - name: build_id
+        in: path
+        required: true
+        schema:
+          type: string
+
 components:
   schemas:
     Endpoint:

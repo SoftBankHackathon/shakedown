@@ -8,6 +8,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from engine.deployments import DeploymentStore, DeployRequest, CompareRequest, DeploymentError, Busy, TERMINAL
+from engine.llm import LlmConnection, ConnectionRequest, LlmError
+from engine.image_builder import ImageBuilder, PlanRequest, BuildError
 from engine.analyzer import AnalysisError
 from engine.models import CreateProjectRequest, Project
 from engine.projects import DATA_DIR, ProjectStore
@@ -20,10 +22,13 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
             api.state.store = ProjectStore(DATA_DIR / 'projects.sqlite3')
         if api.state.deployments is None:
             api.state.deployments = DeploymentStore(api.state.store.path.parent / "deployments.sqlite3")
+        api.state.images = ImageBuilder(api.state.store.path.parent / 'image-plans', api.state.llm, api.state.deployments.runner)
         yield
+        api.state.images.close()
         api.state.deployments.close()
 
     api = FastAPI(title='Shakedown Engine', version='0.1.0', lifespan=lifespan)
+    api.state.llm = LlmConnection()
     api.state.store = store
     api.state.deployments = deployments_store
     api.add_middleware(CORSMiddleware,
@@ -34,6 +39,44 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
     async def invalid_request(_request, _exc):
         # Pydantic errors include raw input; never serialize them or log bodies.
         return JSONResponse(status_code=400, content={'detail': 'Invalid request body; check repo, name and targets.'})
+
+    @api.exception_handler(LlmError)
+    @api.exception_handler(BuildError)
+    async def feature_error(_request, exc):
+        return JSONResponse(status_code=400, content={'detail': str(exc)})
+
+    @api.get('/api/settings/llm')
+    def llm_status():
+        return api.state.llm.status()
+
+    @api.post('/api/settings/llm/connect')
+    def llm_connect(body: ConnectionRequest):
+        return api.state.llm.connect(body)
+
+    @api.post('/api/settings/llm/disconnect')
+    def llm_disconnect():
+        return api.state.llm.disconnect()
+
+    @api.post('/api/projects/{project_id}/image-plans')
+    def image_plan(project_id: str, body: PlanRequest):
+        project = api.state.store.get(project_id)
+        if project is None: raise HTTPException(status_code=404, detail='Project not found.')
+        try: return api.state.images.plan(project, body)
+        except (AnalysisError, DeploymentError) as exc: raise BuildError(str(exc)) from None
+        except (BuildError, LlmError): raise
+        except Exception: raise BuildError('이미지 계획 생성 실패. 저장소의 설정 파일과 접근 권한을 확인하세요.') from None
+
+    @api.post('/api/projects/{project_id}/image-plans/{plan_id}/build', status_code=202)
+    def image_build(project_id: str, plan_id: str):
+        project=api.state.store.get(project_id)
+        if project is None: raise HTTPException(status_code=404,detail='Project not found.')
+        return api.state.images.build(project,plan_id)
+
+    @api.get('/api/image-builds/{build_id}')
+    def image_build_status(build_id: str):
+        job=api.state.images.get(build_id)
+        if job is None: raise HTTPException(status_code=404,detail='Build not found.')
+        return job
 
     @api.get('/api/health')
     def health():

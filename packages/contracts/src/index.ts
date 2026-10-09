@@ -189,3 +189,32 @@ export type TargetDeployment = {
   commands?: string[];
 };
 export type TargetLogLine = { ts: string; source: "deploy" | "app" | "db"; line: string };
+
+/** Engine-scoped Claude connection. API keys are write-only and never returned. */
+export type LlmConnectionStatus = {
+  provider: "anthropic";
+  configured: boolean;
+  model: string;
+  verified: boolean;
+  source: "none" | "environment" | "memory";
+};
+export type ImagePlan = {
+  id: string;
+  project_id: string;
+  source: "existing" | "rule" | "ai-assisted";
+  template: string;
+  dockerfile: string;
+  runtime?: string;
+  entrypoint?: string;
+  port: number;
+  warnings: string[];
+  build_status: "not_built";
+};
+export type ImageBuild = {
+  id: string;
+  project_id: string;
+  status: "queued" | "building" | "built" | "failed";
+  image: string;
+  source: ImagePlan["source"];
+  error?: string;
+};

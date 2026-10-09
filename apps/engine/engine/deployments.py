@@ -80,14 +80,21 @@ class LocalRunner:
         with self.source(project.repo) as root:
             # Re-analyze the actual checkout, rather than trusting an earlier branch revision.
             analysis = RepoAnalyzer().analyze(str(root))
-            manifest = next((e.file for e in analysis.evidence if e.field == 'stack' and e.file), None)
-            context = (root / manifest).parent.resolve() if manifest else root
-            if not context.is_relative_to(root) or not (context / 'Dockerfile').is_file():
-                raise DeploymentError('The analyzed application needs a Dockerfile in its application directory.')
-            if analysis.database not in {'postgres', 'postgresql'}:
-                raise DeploymentError('This local integration currently requires the PostgreSQL sample application.')
-            command = ['docker', 'build', '-t', image, str(context)] if platform is None else ['docker', 'buildx', 'build', '--platform', platform, '--provenance=false', '--sbom=false', '--load', '-t', image, str(context)]
-            self.command(command, 900)
+            from engine.image_builder import app_context, prepared, BuildError
+            try:
+                context = app_context(root, analysis)
+                if analysis.database not in {'postgres', 'postgresql'}:
+                    raise DeploymentError('Deployment currently requires the PostgreSQL sample application; use image build for other stacks.')
+                def build_at(path):
+                    command = ['docker', 'build', '-t', image, str(path)] if platform is None else ['docker', 'buildx', 'build', '--platform', platform, '--provenance=false', '--sbom=false', '--load', '-t', image, str(path)]
+                    self.command(command, 900)
+                if (context / 'Dockerfile').is_file():
+                    build_at(context)
+                else:
+                    with prepared(context, analysis) as (staged, _plan):
+                        build_at(staged)
+            except BuildError as exc:
+                raise DeploymentError(str(exc)) from None
             return analysis
 
     def call(self, method, path, body=None):

@@ -1,0 +1,198 @@
+"""Reviewed image plans and isolated builds. No deployment or registry push here."""
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+import ast
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import tempfile
+import threading
+import uuid
+
+from pydantic import Field
+from engine.models import Model
+from engine.analyzer import RepoAnalyzer
+
+class BuildError(ValueError):
+    pass
+
+class PlanRequest(Model):
+    use_ai: bool = False
+    runtime: str | None = Field(default=None,max_length=16)
+    entrypoint: str | None = Field(default=None,max_length=120)
+
+IGNORE = {'.git','.venv','venv','node_modules','__pycache__','.data','.next','.gradle','build','target','dist'}
+SECRET_NAMES = {'.npmrc','.pypirc','.netrc','credentials','id_rsa','id_ed25519'}
+
+def excluded(name):
+    return name in IGNORE or name in SECRET_NAMES or name.startswith('.env') or name.endswith(('.pem','.key','.p12','.pfx'))
+
+
+def app_context(root, analysis):
+    manifest=next((e.file for e in analysis.evidence if e.field=='stack' and e.file),None)
+    context=(root/manifest).parent if manifest else root
+    if not context.resolve().is_relative_to(root.resolve()): raise BuildError('앱 경로가 저장소 밖을 가리킵니다.')
+    if any(p.is_symlink() for p in [context,*context.parents] if p.is_relative_to(root)):
+        raise BuildError('링크된 앱 경로는 지원하지 않습니다.')
+    return context
+
+
+def read(path):
+    if path.is_symlink() or not path.is_file() or path.stat().st_size>1_000_000:
+        raise BuildError('빌드 설정 파일을 안전하게 읽을 수 없습니다.')
+    try: return path.read_text(encoding='utf-8')
+    except (OSError,UnicodeError): raise BuildError('빌드 설정 파일을 읽을 수 없습니다.') from None
+
+
+def python_apps(root):
+    found=[]
+    for path in sorted(root.glob('*.py')) + sorted(root.glob('*/*.py')):
+        if len(found)>10: break
+        if excluded(path.parent.name) or path.parent.is_symlink(): continue
+        try: tree=ast.parse(read(path))
+        except (BuildError,SyntaxError): continue
+        for node in tree.body:
+            if isinstance(node,ast.Assign) and isinstance(node.value,ast.Call) and isinstance(node.value.func,ast.Name) and node.value.func.id=='FastAPI':
+                for target in node.targets:
+                    if isinstance(target,ast.Name): found.append(path.relative_to(root).with_suffix('').as_posix().replace('/','.')+':'+target.id)
+    return found
+
+
+def make_plan(context, analysis, options=None, llm=None):
+    options=options or PlanRequest()
+    if (context/'Dockerfile').exists():
+        return dict(source='existing',template='existing',dockerfile=read(context/'Dockerfile'),warnings=['기존 Dockerfile을 사용합니다. 저장소 코드는 빌드 중 실행됩니다.'])
+    stack=analysis.stack
+    template= {'spring-boot-gradle':'spring-gradle','spring-boot-maven':'spring-maven','express':'node-npm','nextjs':'node-npm','fastapi':'fastapi'}.get(stack)
+    if not template: raise BuildError('자동 생성은 Spring Boot(Gradle/Maven), npm start가 있는 Node, FastAPI를 지원합니다. 이 앱에는 Dockerfile을 직접 추가하세요.')
+    version=options.runtime or (str(analysis.java_version) if analysis.java_version else None)
+    entry=options.entrypoint
+    warnings=[]
+    source='rule'
+    if options.use_ai:
+        if llm is None: raise BuildError('Claude API를 먼저 연결하세요.')
+        suggestion=llm.suggest(dict(stack=stack,java_version=analysis.java_version,port=analysis.port,python_entrypoints=python_apps(context) if template=='fastapi' else []))
+        if suggestion.get('template') != template: raise BuildError('AI 제안이 감지된 스택과 일치하지 않습니다. 수동 설정을 사용하세요.')
+        version=options.runtime or suggestion.get('runtime')
+        entry=options.entrypoint or suggestion.get('entrypoint')
+        source='ai-assisted'
+    port=analysis.port
+    if template.startswith('spring-'):
+        version=version or '21'
+        if version not in {'17','21'}: raise BuildError('현재 Java 17 또는 21 템플릿을 지원합니다. 런타임을 확인하세요.')
+        if template=='spring-gradle':
+            for path in ('gradlew','gradle/wrapper/gradle-wrapper.jar','gradle/wrapper/gradle-wrapper.properties'):
+                if not (context/path).is_file() or (context/path).is_symlink(): raise BuildError('Gradle Wrapper 파일이 필요합니다.')
+            build=f'FROM --platform=$BUILDPLATFORM eclipse-temurin:{version}-jdk AS build\nWORKDIR /src\nCOPY . .\nRUN chmod +x gradlew && ./gradlew --no-daemon bootJar\nRUN mkdir /out && find build/libs -maxdepth 1 -name "*.jar" ! -name "*-plain.jar" -exec cp {{}} /out/ \\; && test "$(find /out -name "*.jar" | wc -l)" -eq 1 && mv /out/*.jar /app.jar\n'
+        else:
+            build=f'FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-{version} AS build\nWORKDIR /src\nCOPY . .\nRUN mvn -B -DskipTests package\nRUN mkdir /out && find target -maxdepth 1 -name "*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" -exec cp {{}} /out/ \\; && test "$(find /out -name "*.jar" | wc -l)" -eq 1 && mv /out/*.jar /app.jar\n'
+        dockerfile=build+f'FROM eclipse-temurin:{version}-jre\nWORKDIR /app\nCOPY --from=build --chown=10001:10001 /app.jar /app/app.jar\nUSER 10001:10001\nEXPOSE {port}\nENTRYPOINT ["java", "-XX:MaxRAMPercentage=70", "-jar", "/app/app.jar"]\n'
+    elif template=='node-npm':
+        version=version or '22'
+        if version not in {'22','24'}: raise BuildError('Node 런타임은 22 또는 24를 선택하세요.')
+        try: package=json.loads(read(context/'package.json'))
+        except (ValueError,TypeError): raise BuildError('package.json을 읽을 수 없습니다.') from None
+        if not package.get('scripts',{}).get('start'): raise BuildError('package.json에 start 스크립트가 필요합니다.')
+        if package.get('workspaces') or (context/'pnpm-lock.yaml').exists() or (context/'yarn.lock').exists(): raise BuildError('워크스페이스·pnpm·Yarn은 기존 Dockerfile을 사용하세요.')
+        if not (context/'package-lock.json').is_file(): raise BuildError('재현 가능한 npm 빌드를 위해 package-lock.json이 필요합니다.')
+        dockerfile=f'FROM node:{version}-bookworm-slim\nWORKDIR /app\nCOPY --chown=node:node . .\nRUN npm ci && npm run build --if-present && chown -R node:node /app\nENV NODE_ENV=production\nENV PORT={port}\nUSER node\nEXPOSE {port}\nCMD ["npm", "start"]\n'
+    else:
+        version=version or '3.12'
+        if version not in {'3.12','3.13'}: raise BuildError('Python 런타임은 3.12 또는 3.13을 선택하세요.')
+        if not (context/'requirements.txt').is_file(): raise BuildError('FastAPI 템플릿에는 requirements.txt가 필요합니다.')
+        choices=python_apps(context)
+        if not entry and len(choices)==1: entry=choices[0]
+        if not entry or not re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*',entry): raise BuildError('FastAPI 실행 대상을 지정하세요. 예: main:app')
+        if entry not in choices: raise BuildError('실제 FastAPI 인스턴스와 일치하는 실행 대상을 지정하세요.')
+        requirements=read(context/'requirements.txt')
+        if not re.search(r'(?mi)^uvicorn(?:\[.*?\])?\s*(?:[=<>~!]|$)',requirements): raise BuildError('requirements.txt에 uvicorn을 추가하세요.')
+        dockerfile=f'FROM python:{version}-slim\nWORKDIR /app\nCOPY . .\nRUN pip install --no-cache-dir -r requirements.txt\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\nUSER 10001:10001\nEXPOSE {port}\nCMD '+json.dumps(['python','-m','uvicorn',entry,'--host','0.0.0.0','--port',str(port)])+'\n'
+    warnings+=['이미지 빌드 성공은 앱 실행·DB 연결 성공을 뜻하지 않습니다. 배포 시 별도 헬스체크를 확인하세요.', '빌드에는 저장소의 스크립트가 실행됩니다. 신뢰하는 저장소를 사용하세요.']
+    if not options.runtime: warnings.append(f'런타임 {version}을 선택했습니다. 프로젝트 요구 버전과 일치하는지 확인하세요.')
+    return dict(source=source,template=template,runtime=version,entrypoint=entry or '',dockerfile=dockerfile,warnings=warnings)
+
+
+def snapshot(source,destination):
+    destination.mkdir(parents=True,exist_ok=True,mode=0o700)
+    count=total=0
+    for directory,dirs,files in os.walk(source,followlinks=False):
+        dirs[:]=[d for d in dirs if not excluded(d) and not (Path(directory)/d).is_symlink()]
+        for name in files:
+            path=Path(directory)/name
+            if excluded(name) or path.is_symlink(): continue
+            size=path.stat().st_size
+            count+=1;total+=size
+            if count>10000 or total>200_000_000: raise BuildError('빌드 컨텍스트가 제한(파일 10,000개/200MB)을 초과했습니다.')
+            target=destination/path.relative_to(source)
+            target.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copy2(path,target)
+
+
+@contextmanager
+def prepared(context,analysis,options=None,llm=None):
+    plan=make_plan(context,analysis,options,llm)
+    with tempfile.TemporaryDirectory(prefix='shakedown-image-') as directory:
+        staged=Path(directory)/'context'; snapshot(context,staged)
+        (staged/'Dockerfile').write_text(plan['dockerfile'])
+        yield staged,plan
+
+
+class ImageBuilder:
+    def __init__(self,root,llm,runner):
+        self.root=Path(root);self.root.mkdir(parents=True,exist_ok=True)
+        self.llm=llm;self.runner=runner;self.plans={};self.jobs={};self.lock=threading.Lock()
+        self.pool=ThreadPoolExecutor(max_workers=1)
+
+    def plan(self,project,options):
+        with self.runner.source(project.repo) as root:
+            analysis=RepoAnalyzer().analyze(str(root))
+            context=app_context(root,analysis)
+            plan=make_plan(context,analysis,options,self.llm)
+            id='img_'+uuid.uuid4().hex
+            dest=self.root/id
+            try:
+                snapshot(context,dest)
+                (dest/'Dockerfile').write_text(plan['dockerfile'])
+            except Exception:
+                shutil.rmtree(dest,ignore_errors=True);raise
+        plan.update(id=id,project_id=project.id,port=analysis.port,build_status='not_built')
+        with self.lock:
+            while len(self.plans) >= 8:
+                oldest=next((key for key in self.plans if self.jobs.get(key,{}).get('status') not in {'queued','building'}),None)
+                if oldest is None: break
+                self.plans.pop(oldest)
+                shutil.rmtree(self.root/oldest,ignore_errors=True)
+            self.plans[id]=plan
+        return plan
+
+    def build(self,project,id):
+        with self.lock:
+            plan=self.plans.get(id)
+            if not plan or plan['project_id']!=project.id: raise BuildError('빌드 계획이 없거나 만료됐습니다. 먼저 다시 생성하세요.')
+            if id in self.jobs: return dict(self.jobs[id])
+            if any(x['status'] in {'queued','building'} for x in self.jobs.values()): raise BuildError('이미지 빌드가 진행 중입니다. 완료 후 다시 시도하세요.')
+            job=dict(id=id,project_id=project.id,status='queued',image='shakedown/generated:'+id,source=plan['source'])
+            self.jobs[id]=job
+        self.pool.submit(self.run,id)
+        return dict(job)
+
+    def run(self,id):
+        with self.lock:
+            job=self.jobs[id];job['status']='building';image=job['image']
+        result={'status':'built'}
+        try:
+            self.runner.command(['docker','build','-t',image,str(self.root/id)],900)
+        except Exception:
+            result={'status':'failed','error':'이미지 빌드 실패. Docker 실행 상태와 빌드 계획을 확인하세요. 원본 명령 출력은 비밀 보호를 위해 노출하지 않습니다.'}
+        finally:
+            shutil.rmtree(self.root/id,ignore_errors=True)
+            with self.lock: job.update(result)
+
+    def get(self,id):
+        with self.lock: return dict(self.jobs[id]) if id in self.jobs else None
+
+    def close(self):
+        self.pool.shutdown(wait=True)
+        for id in self.plans: shutil.rmtree(self.root/id,ignore_errors=True)
