@@ -69,7 +69,7 @@ bash infra/gcp/scripts/spike.sh "$(cat infra/gcp/.data/image.txt)"
 | b 0대로 내린 뒤 2xx 아님 | 2초 (HTTP 503) | 20초 이하 | 유지 |
 | c allUsers 회수 후 403 | 14초 | 기록 | - |
 | c allUsers 재부여 후 200 | 1초 | 270초 이하 | 유지 — 배포 맨 앞에서 allUsers 부여 |
-| d X-Instance-Id 종류 / 인스턴스 | 1개 / 2개 | - | 구별 불가 — X-Instance-Id를 시운전 증거로 못 씀 |
+| d X-Instance-Id 종류 / 인스턴스 | 1개 / 2개 | - | 그때 이미지(`c800229…`)로는 구별 불가 — HOSTNAME이 없어 두 대 모두 기본값 `local`. 샘플 앱이 HOSTNAME이 없으면 서버마다 무작위 `i-xxxxxxxx`를 내도록 바뀌어서 새 이미지로 다시 잴 항목(결과 TBD, 기대 2개 / 2개) |
 | e 기동 후 DB 첫 연결 | 4.1초, 4.2초 | 배포 성공 | 견딤 |
 | f Job + 배포 + 첫 health | 49초 (30 + 19 + 0) | 270초 이하 | 매 배포 유지 |
 
