@@ -13,7 +13,8 @@ from engine.deployments import DeploymentError, LocalRunner
 
 class AwsRunner(LocalRunner):
     def __init__(self):
-        self.base = 'http://127.0.0.1:9102'
+        from engine.https_client import target_address
+        self.base = target_address('aws', 'http://127.0.0.1:9102')
 
     def config(self):
         path = os.environ.get('AWS_ADAPTER_CONFIG')

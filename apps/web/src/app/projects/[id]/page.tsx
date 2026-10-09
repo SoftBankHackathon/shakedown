@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { HttpsSettings } from "@/components/https-settings";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useT } from "@/components/i18n";
@@ -204,6 +205,7 @@ export default function ProjectPage() {
         </div>
       </div>
 
+      <HttpsSettings projectId={id} />
       <Section title={t("project.deployments")}>
         {deps.length === 0 && <p className="text-sm text-muted">{t("project.noDeployments")}</p>}
         <ul className="divide-y divide-line">

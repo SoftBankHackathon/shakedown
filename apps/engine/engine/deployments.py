@@ -52,7 +52,8 @@ class Busy(DeploymentError):
 class LocalRunner:
     def __init__(self):
         # Deliberately fixed loopback destination; caller input cannot select an HTTP endpoint.
-        self.base = 'http://127.0.0.1:9101'
+        from engine.https_client import target_address
+        self.base = target_address('local', 'http://127.0.0.1:9101')
 
     @contextmanager
     def source(self, repo):
@@ -111,6 +112,8 @@ class ShakedownClient:
 
 class DeploymentStore:
     def __init__(self, path: Path, runner=None, poll_seconds=1, timeout=300, shakedown=None, shakedown_timeout=180, aws=None):
+        from engine.https_client import HttpsClient
+        self.https = HttpsClient()
         self.shakedown = shakedown or ShakedownClient()
         self.shakedown_timeout = shakedown_timeout
         self.path = path
@@ -238,7 +241,11 @@ class DeploymentStore:
                     if state.get('status') == 'ready':
                         url = urlsplit(state.get('url', ''))
                         valid = (url.scheme == 'https' and (url.hostname or '').endswith('.trycloudflare.com')) if target == 'local' else runner.valid_url(state.get('url', ''))
-                        if not valid: raise DeploymentError(f'{target} returned an invalid public URL.')
+                        from engine.https_client import HttpsError
+                        try:
+                            state['url'] = self.https.deployment_url(project.id, target, state.get('url', ''), valid)
+                        except HttpsError as exc:
+                            raise DeploymentError(str(exc)) from None
                         d['targets'][target].update({k:v for k,v in state.items() if k in {'status','url','instances','info'}})
                         self.save(d)
                         break

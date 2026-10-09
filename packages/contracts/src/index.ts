@@ -189,3 +189,22 @@ export type TargetDeployment = {
   commands?: string[];
 };
 export type TargetLogLine = { ts: string; source: "deploy" | "app" | "db"; line: string };
+
+
+/** HTTPS availability is independent of the application shakedown verdict. */
+export type HttpsTarget = 'aws' | 'azure' | 'gcp' | 'local';
+export type HttpsBinding = {
+  binding_id: string; project_id: string; target: HttpsTarget;
+  kind: 'aws-alb' | 'azure-container-apps' | 'azure-app-service' | 'gcp-alb' | 'cloudflare-tunnel' | 'caddy';
+  domain: string;
+  status: 'preflight' | 'dns_pending' | 'certificate_pending' | 'applying' | 'verifying' | 'ready' | 'needs_action' | 'failed';
+  dns_records: {type: 'CNAME' | 'TXT' | 'A'; name: string; value: string; purpose: 'routing' | 'ownership'; note?: string}[];
+  origin_url: string; deployment_origin: string; https_url?: string;
+  certificate?: {issuer?: string; expires_at?: string; fingerprint?: string; renewal: 'managed'};
+  checks: {name: string; ok: boolean; detail: string}[];
+  error?: {code: string; message: string};
+  traffic_blocked?: boolean | null;
+  created_at: string; updated_at: string; checked_at?: string; next_check_at: string; deadline: string;
+  internal_transport: 'http' | 'https' | 'unverified';
+};
+export type HttpsRequest = {domain: string; local_mode?: 'tunnel' | 'caddy'};

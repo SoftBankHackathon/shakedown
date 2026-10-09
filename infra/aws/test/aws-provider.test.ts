@@ -88,3 +88,26 @@ test('CloudWatch collection returns newest 50 lines across instance streams', as
   const logs = await fake.provider.appLogs('dep_test');
   assert.equal(logs.length, 50); assert.equal(logs[0].line, 'line-100'); assert.equal(logs[49].line, 'line-149');
 });
+
+test('HTTPS bridge gates deploy/redeploy/stop and publishes only the registered HTTPS URL', async t => {
+  const fake=setup();fake.provider.config={...config,httpsControlUrl:'http://127.0.0.1:9301'};
+  const gates:boolean[]=[];let secure=403;
+  t.mock.method(globalThis,'fetch',async(url:unknown,options:RequestInit)=>{
+    if(String(url).includes(':9301/')){
+      const open=JSON.parse(String(options.body)).open;gates.push(open);secure=open?200:403;
+      return Response.json({configured:true,url:'https://app.example.com',blocked:!open});
+    }
+    assert.equal(new URL(String(url)).hostname,'app.example.com');
+    return new Response('',{status:secure});
+  });
+  const first=await fake.provider.deploy(request,AbortSignal.timeout(2000),()=>{});
+  assert.equal(first.url,'https://app.example.com');assert.equal(first.info.transport,'HTTPS (edge)');
+  await fake.provider.deploy({...request,deployment_id:'dep_retry'},AbortSignal.timeout(2000),()=>{});
+  await fake.provider.stop(()=>{});assert.equal(secure,403);assert.deepEqual(gates,[false,true,false,true,false]);
+});
+test('unavailable HTTPS control fails closed on HTTP and does not start a task',async t=>{
+  const fake=setup();fake.provider.config={...config,httpsControlUrl:'http://127.0.0.1:9301'};
+  t.mock.method(globalThis,'fetch',async()=>new Response('',{status:503}));
+  await assert.rejects(fake.provider.deploy(request,AbortSignal.timeout(2000),()=>{}),/HTTPS gate/);
+  assert.equal(fake.route,403);assert.ok(!fake.actions.includes('CreateServiceCommand'));
+});

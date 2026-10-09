@@ -11,6 +11,8 @@ export const configSchema = z.object({
   serviceName: z.string().regex(/^[a-zA-Z][a-zA-Z0-9-]{0,39}$/),
   clusterArn: arn, repository: z.string().regex(/^[a-z0-9][a-z0-9/_-]+$/),
   repositoryUri: z.string(), listenerArn: arn, targetGroupArn: arn,
+  gateRuleArn: arn.optional(),
+  httpsControlUrl: z.string().regex(/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/).optional(),
   publicUrl: z.url().refine(v => new URL(v).protocol === 'http:' && new URL(v).hostname.endsWith('.elb.amazonaws.com')),
   subnetIds: z.array(z.string().startsWith('subnet-')).length(2), securityGroupId: z.string().startsWith('sg-'),
   executionRoleArn: arn, taskRoleArn: arn, logGroup: z.string().startsWith('/shakedown/'),

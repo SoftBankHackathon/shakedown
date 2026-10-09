@@ -11,6 +11,15 @@ from engine.deployments import DeploymentStore, DeployRequest, CompareRequest, D
 from engine.analyzer import AnalysisError
 from engine.models import CreateProjectRequest, Project
 from engine.projects import DATA_DIR, ProjectStore
+from engine.https_client import HttpsClient, HttpsError
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
+
+class HttpsRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    domain: str = Field(min_length=3, max_length=253)
+    local_mode: Literal['tunnel', 'caddy'] | None = None
+
 
 
 def create_app(store: ProjectStore | None = None, deployments_store: DeploymentStore | None = None) -> FastAPI:
@@ -24,6 +33,7 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
         api.state.deployments.close()
 
     api = FastAPI(title='Shakedown Engine', version='0.1.0', lifespan=lifespan)
+    api.state.https = HttpsClient()
     api.state.store = store
     api.state.deployments = deployments_store
     api.add_middleware(CORSMiddleware,
@@ -69,6 +79,29 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
         if origin and origin not in {'http://localhost:3700', 'http://127.0.0.1:3700'}:
             return JSONResponse(status_code=403, content={'detail': 'Origin not allowed.'})
         return await call_next(request)
+
+    def https_project(project_id):
+        if api.state.store.get(project_id) is None:
+            raise HTTPException(status_code=404, detail='Project not found.')
+
+    def https_call(method, project_id, target, body=None, recheck=False):
+        https_project(project_id)
+        try:
+            return api.state.https.call(method, project_id, target, body, recheck)
+        except HttpsError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+
+    @api.get('/api/projects/{project_id}/targets/{target}/https')
+    def https_status(project_id: str, target: str):
+        return https_call('GET', project_id, target)
+
+    @api.post('/api/projects/{project_id}/targets/{target}/https', status_code=202)
+    def https_start(project_id: str, target: str, body: HttpsRequest):
+        return https_call('POST', project_id, target, body.model_dump(exclude_none=True))
+
+    @api.post('/api/projects/{project_id}/targets/{target}/https/recheck', status_code=202)
+    def https_recheck(project_id: str, target: str):
+        return https_call('POST', project_id, target, recheck=True)
 
     @api.get('/api/deployments')
     def deployments(project_id: str | None = None):

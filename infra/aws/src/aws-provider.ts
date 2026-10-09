@@ -2,9 +2,10 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fromIni } from '@aws-sdk/credential-providers';
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import { ECSClient, CreateServiceCommand, UpdateServiceCommand, DeleteServiceCommand, DescribeServicesCommand, RegisterTaskDefinitionCommand, ListTasksCommand, DescribeTasksCommand, DescribeTaskDefinitionCommand, RunTaskCommand, StopTaskCommand } from '@aws-sdk/client-ecs';
-import { ElasticLoadBalancingV2Client, ModifyListenerCommand, ModifyTargetGroupCommand, ModifyTargetGroupAttributesCommand, DescribeTargetHealthCommand } from '@aws-sdk/client-elastic-load-balancing-v2';
+import { ElasticLoadBalancingV2Client, ModifyListenerCommand, ModifyRuleCommand, ModifyTargetGroupCommand, ModifyTargetGroupAttributesCommand, DescribeTargetHealthCommand } from '@aws-sdk/client-elastic-load-balancing-v2';
 import { ECRClient, DescribeImagesCommand } from '@aws-sdk/client-ecr';
 import { CloudWatchLogsClient, DescribeLogStreamsCommand, GetLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
+import { HttpsControl } from './https-control.js';
 import type { Config } from './config.js';
 import { validateRequest } from './config.js';
 import type { DeployRequest, Provider, ReadyResult, Log, LogLine } from './model.js';
@@ -28,6 +29,15 @@ export class AwsProvider implements Provider {
     const options = { region: config.region, credentials: fromIni({ profile: config.profile }), maxAttempts: 2, requestHandler: { requestTimeout: 15_000, connectionTimeout: 5_000 } };
     this.ecs = new ECSClient(options); this.elb = new ElasticLoadBalancingV2Client(options);
     this.ecr = new ECRClient(options); this.logs = new CloudWatchLogsClient(options); this.sts = new STSClient(options);
+  }
+  private httpsUrl?:string;
+  private httpsGate(open:boolean,signal:AbortSignal){
+    return new HttpsControl(this.config.httpsControlUrl,this.config.projectId).gate(open,signal);
+  }
+  private async route(open:boolean,signal:AbortSignal){
+    const actions:any[]=open?[{Type:'forward',TargetGroupArn:this.config.targetGroupArn}]:[{Type:'fixed-response',FixedResponseConfig:{StatusCode:'403',ContentType:'text/plain',MessageBody:'Shakedown: deployment unavailable'}}];
+    if(this.config.gateRuleArn)await this.elb.send(new ModifyRuleCommand({RuleArn:this.config.gateRuleArn,Actions:actions}),{abortSignal:signal});
+    else await this.elb.send(new ModifyListenerCommand({ListenerArn:this.config.listenerArn,DefaultActions:actions}),{abortSignal:signal});
   }
   async verifyAccount() {
     const identity = await this.sts.send(new GetCallerIdentityCommand({}));
@@ -84,13 +94,14 @@ export class AwsProvider implements Provider {
     log('ECS rollout started; waiting for new tasks and healthy targets');
     const actual = await phase('wait_healthy', log, () => this.waitReady(taskDefinition, request, signal));
     // Only expose after every registered target belongs to the new healthy revision.
-    await this.elb.send(new ModifyListenerCommand({ ListenerArn: c.listenerArn, DefaultActions: [{ Type: 'forward', TargetGroupArn: c.targetGroupArn }] }), { abortSignal: signal });
+    this.httpsUrl=await this.httpsGate(true,signal);
+    if(!this.httpsUrl)await this.route(true,signal);
     await phase('public_health', log, () => this.waitHttp(request.health_path, 200, signal));
     log('public health check passed: HTTP 200 without cookies');
-    return { url: c.publicUrl, instances: actual.count, info: {
+    return { url: this.httpsUrl??c.publicUrl, instances: actual.count, info: {
       runtime: 'ECS Fargate', database: 'RDS PostgreSQL 17', timezone: actual.tz,
       session: actual.profile.includes('session-jdbc') ? 'jdbc' : 'memory', sticky_sessions: 'false',
-      image_digest: actual.digest, task_definition: taskDefinition, transport: 'HTTP (demo)',
+      image_digest: actual.digest, task_definition: taskDefinition, transport: this.httpsUrl?'HTTPS (edge)':'HTTP (demo)',
     } };
   }
   private async waitReady(taskDefinition: string, request: DeployRequest, signal: AbortSignal) {
@@ -120,14 +131,15 @@ export class AwsProvider implements Provider {
     }
   }
   private async closeRoute(signal: AbortSignal) {
-    await this.elb.send(new ModifyListenerCommand({ ListenerArn: this.config.listenerArn, DefaultActions: [{ Type: 'fixed-response', FixedResponseConfig: { StatusCode: '403', ContentType: 'text/plain', MessageBody: 'Shakedown: deployment unavailable' } }] }), { abortSignal: signal });
+    try{this.httpsUrl=await this.httpsGate(false,signal);}
+    finally{await this.route(false,signal);}
     await this.waitHttp('/', 403, signal);
   }
   private async waitHttp(path: string, expected: number, signal: AbortSignal) {
     while (true) {
       signal.throwIfAborted();
       try {
-        const response = await fetch(new URL(path, this.config.publicUrl), { redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]), headers: { 'Cache-Control': 'no-cache' } });
+        const response = await fetch(new URL(path, this.httpsUrl??this.config.publicUrl), { redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]), headers: { 'Cache-Control': 'no-cache' } });
         await response.body?.cancel();
         if (response.status === expected) return;
       } catch { signal.throwIfAborted(); }
