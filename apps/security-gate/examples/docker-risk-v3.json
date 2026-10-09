@@ -1,0 +1,73 @@
+{
+  "schema_version": "3.0",
+  "scope": "docker_semgrep_and_gitleaks_text_secrets",
+  "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\docker_risk",
+  "decision": "DENY",
+  "scan_status": "SUCCESS",
+  "reason_code": "RISK_DETECTED",
+  "docker_compose": {
+    "schema_version": "1.0",
+    "scope": "docker_compose_privileged_only",
+    "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\docker_risk",
+    "scan_status": "SUCCESS",
+    "decision": "DENY",
+    "files": [
+      {
+        "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\docker_risk\\compose.yaml",
+        "decision": "DENY",
+        "findings": [
+          {
+            "decision": "DENY",
+            "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\docker_risk\\compose.yaml",
+            "service": "app",
+            "rule_id": "DOCKER_COMPOSE_PRIVILEGED",
+            "reason_code": "PRIVILEGED_ENABLED",
+            "location": {
+              "line": 3,
+              "column": 17,
+              "path": [
+                "services",
+                "app",
+                "privileged"
+              ]
+            }
+          }
+        ],
+        "error": null
+      }
+    ],
+    "errors": []
+  },
+  "semgrep": {
+    "tool": "semgrep",
+    "scope": "local_python_mvp_rules",
+    "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\docker_risk",
+    "scan_status": "SUCCESS",
+    "decision": "ALLOW",
+    "findings": [],
+    "errors": [],
+    "scanned_files": 1
+  },
+  "gitleaks": {
+    "tool": "gitleaks",
+    "scope": "local_directory_text_secrets",
+    "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\docker_risk",
+    "scan_status": "SUCCESS",
+    "decision": "ALLOW",
+    "version": "8.30.0",
+    "scanned_files": 3,
+    "findings": [],
+    "errors": []
+  },
+  "findings": [
+    {
+      "tool": "docker_compose",
+      "rule_id": "DOCKER_COMPOSE_PRIVILEGED",
+      "severity": "HIGH",
+      "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\integration\\docker_risk\\compose.yaml",
+      "line": 3,
+      "decision": "DENY",
+      "reason_code": "PRIVILEGED_ENABLED"
+    }
+  ]
+}

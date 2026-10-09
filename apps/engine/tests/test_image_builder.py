@@ -355,3 +355,10 @@ def test_malformed_provider_envelope_is_sanitized(payload):
     with pytest.raises(LlmError) as error:
         connection.message('fake-key','fake-model','test')
     assert 'SECRET' not in str(error.value)
+
+
+@pytest.fixture(autouse=True)
+def isolated_security_gate(monkeypatch):
+    # These tests exercise image generation with an approved scanner response.
+    # Real gate/negative behavior is covered in test_security_integration.py.
+    monkeypatch.setattr('engine.security.require_allow', lambda root: {'decision':'ALLOW'})

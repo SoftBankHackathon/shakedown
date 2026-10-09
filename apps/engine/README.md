@@ -194,3 +194,23 @@ Claude가 연결되어 있고 `use_ai=true`이면 `aws-architecture.v1` 고정 �
 **선택 저장은 인프라 생성이나 배포 설정 적용이 아닙니다.** `deployment.ready=false`로 반환합니다. 현재 AWS 데모 어댑터는 고정 CPU/메모리, 준비된 ALB/RDS, 최대 2태스크 계약을 사용합니다. 이 계획을 실제 배포하려면 템플릿별 IaC/어댑터 연결, HTTPS·네트워크·DB·부하 검증을 별도로 구현해야 합니다. 기존 Action은 저장된 계획을 적용하지 않습니다. 유료 Claude 호출과 실제 AWS 배포는 테스트 대역으로 대체했으며 실제 검증하지 않았습니다.
 
 설계 참고: [ECS 목표 추적 확장](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-autoscaling-targettracking.html), [ECS AZ 분산](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-rebalancing.html), [RDS Multi-AZ](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZSingleStandby.html). Multi-AZ DB 인스턴스의 standby는 읽기 트래픽을 처리하지 않습니다.
+### Security Gate prerequisite (#16)
+
+Image planning now scans an isolated repository snapshot using the merged
+`apps/security-gate/main.py --with-gitleaks` (schema 3.0), before rule generation
+or an LLM call. Secret files are included in this scan, then excluded from the
+Docker build context. Local and AWS builds, including existing Dockerfiles,
+use the same checked snapshot path; saved image plans are checked again before
+Docker executes. Only `ALLOW` proceeds. `DENY`, `REVIEW`, `SCAN_FAILED`, missing
+scanner tools, invalid output and timeouts stop the operation. There is no
+request flag or LLM fallback that overrides this gate.
+
+Install the Security Gate's Semgrep/Gitleaks tools as described in
+`apps/security-gate/README.md`; the engine Python environment also needs its
+requirements. The current gate supports Compose privileged checks, limited
+Python patterns and text-secret detection, not all-language vulnerability
+analysis. Missing applicable checks remain REVIEW; unsupported/binary inputs
+can fail scanning. In particular, Java/Gradle samples are not automatically
+approved. Tool installation alone does not make unsupported projects pass.
+Only a sanitized decision is returned; raw scanner findings/output are not
+sent to the dashboard or LLM. No production security guarantee is implied.
