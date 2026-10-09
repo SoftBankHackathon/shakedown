@@ -89,11 +89,9 @@ class LocalRunner:
                 def build_at(path):
                     command = ['docker', 'build', '-t', image, str(path)] if platform is None else ['docker', 'buildx', 'build', '--platform', platform, '--provenance=false', '--sbom=false', '--load', '-t', image, str(path)]
                     self.command(command, 900)
-                if (context / 'Dockerfile').is_file():
-                    build_at(context)
-                else:
-                    with prepared(context, analysis, llm=getattr(self, 'llm', None)) as (staged, _plan):
-                        build_at(staged)
+                # Existing Dockerfiles must use the same checked, isolated path.
+                with prepared(context, analysis, llm=getattr(self, 'llm', None), security_root=root) as (staged, _plan):
+                    build_at(staged)
             except (BuildError, LlmError) as exc:
                 raise DeploymentError(str(exc)) from None
             return analysis

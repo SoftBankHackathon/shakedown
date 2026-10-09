@@ -142,14 +142,14 @@ def make_plan(context, analysis, options=None, llm=None):
                         '생성 내용을 검토한 뒤 신뢰하는 소스만 빌드하세요. 이미지 생성과 앱 실행 검증은 별개입니다.'])
 
 
-def snapshot(source,destination):
+def snapshot(source,destination, *, security=False):
     destination.mkdir(parents=True,exist_ok=True,mode=0o700)
     count=total=0
     for directory,dirs,files in os.walk(source,followlinks=False):
-        dirs[:]=[d for d in dirs if not excluded(d) and not (Path(directory)/d).is_symlink()]
+        dirs[:]=[d for d in dirs if not (d == '.git' if security else excluded(d)) and not (Path(directory)/d).is_symlink()]
         for name in files:
             path=Path(directory)/name
-            if excluded(name) or path.is_symlink(): continue
+            if (name == '.git' if security else excluded(name)) or path.is_symlink(): continue
             size=path.stat().st_size
             count+=1;total+=size
             if count>10000 or total>200_000_000: raise BuildError('빌드 컨텍스트가 제한(파일 10,000개/200MB)을 초과했습니다.')
@@ -159,12 +159,27 @@ def snapshot(source,destination):
 
 
 @contextmanager
-def prepared(context,analysis,options=None,llm=None):
-    plan=make_plan(context,analysis,options,llm)
-    with tempfile.TemporaryDirectory(prefix='shakedown-image-') as directory:
-        staged=Path(directory)/'context'; snapshot(context,staged)
-        (staged/'Dockerfile').write_text(plan['dockerfile'])
-        yield staged,plan
+def checked_source(root):
+    from engine.security import require_allow
+    with tempfile.TemporaryDirectory(prefix='shakedown-security-') as directory:
+        staged=Path(directory)/'source'
+        # Scan secrets too, before excluding them from the Docker context.
+        snapshot(root,staged,security=True)
+        report=require_allow(staged)
+        yield staged,report
+
+
+@contextmanager
+def prepared(context,analysis,options=None,llm=None,security_root=None):
+    root=security_root or context
+    with checked_source(root) as (repository, report):
+        source=repository/context.relative_to(root)
+        plan=make_plan(source,analysis,options,llm)
+        plan['security_gate']=report
+        with tempfile.TemporaryDirectory(prefix='shakedown-image-') as directory:
+            staged=Path(directory)/'context'; snapshot(source,staged)
+            (staged/'Dockerfile').write_text(plan['dockerfile'])
+            yield staged,plan
 
 
 class ImageBuilder:
@@ -175,16 +190,18 @@ class ImageBuilder:
 
     def plan(self,project,options):
         with self.runner.source(project.repo) as root:
-            analysis=ImageRepoAnalyzer().analyze(str(root))
-            context=app_context(root,analysis)
-            plan=make_plan(context,analysis,options,self.llm)
-            id='img_'+uuid.uuid4().hex
-            dest=self.root/id
-            try:
-                snapshot(context,dest)
-                (dest/'Dockerfile').write_text(plan['dockerfile'])
-            except Exception:
-                shutil.rmtree(dest,ignore_errors=True);raise
+            with checked_source(root) as (source,report):
+                analysis=ImageRepoAnalyzer().analyze(str(source))
+                context=app_context(source,analysis)
+                plan=make_plan(context,analysis,options,self.llm)
+                plan['security_gate']=report
+                id='img_'+uuid.uuid4().hex
+                dest=self.root/id
+                try:
+                    snapshot(context,dest)
+                    (dest/'Dockerfile').write_text(plan['dockerfile'])
+                except Exception:
+                    shutil.rmtree(dest,ignore_errors=True);raise
         plan.update(id=id,project_id=project.id,port=analysis.port,build_status='not_built')
         with self.lock:
             while len(self.plans) >= 8:
@@ -211,7 +228,11 @@ class ImageBuilder:
             job=self.jobs[id];job['status']='building';image=job['image']
         result={'status':'built'}
         try:
+            from engine.security import require_allow
+            job['security_gate']=require_allow(self.root/id)
             self.runner.command(['docker','build','-t',image,str(self.root/id)],900)
+        except BuildError as exc:
+            result={'status':'failed','error':str(exc)}
         except Exception:
             result={'status':'failed','error':'이미지 빌드 실패. Docker 실행 상태와 빌드 계획을 확인하세요. 원본 명령 출력은 비밀 보호를 위해 노출하지 않습니다.'}
         finally:
