@@ -113,7 +113,7 @@ const DICT = {
   "status.warned": { ko: "경고 · 검토 필요", en: "warning · review needed", ja: "警告 · 要確認" },
   "dep.warned": { ko: "시운전 경고: 결과를 검토하세요.", en: "Shakedown warning: review the evidence.", ja: "試運転の警告: 結果を確認してください。" },
   "dep.gateOnly": { ko: "검사 판정만 기록했습니다. 기존 환경의 접속은 차단하지 않았습니다.", en: "Release-gate verdict only. Existing endpoints remain accessible.", ja: "検査判定のみ。既存環境への接続は遮断していません。" },
-  "live.lead": { ko: "레포를 분석하고 이미지를 빌드한 뒤, 선택한 Local 또는 준비된 AWS 환경에 PostgreSQL 앱을 배포합니다.", en: "Analyze a repository, build its image and deploy the PostgreSQL app to Local or a prepared AWS environment.", ja: "解析・ビルド後、PostgreSQL アプリを Local または準備済み AWS 環境に配備します。" },
+  "live.lead": { ko: "레포를 분석하고 이미지를 한 번 빌드한 뒤, 선택한 Local과 미리 준비된 클라우드(AWS, Azure)에 같은 PostgreSQL 앱을 배포합니다.", en: "Analyze the repo, build the image once, and deploy the same PostgreSQL app to Local and the prepared clouds you select (AWS, Azure).", ja: "レポを分析してイメージを一度ビルドし、選んだ Local と事前に用意したクラウド(AWS、Azure)に同じ PostgreSQL アプリを配備します。" },
   "dep.deployed": { ko: "로컬 배포 완료 · 시운전 미실행", en: "Locally deployed · shakedown not run", ja: "ローカル配備完了 · 試運転未実行" },
   "status.deployed": { ko: "배포 완료 · 미검사", en: "deployed · untested", ja: "配備完了 · 未検査" },
   "dep.promoted": { ko: "시운전 통과: 실행한 시나리오에서 두 환경이 동일하게 동작했습니다.", en: "Shakedown passed: both environments matched on the tested scenario.", ja: "試運転通過: 実行したシナリオで両環境の動作が一致しました。" },
