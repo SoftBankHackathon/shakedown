@@ -20,7 +20,10 @@
     {"if": {"properties": {"decision": {"const": "ALLOW"}}}, "then": {"properties": {
       "scan_status": {"const": "SUCCESS"}, "reason_code": {"const": "ALL_APPLICABLE_CHECKS_PASSED"},
       "findings": {"maxItems": 0},
-      "docker_compose": {"properties": {"decision": {"const": "ALLOW"}}},
+      "docker_compose": {"anyOf": [
+        {"properties": {"decision": {"const": "ALLOW"}, "scan_status": {"const": "SUCCESS"}}},
+        {"properties": {"decision": {"const": "REVIEW"}, "scan_status": {"const": "NOT_APPLICABLE"}}}
+      ]},
       "semgrep": {"properties": {"decision": {"const": "ALLOW"}}},
       "gitleaks": {"properties": {"decision": {"const": "ALLOW"}}}
     }}},
@@ -52,6 +55,7 @@
         "decision": {"enum": ["ALLOW", "DENY", "REVIEW", "SCAN_FAILED"]},
         "version": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^8\\.[0-9]{1,3}\\.[0-9]{1,3}$"}]},
         "scanned_files": {"type": "integer", "minimum": 0},
+        "excluded_binary_files": {"type": "integer", "minimum": 0},
         "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
         "errors": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z_]+$"}}
       },

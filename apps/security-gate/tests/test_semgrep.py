@@ -1,8 +1,12 @@
 """Adapter tests with fabricated CLI output; these do not verify Semgrep detection."""
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 import subprocess
+import time
 from pathlib import Path
+from threading import Barrier, Lock
 from types import SimpleNamespace
 
 import jsonschema
@@ -50,7 +54,7 @@ def test_mock_findings_are_filtered_and_mapped_to_original_paths():
     report = semgrep.scan_semgrep(FIXTURES / "vulnerable", runner=output_runner(findings=True))
     assert report["decision"] == "DENY"
     assert report["scanned_files"] == 1
-    assert {f["rule_id"] for f in report["findings"]} == set(semgrep.RULES)
+    assert {f["rule_id"] for f in report["findings"]} == {r for r in semgrep.RULES if "python" in r}
     assert [f["line"] for f in report["findings"]] == [5, 9]
     assert all(f["file_path"] == str(FIXTURES / "vulnerable" / "sample.py") for f in report["findings"])
     assert all(set(f) == {"tool", "rule_id", "severity", "file_path", "line", "decision", "reason_code"}
@@ -67,7 +71,7 @@ def test_mock_clean_success():
 
 def test_bundled_rules_are_local_python_patterns_without_validators():
     data = yaml.safe_load(semgrep.RULE_FILE.read_text(encoding="utf-8"))
-    assert {rule["id"] for rule in data["rules"]} == set(semgrep.RULES)
+    assert {rule["id"] for rule in data["rules"]} == {r for r in semgrep.RULES if "python" in r}
     allowed = {"id", "languages", "severity", "message", "pattern", "pattern-either"}
     assert all(set(rule) <= allowed and rule["languages"] == ["python"] for rule in data["rules"])
 
@@ -170,9 +174,101 @@ def test_command_uses_only_local_rules_and_isolated_sources(monkeypatch):
     assert "--autofix" not in command and "--allow-local-builds" not in command
     assert "SEMGREP_APP_TOKEN" not in kwargs["env"] and "SEMGREP_RULES" not in kwargs["env"]
     assert "PYTHONPATH" not in kwargs["env"]
-    assert kwargs["cwd"].is_relative_to(ROOT)
-    assert not kwargs["cwd"].exists()  # source snapshot and raw output removed
+    assert kwargs["cwd"] == ROOT
+    source_paths = [Path(path) for path in command[command.index("--") + 1:]]
+    assert all(path.is_absolute() and path.parent.is_relative_to(ROOT / ".tmp") for path in source_paths)
+    assert all(not path.exists() for path in source_paths)  # snapshot removed
+    assert kwargs["env"] == semgrep.environment(ROOT / ".tmp")
     assert report["decision"] == "ALLOW"
+
+
+def test_default_cli_matches_working_probe_arguments(monkeypatch):
+    calls = []
+    monkeypatch.setattr(semgrep, "run_cli", output_runner(calls=calls))
+    report = semgrep.scan_semgrep(FIXTURES / "safe")
+    probe_calls = []
+    probe_report = semgrep.scan_semgrep(FIXTURES / "safe", runner=output_runner(calls=probe_calls))
+    command, kwargs = calls[0]
+    probe_command, probe_kwargs = probe_calls[0]
+    assert kwargs["cwd"] == ROOT
+    assert kwargs["env"] == semgrep.environment(ROOT / ".tmp")
+    assert command[:command.index("--")] == probe_command[:probe_command.index("--")]
+    assert kwargs["cwd"] == probe_kwargs["cwd"] and kwargs["env"] == probe_kwargs["env"]
+    assert command[:2] == [semgrep.find_executable() or "mock-semgrep", "scan"]
+    assert len(command[command.index("--") + 1:]) == 1
+    assert Path(command[-1]).is_absolute()
+    assert Path(command[-1]).parent.is_relative_to(ROOT / ".tmp")
+    assert Path(command[-1]).name == Path(probe_command[-1]).name
+    assert report["decision"] == "ALLOW" and report["scanned_files"] == 1
+    assert probe_report["decision"] == "ALLOW"
+
+
+def test_parallel_scans_have_separate_source_snapshots():
+    barrier = Barrier(2)
+    lock = Lock()
+    snapshots = []
+
+    def runner(command, **kwargs):
+        snapshot = Path(command[command.index("--") + 1]).parent
+        assert kwargs["cwd"] == ROOT
+        assert kwargs["env"] == semgrep.environment(ROOT / ".tmp")
+        assert all(Path(path).parent == snapshot for path in command[command.index("--") + 1:])
+        with lock:
+            snapshots.append(snapshot)
+        barrier.wait(timeout=10)
+        return output_runner()(command, **kwargs)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reports = list(pool.map(lambda _: semgrep.scan_semgrep(FIXTURES / "safe", runner=runner), range(2)))
+    assert [report["decision"] for report in reports] == ["ALLOW", "ALLOW"]
+    assert len(set(snapshots)) == 2
+    assert all(not snapshot.exists() for snapshot in snapshots)
+
+
+def test_default_cli_serializes_shared_runtime(monkeypatch):
+    lock = Lock()
+    start = Barrier(2)
+    active = 0
+    peak = 0
+
+    def fake_cli(command, **kwargs):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            time.sleep(0.1)
+            return output_runner()(command, **kwargs)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(semgrep, "run_cli", fake_cli)
+    def scan(_):
+        start.wait(timeout=10)
+        return semgrep.scan_semgrep(FIXTURES / "safe")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reports = list(pool.map(scan, range(2)))
+    assert [report["decision"] for report in reports] == ["ALLOW", "ALLOW"]
+    assert peak == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows profile handling")
+def test_windows_semgrep_environment_keeps_native_profile_and_local_work_files(monkeypatch, tmp_path):
+    profile = tmp_path / "native-profile"
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    monkeypatch.setenv("USERPROFILE", str(profile))
+    monkeypatch.setenv("SEMGREP_APP_TOKEN", "PRIVATE_SENTINEL_VALUE")
+    env = semgrep.environment(snapshot)
+    assert env["USERPROFILE"] == str(profile)
+    assert "HOME" not in env
+    assert (snapshot / ".config").is_dir() and (snapshot / ".cache").is_dir()
+    assert env["APPDATA"] == str(snapshot / ".config")
+    assert env["LOCALAPPDATA"] == str(snapshot / ".cache")
+    assert env["TEMP"] == str(snapshot) and env["TMP"] == str(snapshot)
+    assert env["SEMGREP_SETTINGS_FILE"] == str(snapshot / "settings.yml")
+    assert "SEMGREP_APP_TOKEN" not in env
 
 
 def test_mock_secrets_and_target_configuration_are_not_executed(tmp_path):
@@ -180,8 +276,9 @@ def test_mock_secrets_and_target_configuration_are_not_executed(tmp_path):
     (tmp_path / ".semgrepignore").write_text("*", encoding="utf-8")
     (tmp_path / ".semgrep.yml").write_text("PRIVATE_SENTINEL_VALUE", encoding="utf-8")
     def runner(command, **kwargs):
-        assert not (kwargs["cwd"] / ".semgrep.yml").exists()
-        assert (kwargs["cwd"] / ".semgrepignore").read_text() == ""
+        snapshot = Path(command[command.index("--") + 1]).parent
+        assert not (snapshot / ".semgrep.yml").exists()
+        assert (snapshot / ".semgrepignore").read_text() == ""
         return output_runner()(command, **kwargs)
     assert semgrep.scan_semgrep(tmp_path, runner=runner)["decision"] == "ALLOW"
 
@@ -242,10 +339,11 @@ def test_mock_docker_failure_prevents_integrated_allow(tmp_path):
     assert report["decision"] == "SCAN_FAILED"
 
 
-def test_mock_no_compose_keeps_step1_review(tmp_path):
+def test_mock_no_compose_keeps_step1_review_but_allows_applicable_source(tmp_path):
     (tmp_path / "sample.py").write_text("pass", encoding="utf-8")
     report = validate(scan_repository(tmp_path, semgrep_runner=output_runner()))
-    assert report["decision"] == "REVIEW"
+    assert report["decision"] == "ALLOW"
+    assert report["docker_compose"]["decision"] == "REVIEW"
     assert report["docker_compose"]["scan_status"] == "NOT_APPLICABLE"
 
 
@@ -258,14 +356,23 @@ def test_schema_rejects_allow_when_required_scan_failed():
 
 
 def test_runner_spools_output_and_uses_no_shell(tmp_path, monkeypatch):
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    original_temporary_file = semgrep.tempfile.TemporaryFile
+    spool_dirs = []
+    def temporary_file(*args, **kwargs):
+        spool_dirs.append(kwargs.get("dir"))
+        return original_temporary_file(*args, **kwargs)
+    monkeypatch.setattr(semgrep.tempfile, "TemporaryFile", temporary_file)
     def popen(command, **kwargs):
         assert kwargs["shell"] is False and kwargs["stdin"] == subprocess.DEVNULL
         kwargs["stdout"].write(b'{"results": []}')
         kwargs["stdout"].flush()
         return SimpleNamespace(returncode=0, wait=lambda **kw: 0, poll=lambda: 0)
     monkeypatch.setattr(semgrep.subprocess, "Popen", popen)
-    completed = semgrep.run_cli(["mock"], cwd=tmp_path, env={}, timeout=1)
+    completed = semgrep.run_cli(["mock"], cwd=tmp_path, env={"TMPDIR": str(output_dir)}, timeout=1)
     assert completed.stdout == b'{"results": []}'
+    assert spool_dirs == [str(output_dir), str(output_dir)]
 
 
 def test_runner_output_limit_stops_process(tmp_path, monkeypatch):

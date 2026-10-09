@@ -24,12 +24,12 @@ MAX_LOG_BYTES = 1024 * 1024
 MAX_FINDINGS = 1000
 
 
-def result(target, *, findings=None, error=None, version=None, scanned=0, applicable=True):
+def result(target, *, findings=None, error=None, version=None, scanned=0, applicable=True, excluded=0):
     findings = findings or []
     return {"tool": "gitleaks", "scope": "local_directory_text_secrets", "target_path": str(target),
             "scan_status": "FAILED" if error else "SUCCESS" if applicable else "NOT_APPLICABLE",
             "decision": "SCAN_FAILED" if error else "DENY" if findings else "ALLOW" if applicable else "REVIEW",
-            "version": version, "scanned_files": scanned, "findings": findings,
+            "version": version, "scanned_files": scanned, "excluded_binary_files": excluded, "findings": findings,
             "errors": [error] if error else []}
 
 
@@ -170,9 +170,10 @@ def normalize(payload, base, inputs_dir, mapping):
 def _scan_snapshot(target, executable, base, deadline, max_file_bytes, runner):
     version = _version(runner([executable, "version"], cwd=base, env=environment(base),
                               timeout=max(0.000001, deadline - time.monotonic())))
-    root, inputs = text_files(target, max_file_bytes)
+    excluded = []
+    root, inputs = text_files(target, max_file_bytes, excluded)
     if not inputs:
-        return result(root, version=version, applicable=False)
+        return result(root, version=version, applicable=False, excluded=len(excluded))
     validate_target(CONFIG_FILE)
     read_bounded(CONFIG_FILE, 64 * 1024)
     inputs_dir = base / "input"
@@ -210,7 +211,7 @@ def _scan_snapshot(target, executable, base, deadline, max_file_bytes, runner):
     error = "GITLEAKS_SCAN_ERRORS" if completed.stderr else None
     if (completed.returncode == FINDINGS_EXIT_CODE) != bool(findings):
         error = error or "GITLEAKS_INCONSISTENT_RESULT"
-    return result(root, findings=findings, error=error, version=version, scanned=len(inputs))
+    return result(root, findings=findings, error=error, version=version, scanned=len(inputs), excluded=len(excluded))
 
 
 def scan_gitleaks(target, *, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, max_file_bytes=1024 * 1024, runner=None):

@@ -1,2 +1,4 @@
 # Optional dependency: install only in an approved supported environment.
 semgrep>=1.100,<2
+tree-sitter==0.25.2
+tree-sitter-java==0.23.5

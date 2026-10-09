@@ -1,0 +1,19 @@
+rules:
+  - id: security-gate-java-runtime-exec
+    languages: [java]
+    severity: ERROR
+    message: Runtime command execution is prohibited by this gate.
+    pattern-either:
+      - pattern: Runtime.getRuntime().exec(...)
+      - pattern: java.lang.Runtime.getRuntime().exec(...)
+      - pattern: (Runtime $R).exec(...)
+      - pattern: (java.lang.Runtime $R).exec(...)
+  - id: security-gate-java-process-builder
+    languages: [java]
+    severity: ERROR
+    message: ProcessBuilder execution is prohibited by this gate.
+    pattern-either:
+      - pattern: new ProcessBuilder(...).start()
+      - pattern: new java.lang.ProcessBuilder(...).start()
+      - pattern: (ProcessBuilder $P).start()
+      - pattern: (java.lang.ProcessBuilder $P).start()

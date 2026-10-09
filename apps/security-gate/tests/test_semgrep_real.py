@@ -38,3 +38,39 @@ def test_real_integrated_report():
     assert report["decision"] == "DENY", report
     assert report["docker_compose"]["decision"] == "ALLOW"
     assert report["semgrep"]["decision"] == "DENY"
+
+
+def test_real_java_safe_without_compose():
+    report = scan_repository(FIXTURES / "java_safe")
+    assert report["decision"] == "ALLOW", report
+    assert report["docker_compose"]["scan_status"] == "NOT_APPLICABLE"
+    assert report["semgrep"]["scanned_files"] == 1
+    assert report["semgrep"]["detected_languages"] == ["java"]
+
+
+def test_real_java_direct_typed_and_qualified_execution():
+    report = scan_semgrep(FIXTURES / "java_vulnerable")
+    assert report["decision"] == "DENY", report
+    assert report["scan_status"] == "SUCCESS"
+    assert {f["rule_id"] for f in report["findings"]} == {
+        "security-gate-java-runtime-exec", "security-gate-java-process-builder"}
+    assert {f["line"] for f in report["findings"]} == {5, 6, 8, 10, 11, 12}
+
+
+def test_real_java_and_python_are_both_scanned(tmp_path):
+    import shutil
+    shutil.copy(FIXTURES / "java_safe" / "BoardService.java", tmp_path)
+    shutil.copy(FIXTURES / "safe" / "sample.py", tmp_path)
+    report = scan_semgrep(tmp_path)
+    assert report["decision"] == "ALLOW", report
+    assert report["scanned_files"] == 2
+    assert report["detected_languages"] == ["java", "python"]
+
+
+def test_real_java_parse_error_is_scan_failed(tmp_path):
+    # Prove the engine can scan before attributing a failure to bad Java.
+    healthy = scan_semgrep(FIXTURES / "java_safe")
+    assert healthy["decision"] == "ALLOW", healthy
+    (tmp_path / "Broken.java").write_text("class Broken { void broken( {", encoding="utf-8")
+    report = scan_semgrep(tmp_path)
+    assert report["decision"] == "SCAN_FAILED", report
