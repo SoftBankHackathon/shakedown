@@ -9,6 +9,7 @@ import { DeployReport } from "@/components/deploy-report";
 import { StepTable } from "@/components/step-table";
 import { api, DONE, errorMessage, formatSeconds, type Deployment, type Fix, type Report } from "@/lib/api";
 import { orderTargets, targetLabel } from "@/lib/targets";
+import { byCandidate } from "@/lib/steps";
 
 const STAGES = ["building", "deploying", "shakedown", "analyzing", "fixing"] as const;
 
@@ -57,7 +58,9 @@ export default function DeploymentPage() {
   // Prefer the target names the shakedown reports; fall back to catalog order.
   const firstDiff = attempt?.steps?.[0];
   const baseline = firstDiff?.baseline ?? names[0];
-  const candidate = firstDiff?.candidate ?? names.find((n) => n !== baseline) ?? "";
+  const comparisons = byCandidate(attempt?.steps ?? [], names, baseline);
+  // Before the first row arrives, show the table for the first compared target.
+  if (!comparisons.length) comparisons.push([names.find((n) => n !== baseline) ?? "", []]);
 
   return (
     <div className="space-y-6">
@@ -142,7 +145,12 @@ export default function DeploymentPage() {
                   {t("dep.appliedAfter", { target: targetLabel(attempt.applied_fix.target), fix: fixLabel(attempt.applied_fix) })}
                 </p>
               )}
-              <StepTable baseline={targetLabel(baseline)} candidate={targetLabel(candidate)} steps={dep.scenario.steps} diffs={attempt?.steps ?? []} running={!done && !attempt?.verdict} />
+              <div className="space-y-6">
+                {comparisons.map(([candidate, rows]) => (
+                  <StepTable key={candidate} baseline={targetLabel(baseline)} candidate={targetLabel(candidate)} steps={dep.scenario!.steps} diffs={rows}
+                    running={!done && rows.length < dep.scenario!.steps.length} />
+                ))}
+              </div>
             </>
           ) : (
             <p className="text-sm text-muted">{done ? t("dep.notRun") : t("dep.waiting")}</p>

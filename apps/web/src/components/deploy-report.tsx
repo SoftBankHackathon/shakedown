@@ -3,7 +3,8 @@
 import type { ReactNode } from "react";
 import { useT } from "@/components/i18n";
 import { AiTag, Badge, Mono, RuleTag, Section } from "@/components/ui";
-import { DONE, formatSeconds, type Deployment, type StepResult } from "@/lib/api";
+import { DONE, formatSeconds, type Deployment } from "@/lib/api";
+import { resultsFor } from "@/lib/steps";
 import { orderTargets, targetLabel } from "@/lib/targets";
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
@@ -15,11 +16,10 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/** Steps one target passed in an attempt (baseline results sit in `local`, the compared target in `cloud`). */
-function passedSteps(d: Deployment, attemptIndex: number, name: string, baseline: string) {
-  const steps = d.attempts[attemptIndex]?.steps ?? [];
-  const side = (row: (typeof steps)[number]): StepResult => ((row.baseline ?? baseline) === name ? row.local : row.cloud);
-  return { passed: steps.filter((row) => side(row).status === "passed").length, total: d.scenario?.steps.length ?? steps.length };
+/** Steps one target passed in an attempt. */
+function passedSteps(d: Deployment, attemptIndex: number, names: string[], name: string, baseline: string) {
+  const results = resultsFor(d.attempts[attemptIndex]?.steps ?? [], names, baseline, name);
+  return { passed: results.filter((r) => r.status === "passed").length, total: d.scenario?.steps.length ?? results.length };
 }
 
 /**
@@ -69,8 +69,8 @@ export function DeployReport({ dep }: { dep: Deployment }) {
             {names.map((name) => {
               const target = dep.targets[name];
               const o = dep.options[name];
-              const first = passedSteps(dep, 0, name, baseline);
-              const final = passedSteps(dep, last, name, baseline);
+              const first = passedSteps(dep, 0, names, name, baseline);
+              const final = passedSteps(dep, last, names, name, baseline);
               return (
                 <li key={name} className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span className="font-medium w-20">{targetLabel(name)}</span>
