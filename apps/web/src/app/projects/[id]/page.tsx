@@ -25,7 +25,7 @@ export default function ProjectPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.project(id).then((p) => { setProject(p); const supported = (p.targets ?? ["local"]).filter((x) => x === "local" || x === "aws"); setLiveTargets(supported.length ? supported : ["local"]); }).catch((e) => setError(e.message));
+    api.project(id).then((p) => { setProject(p); const supported = (p.targets ?? ["local"]).filter((x) => TARGETS.some((t) => t.id === x && t.available)); setLiveTargets(supported.length ? supported : ["local"]); }).catch((e) => setError(e.message));
     api.deployments(id).then(setDeps).catch(() => {});
   }, [id]);
 
@@ -33,7 +33,7 @@ export default function ProjectPage() {
     setBusy(true);
     setError(null);
     try {
-      const d = await api.deploy(id, { shakedown: MOCK ? shakedown : liveTargets.length === 2 || !!comparisonUrl.trim(), autofix, options: MOCK ? opts : Object.fromEntries(Object.entries(opts).filter(([name]) => liveTargets.includes(name as TargetName))), targets: MOCK ? undefined : liveTargets, comparison: !MOCK && liveTargets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
+      const d = await api.deploy(id, { shakedown: MOCK ? shakedown : liveTargets.length >= 2 || !!comparisonUrl.trim(), autofix, options: MOCK ? opts : Object.fromEntries(Object.entries(opts).filter(([name]) => liveTargets.includes(name as TargetName))), targets: MOCK ? undefined : liveTargets, comparison: !MOCK && liveTargets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
       router.push(`/deployments/${d.id}`);
     } catch (e) {
       setError(e instanceof ApiError && e.status === 409 ? t("home.busy", { name: project?.name ?? id }) : errorMessage(e));
@@ -92,7 +92,7 @@ export default function ProjectPage() {
           <table className="w-full text-sm">
             <tbody>
               {a.evidence.map((e) => (
-                <tr key={e.field + e.value} className="border-t border-line first:border-0">
+                <tr key={`${e.field}|${e.value}|${e.file ?? ""}`} className="border-t border-line first:border-0">
                   <td className="py-2 pr-3 text-muted w-32">{e.field}</td>
                   <td className="py-2 pr-3">{e.value}</td>
                   <td className="py-2 text-right whitespace-nowrap">
@@ -167,7 +167,7 @@ export default function ProjectPage() {
                     </label>
                     <label className="flex items-center justify-between text-xs">
                       {t("project.affinity")}
-                      <input type="checkbox" disabled={!MOCK} checked={o.sticky_sessions}
+                      <input type="checkbox" disabled={!MOCK && !TARGETS.find((x) => x.id === name)?.sticky} checked={o.sticky_sessions}
                         onChange={(e) => setOpt(name, { sticky_sessions: e.target.checked })} />
                     </label>
                     <label className="flex items-center justify-between text-xs">
@@ -187,19 +187,20 @@ export default function ProjectPage() {
           <Section title={t("project.after")}>
             {!MOCK && <p className="mb-3 text-sm text-muted">{t("live.scope")}</p>}
             <label className="flex items-start gap-3 text-sm mb-3">
-              <input type="checkbox" disabled={!MOCK} checked={MOCK ? shakedown : liveTargets.length === 2 || !!comparisonUrl.trim()} onChange={(e) => setShakedown(e.target.checked)} className="mt-1" />
+              <input type="checkbox" disabled={!MOCK} checked={MOCK ? shakedown : liveTargets.length >= 2 || !!comparisonUrl.trim()} onChange={(e) => setShakedown(e.target.checked)} className="mt-1" />
               <span>
                 <span className="font-medium">{t("project.shakedown")}</span>
                 <span className="block text-xs text-muted">{t("project.shakedownDesc")}</span>
               </span>
             </label>
-            <label className="flex items-start gap-3 text-sm">
-              <input type="checkbox" disabled={!MOCK} checked={autofix} onChange={(e) => setAutofix(e.target.checked)} className="mt-1" />
+            {/* The engine rejects autofix; only the mock replay shows it. */}
+            {MOCK && <label className="flex items-start gap-3 text-sm">
+              <input type="checkbox" checked={autofix} onChange={(e) => setAutofix(e.target.checked)} className="mt-1" />
               <span>
                 <span className="font-medium">{t("project.autofix")}</span>
                 <span className="block text-xs text-muted">{t("project.autofixDesc")}</span>
               </span>
-            </label>
+            </label>}
           </Section>
         </div>
       </div>

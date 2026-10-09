@@ -101,7 +101,7 @@ const DICT = {
   "dep.aiCost": { ko: "AI 비용", en: "AI cost", ja: "AI コスト" },
   "dep.calls": { ko: "호출 {n}회", en: "{n} calls", ja: "{n} 回呼び出し" },
   "live.needLocal": { ko: "배포 대상을 하나 이상 선택하세요.", en: "Select at least one deployment target.", ja: "配備先を選択してください。" },
-  "live.scope": { ko: "Local / AWS 배포를 지원합니다. AWS는 팀 계정·기존 ECS 스택·DB 초기화가 필요합니다. 두 대상을 선택하면 자동 비교하며, 자동수정은 미지원입니다.", en: "Deploy to Local / AWS. AWS requires a configured team account, existing ECS stack and initialized database. Selecting both runs a comparison. Autofix is unsupported.", ja: "Local / AWS に配備できます。AWS はチームアカウント・既存 ECS スタック・DB 初期化が必要です。両方を選ぶと比較します。自動修正は未対応です。" },
+  "live.scope": { ko: "Local / AWS / Azure 배포를 지원합니다. 클라우드는 미리 준비한 스택(AWS ECS, Azure Container Apps)과 DB 초기화가 필요합니다. 두 대상 이상을 선택하면 Local 기준으로 클라우드마다 자동 비교하며, 세션 고정은 Azure만 지원합니다.", en: "Deploy to Local / AWS / Azure. Clouds need a prepared stack (AWS ECS, Azure Container Apps) and an initialized database. Selecting two or more runs a comparison against Local for each cloud. Sticky sessions are Azure-only.", ja: "Local / AWS / Azure に配備できます。クラウドは事前に用意したスタック(AWS ECS、Azure Container Apps)と DB 初期化が必要です。2 つ以上選ぶと Local を基準にクラウドごとに比較します。セッション固定は Azure のみ対応です。" },
   "live.candidate": { ko: "비교할 기존 환경 URL (선택)", en: "Existing candidate URL (optional)", ja: "既存の比較先 URL (任意)" },
   "live.compareHint": { ko: "Action 실행 시 새 로컬 배포와 이 주소를 비교합니다. 비우면 배포만 실행합니다.", en: "Action compares the new local deployment with this URL. Leave empty for deploy only.", ja: "Action で新しいローカル環境と比較します。空欄なら配備のみ。" },
   "live.compareTitle": { ko: "HTTP 시운전", en: "HTTP shakedown", ja: "HTTP 試運転" },

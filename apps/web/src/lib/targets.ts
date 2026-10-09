@@ -8,6 +8,8 @@ export type TargetInfo = {
   available: boolean;
   /** Selected by default on import. */
   default: boolean;
+  /** The engine accepts sticky sessions for this target (Azure: Container Apps ingress affinity). */
+  sticky?: boolean;
 };
 
 // Order matters: the first selected target is the baseline the others are compared against.
@@ -16,7 +18,7 @@ export const TARGETS: TargetInfo[] = [
   { id: "aws", label: "AWS", available: true, default: true },
   { id: "onprem", label: "On-prem", available: false, default: false },
   { id: "gcp", label: "GCP", available: false, default: false },
-  { id: "azure", label: "Azure", available: true, default: false },
+  { id: "azure", label: "Azure", available: true, default: false, sticky: true },
 ];
 
 export const DEFAULT_TARGETS = TARGETS.filter((t) => t.default).map((t) => t.id);
