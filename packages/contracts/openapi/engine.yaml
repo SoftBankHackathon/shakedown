@@ -96,7 +96,7 @@ paths:
     post:
       operationId: deploy
       summary: Action 버튼 (One Action)
-      description: 로컬 배포 지원. shakedown=true이면 comparison URL 필수. autofix는 false만 지원. comparison은 기존 외부 환경이며 배포·삭제하지 않음. deployed는 시운전 미실행, promoted는 검사 통과이며 실제 트래픽 승격을 의미하지 않음.
+      description: Local 및 사전 구성된 AWS ECS 배포 지원. 두 대상이면 shakedown=true 필수. 한 대상의 shakedown=true는 comparison URL 필수. AWS BLOCKED 시 관리 대상 AWS 배포만 DELETE하며 traffic_blocked는 차단 확인 결과. autofix는 false만 지원. comparison은 기존 외부 환경이며 배포·삭제하지 않음. deployed는 시운전 미실행, promoted는 검사 통과이며 실제 트래픽 승격을 의미하지 않음.
       parameters:
         - { name: project_id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -108,9 +108,10 @@ paths:
                 targets:
                   type: array
                   minItems: 1
-                  maxItems: 1
+                  maxItems: 2
+                  uniqueItems: true
                   default: [local]
-                  items: { type: string, enum: [local] }
+                  items: { type: string, enum: [local, aws] }
                 shakedown: { type: boolean, default: false }
                 autofix: { type: boolean, const: false, default: false }
                 comparison: { $ref: "#/components/schemas/Endpoint" }
@@ -258,10 +259,10 @@ components:
         mode: { type: string, enum: [comparison] }
         shakedown_id: { type: string }
         release_gate: { type: string, enum: [passed, review, blocked] }
-        traffic_blocked: { type: boolean, description: "현재 false. BLOCKED는 검사 게이트이며 외부 URL 트래픽을 차단하지 않음." }
+        traffic_blocked: { type: boolean, description: "관리 AWS DELETE 차단 확인 시 true. 기존 외부 URL 트래픽은 차단하지 않음." }
         targets:
           type: object
-          description: "대상 이름 → 상태. 기존 환경은 external(관리/배포 완료 아님), 관리 대상은 TargetDeployment 필드 사용"
+          description: "대상 이름 → 상태. 기존 환경은 external(관리/배포 완료 아님), 정리 완료는 stopped, 관리 대상은 TargetDeployment 필드 사용"
           additionalProperties: true
         attempts:
           type: array

@@ -20,7 +20,7 @@ flowchart LR
 - 공개 ALB → 앱 SG 8080 → DB SG 5432. RDS는 인터넷 경로 없는 서브넷에 배치합니다.
 - 앱은 public subnet/public IP로 ECR·로그에 접근합니다. 인터넷에서 앱 포트 직접 접근은 SG가 막습니다. NAT Gateway는 만들지 않습니다.
 - 초기 스택 생성 및 DB 초기화는 배포 버튼과 분리합니다. 매 배포는 기존 ECS 서비스의 task definition만 교체합니다.
-- 실제 API는 `packages/contracts/openapi/target.yaml`. 엔진은 로컬 배포까지 연결되어 있으며 AWS 호출·ECR 업로드·시운전은 아직 미연결입니다. **팀 전체 연결 완료는 아닙니다.**
+- 실제 API는 `packages/contracts/openapi/target.yaml`. 엔진의 AWS 호출·ECR 업로드·동일 digest 비교 흐름은 연결되어 있습니다. 설정 방법은 `apps/engine/README.md`의 AWS 연결을 참고하세요. **실제 AWS 계정 통합 검증은 아직 수행하지 않았습니다.**
 
 ## AWS 없이 검증
 
@@ -130,7 +130,7 @@ npm run dev:aws
 4. BLOCKED 후 로그 수집/DELETE 403 확인. 새 ID와 `demo,session-jdbc`로 같은 이미지를 배포한 뒤 다시 검사합니다.
 5. 앱 재배포 후 DB 글과 로그인 세션 유지, CLI/API 이벤트 시간, 공개 URL, 실제 task/target 수를 기록합니다.
 
-엔진 담당자와 연결할 항목: ECR push/digest 고정, 위 POST/GET/DELETE 호출, Local에도 같은 digest와 JVM/DB 호환 설정 전달, BLOCKED 시 로그→DELETE 순서. 샘플 담당자와 연결할 항목: Dockerfile/프로필/헤더 및 schema-init. Local과 AWS 모두 PostgreSQL을 사용하며 schema-init은 PostgreSQL 세션 테이블을 초기화합니다. Local 배포 API도 초기화 작업을 수행합니다.
+엔진에 연결된 항목 (실제 계정 검증 필요): ECR push/digest 고정, 위 POST/GET/DELETE 호출, Local에도 같은 digest와 JVM/DB 호환 설정 전달, BLOCKED 시 로그→DELETE 순서. 샘플 담당자와 연결할 항목: Dockerfile/프로필/헤더 및 schema-init. Local과 AWS 모두 PostgreSQL을 사용하며 schema-init은 PostgreSQL 세션 테이블을 초기화합니다. Local 배포 API도 초기화 작업을 수행합니다.
 
 ## 비용·정리·제한
 

@@ -120,10 +120,10 @@ export const ActionCard = memo(function ActionCard({ deployment: d, projectName 
           </>}<Stage name={d.mode === "comparison" ? t("live.compareTitle") : t("stage.deploying")}>
             {names.map((name) => {
               const s = d.targets[name].status;
-              const state: State = s === "ready" ? "passed" : s === "deploying" ? "running" : s === "failed" ? "failed" : "pending";
+              const state: State = s === "ready" ? "passed" : s === "deploying" ? "running" : (s === "failed" || s === "stopped") ? "failed" : "pending";
               const url = d.targets[name].url;
               const sub = s === "deploying" && fixed?.target === name ? t("pipe.redeploy", { fix: fixed.option })
-                : (s === "ready" || s === "external") && url ? url.replace(/^https?:\/\//, "") : undefined;
+                : s === "stopped" ? t("status.stopped") : (s === "ready" || s === "external") && url ? url.replace(/^https?:\/\//, "") : undefined;
               return <Box key={name} title={targetLabel(name)} state={state} sub={sub} />;
             })}
           </Stage>

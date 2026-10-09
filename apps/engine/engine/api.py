@@ -1,4 +1,4 @@
-"""Dashboard-facing project and local deployment API."""
+"""Dashboard-facing project and Local/AWS deployment API."""
 from contextlib import asynccontextmanager
 import asyncio
 import json
