@@ -5,13 +5,13 @@
 영역끼리는 아래 OpenAPI 명세대로 통신합니다. 10/9 연결 전에 각자 이 명세대로 만들어 두면 그대로 붙습니다.
 
 ```
-대시보드(web) ──engine.yaml──▶ 엔진(engine) ──target.yaml──▶ 인프라(local, aws, gcp)
+대시보드(web) ──engine.yaml──▶ 엔진(engine) ──target.yaml──▶ 인프라(local, aws, gcp, azure)
                                      └──────shakedown.yaml──▶ 시운전(shakedown)
 ```
 
 | 명세 | 구현 | 호출 | 핵심 |
 |---|---|---|---|
-| `openapi/target.yaml` | infra/local, infra/aws, infra/gcp | engine | 배포 요청 → 상태 폴링 → `ready`면 공개 `url` |
+| `openapi/target.yaml` | infra/local, infra/aws, infra/gcp, infra/azure | engine | 배포 요청 → 상태 폴링 → `ready`면 공개 `url` |
 | `openapi/shakedown.yaml` | apps/shakedown | engine | 대상 URL들 → 단계별 비교, 판정, 원인 보고서 |
 | `openapi/engine.yaml` | apps/engine | apps/web | 프로젝트, Deploy, 배포 상태, 실시간 이벤트(SSE) |
 
@@ -23,13 +23,13 @@
 
 ## 상태: 초안
 
-Target API는 **v0.1.2 통합 제안**, Engine API는 **v0.1.1 통합 제안**, Shakedown API는 **v0.1.0 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
+Target API는 **v0.1.3 통합 제안**, Engine API는 **v0.1.1 통합 제안**, Shakedown API는 **v0.1.0 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
 
 바뀔 가능성이 있는 것
 - 상태 확인 방식: 지금은 GET 폴링(2~3초 간격). 콜백(`callback_url`) 방식이 추가될 수 있음
 - 보고서 언어: 시운전 요청에 `lang`(ko, en, ja) 추가 검토 중
 - 같은 프로젝트 동시 배포: 지금은 409로 거절. 필요하면 대기열 방식으로 바뀔 수 있음
-- 대상 이름: 지금은 `local`, `aws`, `gcp` 구현. `onprem`, `azure`는 예정
+- 대상 이름: 지금은 `local`, `aws`, `gcp`, `azure` 구현. `onprem`은 예정
 - 비교 대상이 3개 이상일 때의 결과 형식: `StepDiff`에 `baseline`, `candidate`를 넣어 두었고 세부는 미정
 
 바꿀 때
@@ -39,6 +39,7 @@ Target API는 **v0.1.2 통합 제안**, Engine API는 **v0.1.1 통합 제안**, 
 
 ## 변경 이력
 
+- **Target v0.1.3 (2026-10-09, 팀 채널 공유 후 제안)**: Azure 구현(infra/azure, Container Apps + PostgreSQL Flexible Server) 추가. servers에 9104, 설명에 Azure 구현 제약 절(replicas 1~2 고정, sticky는 ingress 세션 고정, ACR digest·amd64 확인, DELETE는 404 확인 뒤 204, schema-init은 준비 때 한 번). 요청·응답 형식은 그대로라 타입은 TargetName 주석만 고침. `infra/azure/README.md` 참고.
 - **Target v0.1.2 (2026-10-09, 팀 채널 공유 후 제안)**: GCP 구현(infra/gcp, Cloud Run + Cloud SQL PostgreSQL) 추가. servers에 9103, 설명에 GCP 구현 제약 절(수동 스케일링 replicas 1~2, sticky best-effort, digest 필수, DELETE 뒤 공개 주소는 403 대신 503, 매 배포 schema-init). 요청·응답 형식은 그대로라 타입은 TargetName 주석만 고쳤고 fixture는 추가하지 않음. `infra/gcp/README.md` 참고.
 - **Engine v0.1.1 (2026-10-08, PR #5 리뷰 대기)**: 로컬 배포 후 선택적 HTTP 시운전, 기존 URL 비교 API, external 대상 상태, warned 종료 상태, release_gate/traffic_blocked 의미 추가. `fixtures/deployment-comparison-pass.json` 참고. AWS 자동배포·자동수정·실제 트래픽 차단은 미연결.
 

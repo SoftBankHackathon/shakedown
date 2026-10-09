@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Target API
-  version: 0.1.2
+  version: 0.1.3
   description: |
-    > **상태: 초안 (v0.1.2, 2026-10-09)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 초안 (v0.1.3, 2026-10-09)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     배포 대상(인프라)이 구현하는 API. 엔진(apps/engine)이 호출합니다.
@@ -11,13 +11,14 @@ info:
     - `local` 구현: infra/local (김태윤) — Docker + Cloudflare Tunnel
     - `aws` 구현: infra/aws (김재환) — ECS Fargate + ALB + RDS
     - `gcp` 구현: infra/gcp (김태현) — Cloud Run + Cloud SQL PostgreSQL
+    - `azure` 구현: infra/azure (서동옥) — Container Apps + PostgreSQL Flexible Server
 
     흐름: 엔진이 `POST /deployments`로 배포를 요청 → 인프라는 바로 202를 돌려주고 뒤에서 배포
     → 엔진이 `GET /deployments/{id}`를 폴링 → `status=ready`가 되면 `url`로 시운전 시작.
 
     약속
     - `ready`는 "컨테이너가 떴다"가 아니라 **`url`로 외부에서 접속해 health_path가 200을 준다**는 뜻
-    - `url`은 **공개 주소**여야 함 (로컬은 Tunnel 주소, AWS는 ALB 주소, GCP는 run.app 주소). localhost 금지
+    - `url`은 **공개 주소**여야 함 (로컬은 Tunnel 주소, AWS는 ALB 주소, GCP는 run.app 주소, Azure는 azurecontainerapps.io 주소). localhost 금지
     - 비밀값(DB 비밀번호 등)은 `secret_refs`로 이름만 받고, 값은 인프라가 각자의 저장소에서 꺼냄
     - 같은 `deployment_id`로 다시 요청하면 새로 만들지 않고 기존 결과를 돌려줌(멱등)
 
@@ -43,6 +44,20 @@ info:
     - 이전 배포 DELETE는 현재 서비스에 영향 없음. 삭제 후 GET은 404, 로그는 조회 가능
     - 로그는 Cloud Logging 읽기 한도(프로젝트당 분당 60회)를 넘으면 배포 로그만 돌려줌
     - 삭제된 ID 재사용, 같은 ID의 다른 요청, 동일 프로젝트 동시 변경은 409. 재시작 시 미완료 배포는 0대로 내린 뒤 failed
+
+    Azure 구현 제약 (v0.1.3 제안, infra/azure)
+    - 미리 준비한 Container App 1개(Korea Central, 단일 리비전 모드)와 PostgreSQL Flexible Server 17(가상 네트워크 전용). database.engine은 postgres만, 이름은 설정값만
+    - replicas 1~2. 최소·최대 복제본을 같게 고정(0으로 줄지 않음). 3 이상은 400
+    - sticky_sessions=true면 Container Apps ingress 세션 고정(affinity)을 켬. 단일 리비전 모드에서만 동작
+    - 허용 저장소(설정의 ACR 저장소)의 image@sha256:digest 필수. 배포 전에 ACR에 그 digest가 있는지, 단일 linux/amd64 manifest인지 확인하고 아니면 400
+    - 환경변수는 SPRING_PROFILES_ACTIVE=demo,session-memory 또는 demo,session-jdbc만 허용. secret_refs는 SPRING_DATASOURCE_PASSWORD=db_password만(Container App이 Key Vault에서 관리 ID로 꺼냄. 어댑터는 값을 모름)
+    - schema-init은 처음 준비할 때 한 번(Container Apps Job). 앱은 DDL validate로 기동
+    - url은 https://{앱 이름}.{환경}.koreacentral.azurecontainerapps.io 고정, HTTPS만(http는 301)
+    - ready는 새 리비전 Healthy·복제본 수 일치·트래픽 100% 뒤 쿠키 없이 health_path 200. 준비 대기 270초
+    - DELETE는 ingress 끄기와 리비전 비활성화 뒤 공개 주소가 404를 주는 것을 확인하고 204. 오류는 502(재시도 가능), 이미 삭제된 ID는 204
+    - 이전 배포 DELETE는 현재 서비스에 영향 없음. 삭제 후 GET은 404, 로그는 조회 가능
+    - 로그는 Container Apps 로그 스트림(최근)과 Log Analytics(이전, 반영 수 분 지연)를 합쳐 돌려줌
+    - 삭제된 ID 재사용, 같은 ID의 다른 요청, 동일 프로젝트 동시 변경은 409. 재시작 시 미완료 배포는 공개 차단 후 failed
 
     상태 확인 방식 (초안)
     - 엔진은 `GET /deployments/{deployment_id}`를 2~3초 간격으로 조회
@@ -195,7 +210,7 @@ components:
   schemas:
     TargetName:
       type: string
-      description: 이번 해커톤 구현은 local, aws, gcp. 나머지는 확장 예정 (대시보드에 "예정"으로 표시)
+      description: 이번 해커톤 구현은 local, aws, gcp, azure. 나머지는 확장 예정 (대시보드에 "예정"으로 표시)
       enum: [local, aws, onprem, gcp, azure]
     DeployRequest:
       type: object
