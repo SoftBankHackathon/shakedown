@@ -84,7 +84,7 @@ Windows에서는 `.venv/Scripts/python.exe -m uvicorn`을 사용합니다. AI �
 - 빌드 900초, Local readiness 300초, 시운전 폴링 180초, 개별 HTTP 요청 20초 제한. 시운전 서비스 자체 마감 시간에는 진행 중 HTTP/접속 재시도를 취소합니다. 이미 접수된 쓰기를 되돌리지는 않습니다.
 - 배포/비교 중 예외가 나면 이번 요청으로 접수한 관리 대상들을 DELETE 시도합니다. 기존 외부 대상은 삭제하지 않습니다. BLOCKED에서는 관리 AWS 대상의 로그를 조회한 뒤 DELETE하여 공개 403/태스크 종료를 확인합니다. Local은 유지하며 WARN은 삭제하지 않습니다. 로그 본문은 엔진에 복제하지 않고 AWS 어댑터 기록에 보존합니다. Local Target DELETE는 진단 로그·DB 볼륨을 보존합니다.
 - 재시작 시 미완료 기록은 failed로 전환. 자동 재실행하지 않습니다. SQLite 기록은 `apps/engine/.data`에 저장됩니다.
-- 엔진/Target/Shakedown 서비스는 loopback에 유지합니다. 엔진은 localhost/127.0.0.1:3700 Origin만 허용하고 내부 호출은 9101/9102/9201로 고정됩니다. 이는 프로덕션 인증 체계가 아닙니다.
+- 엔진/Target/Shakedown 서비스는 loopback에 유지합니다. 엔진은 localhost/127.0.0.1:3700 Origin만 허용하고 내부 호출은 9101/9102/9103/9201로 고정됩니다. 이는 프로덕션 인증 체계가 아닙니다.
 
 ## 검증
 
@@ -119,3 +119,12 @@ AWS CLI, Docker Buildx, Node 24가 필요합니다. `infra/aws/README.md` 절차
 AWS 빌드는 linux/amd64 단일 manifest이며 한 번 빌드하여 ECR에 업로드합니다. 반환된 digest를 인증 중 로컬 Docker에 pull하여 두 대상에 같은 주소를 전달합니다. ECR 토큰은 임시 Docker 설정에만 쓰고 삭제합니다. 설정·계정·프로젝트·포트·DB가 다르면 배포를 거절합니다. 기존 DB 스키마가 없으면 먼저 AWS bootstrap 절차를 완료해야 합니다.
 
 BLOCKED의 AWS 정리는 앱 공개 경로와 ECS 태스크만 중지합니다. ALB/RDS/ECR 등은 남으므로 비용도 남습니다. 실제 계정에서 ECR push, ECS readiness, ALB 403, RDS 연결은 별도 검증해야 합니다.
+
+## Azure 연결 설정 (기존 팀 스택)
+
+`infra/azure/README.md` 절차(Bicep 준비, 스키마 초기화)를 먼저 마칩니다. 엔진과 Azure 어댑터에 같은 `AZURE_ADAPTER_CONFIG` 절대 경로를 지정하고, `az login`은 해커톤 구독으로 합니다(설정의 구독과 다르면 배포를 거절합니다).
+
+- Azure만 선택: linux/amd64로 한 번 빌드해 ACR에 올리고 그 digest로 배포합니다.
+- AWS와 함께 선택: AWS가 ECR에 올린 이미지를 digest 그대로 ACR로 복사합니다(`docker buildx imagetools create`). 복사에는 `HACKATHON_PUBLISH_PROFILE`도 필요합니다.
+- 옵션: replicas 1~2, `sticky_sessions`는 Azure만 허용(Container Apps ingress 세션 고정).
+- 시운전: 시운전 API가 비교 대상을 하나씩만 받으므로, 첫 대상(Local 선택 시 Local)을 기준으로 클라우드마다 한 번씩 실행합니다. 결과 행은 `candidate`로 구분되고, 판정은 가장 나쁜 결과(BLOCKED > WARN > PASS)입니다. BLOCKED가 나온 클라우드만 로그 수집 후 DELETE합니다.

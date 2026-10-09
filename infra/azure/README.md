@@ -130,3 +130,5 @@ PostgreSQL B1ms, ACR Basic, Container Apps(무료 제공량 안쪽 예상), 로�
 | 확인됨 | Korea Central PostgreSQL 17·B1ms 지원 (2026-10-09 `list-skus`) | - |
 | 확인됨 | 최소=최대 복제본이면 리비전 상태가 `Running`이 아닌 `RunningAtMaxScale` (SDK 타입에 없음) | - |
 | 확인됨 | http 접속은 https로 301 리다이렉트 | - |
+| 확인됨 | 엔진 전체 흐름(Local+Azure, 2026-10-09): session-memory는 BLOCKED → 로그 수집 → DELETE 확인 → 공개 주소 404, 세션 고정은 promoted (배포~판정 약 3분) | - |
+| 결정 | 클라우드와 같은 amd64 이미지를 ARM Mac Local에서 에뮬레이션으로 돌리면 Spring 시작이 느려 Local 확인 시간 제한을 넘길 때가 있음 | Local 담당 |
