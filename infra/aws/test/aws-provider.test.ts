@@ -25,6 +25,7 @@ function setup() {
       case 'RegisterTaskDefinitionCommand': definitions.push(command.input); return { taskDefinition: { taskDefinitionArn: 'definition' } };
       case 'DescribeServicesCommand': return { services: servicePresent ? [{ status: 'ACTIVE', pendingCount: 0, deployments: [{ taskDefinition: 'definition', rolloutState: 'COMPLETED' }] }] : [] };
       case 'CreateServiceCommand':
+        assert.equal((command.input as { healthCheckGracePeriodSeconds: number }).healthCheckGracePeriodSeconds, 120, 'Allow the measured 41-second Spring cold start plus healthy probes');
         assert.ok(attached, 'ECS requires a target group associated with an ALB');
         assert.equal(route, 403, 'Traffic must remain blocked during service creation');
         servicePresent = true; return {};

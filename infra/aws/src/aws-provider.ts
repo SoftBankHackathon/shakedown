@@ -73,7 +73,7 @@ export class AwsProvider implements Provider {
     ] }), { abortSignal: signal });
     const current = await this.ecs.send(new DescribeServicesCommand({ cluster: c.clusterArn, services: [c.serviceName] }), { abortSignal: signal });
     const common = { cluster: c.clusterArn, taskDefinition, desiredCount: request.options.replicas, networkConfiguration: this.network(),
-      deploymentConfiguration: { maximumPercent: 200, minimumHealthyPercent: 0, deploymentCircuitBreaker: { enable: true, rollback: false } }, healthCheckGracePeriodSeconds: 30 };
+      deploymentConfiguration: { maximumPercent: 200, minimumHealthyPercent: 0, deploymentCircuitBreaker: { enable: true, rollback: false } }, healthCheckGracePeriodSeconds: 120 };
     if (current.services?.some(s => s.status === 'ACTIVE')) {
       await this.ecs.send(new UpdateServiceCommand({ ...common, service: c.serviceName, forceNewDeployment: true }), { abortSignal: signal });
     } else {
