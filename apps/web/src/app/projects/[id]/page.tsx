@@ -18,7 +18,6 @@ export default function ProjectPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [deps, setDeps] = useState<Deployment[]>([]);
   const [shakedown, setShakedown] = useState(MOCK);
-  const [autofix, setAutofix] = useState(MOCK);
   // Options per non-baseline target, keyed by target name.
   const [opts, setOpts] = useState<Record<string, TargetOptions>>({});
   const [liveTargets, setLiveTargets] = useState<TargetName[]>(["local"]);
@@ -44,7 +43,7 @@ export default function ProjectPage() {
         if(plan?.selected_template)architectureId=plan.id;
       }
       const deploymentOptions=Object.fromEntries(Object.entries(opts).filter(([name])=>liveTargets.includes(name as TargetName)).map(([name,value])=>[name,name==="aws"&&architectureId?{sticky_sessions:false,tz:value.tz}:value]));
-      const d = await api.deploy(id, { architecture_plan_id: architectureId, shakedown: MOCK ? shakedown : liveTargets.length >= 2 || !!comparisonUrl.trim(), autofix, options: MOCK ? opts : deploymentOptions, targets: MOCK ? undefined : liveTargets, comparison: !MOCK && liveTargets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
+      const d = await api.deploy(id, { architecture_plan_id: architectureId, shakedown: MOCK ? shakedown : liveTargets.length >= 2 || !!comparisonUrl.trim(), autofix: false, options: MOCK ? opts : deploymentOptions, targets: MOCK ? undefined : liveTargets, comparison: !MOCK && liveTargets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
       router.push(`/deployments/${d.id}`);
     } catch (e) {
       setError(e instanceof ApiError && e.status === 409 ? t("home.busy", { name: project?.name ?? id }) : errorMessage(e));
@@ -203,14 +202,11 @@ export default function ProjectPage() {
                 <span className="block text-xs text-muted">{t("project.shakedownDesc")}</span>
               </span>
             </label>
-            {/* The engine rejects autofix; only the mock replay shows it. */}
-            {MOCK && <label className="flex items-start gap-3 text-sm">
-              <input type="checkbox" checked={autofix} onChange={(e) => setAutofix(e.target.checked)} className="mt-1" />
-              <span>
-                <span className="font-medium">{t("project.autofix")}</span>
-                <span className="block text-xs text-muted">{t("project.autofixDesc")}</span>
-              </span>
-            </label>}
+            {/* 배포 전에 켜는 옵션이 아니다. 차단되면 배포 화면의 원인 분석에서 버튼으로 적용한다(engine.yaml applyFix). */}
+            <div className="text-sm">
+              <span className="font-medium">{t("project.autofix")}</span>
+              <span className="block text-xs text-muted">{t("project.autofixDesc")}</span>
+            </div>
           </Section>
         </div>
       </div>

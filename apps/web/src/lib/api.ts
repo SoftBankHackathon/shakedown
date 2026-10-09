@@ -41,6 +41,8 @@ const liveApi = {
     call<Deployment>(`/api/projects/${projectId}/deployments`, { method: "POST", body: JSON.stringify(body) }),
   compare: (projectId: string, body: CompareRequest) =>
     call<Deployment>(`/api/projects/${projectId}/comparisons`, { method: "POST", body: JSON.stringify(body) }),
+  /** 차단된 배포에 원인 보고서의 수정안을 적용하고 다시 시운전한다(engine.yaml applyFix). 202 응답은 status=fixing. */
+  applyFix: (id: string) => call<Deployment>(`/api/deployments/${id}/fix`, { method: "POST" }),
   /** Live progress over SSE. Returns an unsubscribe function. */
   subscribe: (id: string, onEvent: (ev: DeployEvent) => void): (() => void) => {
     const es = new EventSource(`${API}/api/deployments/${id}/events`);
@@ -53,7 +55,12 @@ const liveApi = {
   },
 };
 
-export const api: typeof liveApi = MOCK ? { ...mockApi, compare: async () => { throw new Error("Use live mode to compare existing environments."); } } : liveApi;
+// mock 재생은 blocked에서 멈추지 않고 수정·2회차까지 저절로 가므로 수정 적용 버튼이 나오지 않는다.
+export const api: typeof liveApi = MOCK ? {
+  ...mockApi,
+  compare: async () => { throw new Error("Use live mode to compare existing environments."); },
+  applyFix: async () => { throw new Error("Use live mode to apply a fix."); },
+} : liveApi;
 
 export const DONE = TERMINAL_STATUSES;
 
