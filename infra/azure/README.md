@@ -132,3 +132,45 @@ PostgreSQL B1ms, ACR Basic, Container Apps(무료 제공량 안쪽 예상), 로�
 | 확인됨 | http 접속은 https로 301 리다이렉트 | - |
 | 확인됨 | 엔진 전체 흐름(Local+Azure, 2026-10-09): session-memory는 BLOCKED → 로그 수집 → DELETE 확인 → 공개 주소 404, 세션 고정은 promoted (배포~판정 약 3분) | - |
 | 결정 | 클라우드와 같은 amd64 이미지를 ARM Mac Local에서 에뮬레이션으로 돌리면 Spring 시작이 느려 Local 확인 시간 제한을 넘길 때가 있음 | Local 담당 |
+
+## 12. 아키텍처 템플릿 (작업 명세, PR #12 이후)
+김태윤 님 PR #12(`codex/architecture-planner`)는 엔진이 small·medium·large 중 하나를 추천·선택하고, 배포 요청의 `architecture: {version: "aws-architecture.v1", template_id}`로 **AWS에만** 적용한다. Azure에도 같은 선택이 적용되게 세 곳을 바꾼다.
+
+### 카탈로그 (`azure-architecture.v1`)
+| | small | medium | large |
+|---|---|---|---|
+| CPU / 메모리 (Consumption 프로필) | 0.5 vCPU / 1 Gi | 1 vCPU / 2 Gi | 2 vCPU / 4 Gi |
+| 복제본 최소~최대 | 1~1 (자동 확장 없음) | 2~4 | 3~12 |
+| 자동 확장 | 없음 | HTTP 동시 요청 기준 | HTTP 동시 요청 기준 |
+| 가용 영역 | 1 | 영역 중복 *(계획만)* | 영역 중복 *(계획만)* |
+| DB | Burstable B1ms | General Purpose + 영역 중복 HA *(계획만)* | GP + HA + 읽기 복제본 검토 *(계획만)* |
+
+**해커톤 범위: compute(CPU·메모리·복제본·자동 확장)만 적용.** *(계획만)* 항목은 계획서에 "운영 전환 시 필요"로 표시하고 적용하지 않는다.
+- 영역 중복은 Container Apps 환경을 **만들 때만** 정할 수 있어 지금 환경(`sd-env`)을 다시 만들어야 한다.
+- DB HA는 Burstable에서 지원하지 않아 GP로 올려야 하고, 월 수백 달러라 무료 크레딧(200달러)을 넘는다.
+
+### 작업 1. Azure 어댑터 (0.5일, 우리)
+- `src/architecture.ts`: 위 카탈로그 (AWS `infra/aws/src/architecture.ts`와 같은 모양)
+- `model.ts`: `architecture: {version: 'azure-architecture.v1', template_id}` 선택 필드. 있으면 `replicas`는 템플릿 최소값과 같아야 함(AWS 규칙과 동일), 없으면 지금처럼 1~2
+- `azure-provider.ts desired()`: 템플릿이 있으면 CPU·메모리, `minReplicas`/`maxReplicas`, HTTP 확장 규칙을 Container App 갱신 한 번에 담음. 없으면 지금 동작(최소=최대 고정) 그대로
+- 준비 판정: 자동 확장이 있으면 복제본 수를 `== replicas`가 아니라 `>= 최소`로 확인
+- `info.architecture`: 템플릿 ID 또는 `legacy` (AWS와 같은 키)
+- 테스트: 템플릿별 갱신 내용, 복제본 불일치 거절, 템플릿 없는 기존 요청 회귀
+
+### 작업 2. 엔진 플래너 일반화 (0.5일, 김태윤 님과)
+- 지금: `'aws' not in targets`면 거절, `architecture`를 AWS에만 전달, 버전 `aws-architecture.v1` 고정, AI 과제 `choose_aws_architecture`
+- 바꿀 것: **tier(small/medium/large) 선택은 클라우드 공통**, 클라우드마다 자기 카탈로그로 변환
+  - 계획을 고르면 선택된 클라우드 대상 각각에 `architecture: {version: "<cloud>-architecture.v1", template_id}` 전달 (Local에는 보내지 않음)
+  - `opts['replicas']`도 클라우드마다 그 카탈로그 최소값
+  - 대상 표(`TARGETS`)에 `architecture` 버전을 한 칸 추가하면 aws·azure·gcp 모두 같은 코드로 처리
+- 대시보드 플래너 화면: 템플릿 카드에 클라우드별 실제 값(AWS: 태스크·RDS, Azure: 복제본·PostgreSQL Flexible) 표시
+
+### 작업 3. 계약 (짧음)
+- `target.yaml`의 `architecture` 설명 "AWS 전용" → 클라우드별 버전(`aws-architecture.v1`, `azure-architecture.v1`)을 받는 선택 필드로
+- Azure 구현 제약 절에 "architecture는 compute만 적용, 영역 중복·DB HA 미적용" 한 줄
+- 변경 이력 추가 (GCP v0.1.2, Azure v0.1.3 다음 번호)
+
+### 순서와 의존
+1. PR #12 머지 대기 (작업 2·3은 그 코드 위에서). 작업 1은 지금 `feat/azure`에서 먼저 가능
+2. 작업 1 → 작업 3 → 작업 2 (엔진은 태윤 님 리뷰)
+3. 실측: 실제 Azure에서 medium 적용 → 복제본 2개 이상, 부하 시 확장되는지, 비용 확인
