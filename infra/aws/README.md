@@ -148,3 +148,14 @@ HTTP 데모라 실제 사용자 개인정보/비밀번호는 사용하지 않습
 - 실제 PostgreSQL 17 + ARM64 앱 컨테이너 2개: memory 모드의 교차 서버 로그인 실패 재현, JDBC 모드 **10회 교차 요청 통과**, 글 작성/양쪽 조회 및 앱 재시작 후 세션·게시글 보존 확인. [실행 결과](test/evidence/session-smoke-postgres-2026-10-08.json).
 - CloudFormation `cfn-lint` 서울 리전 검사 통과. OpenAPI lint 오류 0개, 기존 형식 관련 경고 5개(license, localhost 서버 주소 2건, health/logs의 4xx 응답 표기 2건).
 - 실제 AWS 자원 생성/배포, IAM 권한 실증, ALB 라우팅/403, RDS TLS 및 팀 엔진의 원클릭 연결은 **아직 미검증**.
+
+### ALB traffic gate migration
+
+The listener keeps a permanent default forward to the target group: ECS requires this
+association before `CreateService`. A priority-1 source-IP rule covering IPv4 and IPv6
+returns 403 until the new tasks are healthy; the adapter opens/closes that rule with
+`ModifyRule`. Regenerate the adapter config from outputs to include `GateRuleArn`.
+Existing configs without this field are rejected. Existing stacks need a controlled
+migration: first block ALB ingress during maintenance, add the traffic gate and listener
+association, regenerate config and update adapter IAM permissions, then restore ingress.
+Do not update an existing serving listener to forward before its blocking rule exists.

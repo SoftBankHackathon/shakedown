@@ -10,7 +10,7 @@ export const configSchema = z.object({
   projectId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
   serviceName: z.string().regex(/^[a-zA-Z][a-zA-Z0-9-]{0,39}$/),
   clusterArn: arn, repository: z.string().regex(/^[a-z0-9][a-z0-9/_-]+$/),
-  repositoryUri: z.string(), listenerArn: arn, targetGroupArn: arn,
+  repositoryUri: z.string(), listenerArn: arn, gateRuleArn: arn, targetGroupArn: arn,
   publicUrl: z.url().refine(v => new URL(v).protocol === 'http:' && new URL(v).hostname.endsWith('.elb.amazonaws.com')),
   subnetIds: z.array(z.string().startsWith('subnet-')).length(2), securityGroupId: z.string().startsWith('sg-'),
   executionRoleArn: arn, taskRoleArn: arn, logGroup: z.string().startsWith('/shakedown/'),
@@ -23,7 +23,7 @@ export function loadConfig(path: string): Config {
   const config = configSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
   const prefix = `${config.accountId}.dkr.ecr.${config.region}.amazonaws.com/${config.repository}`;
   if (config.repositoryUri !== prefix) throw new Error('ECR repository account/region mismatch');
-  for (const value of [config.clusterArn, config.listenerArn, config.targetGroupArn, config.executionRoleArn, config.taskRoleArn, config.dbPasswordSecretArn]) {
+  for (const value of [config.clusterArn, config.listenerArn, config.gateRuleArn, config.targetGroupArn, config.executionRoleArn, config.taskRoleArn, config.dbPasswordSecretArn]) {
     if (value.split(':')[4] !== config.accountId) throw new Error('Resource ARN account mismatch');
   }
   return config;

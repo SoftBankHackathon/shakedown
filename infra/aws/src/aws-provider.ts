@@ -2,7 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fromIni } from '@aws-sdk/credential-providers';
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import { ECSClient, CreateServiceCommand, UpdateServiceCommand, DeleteServiceCommand, DescribeServicesCommand, RegisterTaskDefinitionCommand, ListTasksCommand, DescribeTasksCommand, DescribeTaskDefinitionCommand, RunTaskCommand, StopTaskCommand } from '@aws-sdk/client-ecs';
-import { ElasticLoadBalancingV2Client, ModifyListenerCommand, ModifyTargetGroupCommand, ModifyTargetGroupAttributesCommand, DescribeTargetHealthCommand } from '@aws-sdk/client-elastic-load-balancing-v2';
+import { ElasticLoadBalancingV2Client, ModifyRuleCommand, ModifyTargetGroupCommand, ModifyTargetGroupAttributesCommand, DescribeTargetHealthCommand } from '@aws-sdk/client-elastic-load-balancing-v2';
 import { ECRClient, DescribeImagesCommand } from '@aws-sdk/client-ecr';
 import { CloudWatchLogsClient, DescribeLogStreamsCommand, GetLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import type { Config } from './config.js';
@@ -84,7 +84,7 @@ export class AwsProvider implements Provider {
     log('ECS rollout started; waiting for new tasks and healthy targets');
     const actual = await phase('wait_healthy', log, () => this.waitReady(taskDefinition, request, signal));
     // Only expose after every registered target belongs to the new healthy revision.
-    await this.elb.send(new ModifyListenerCommand({ ListenerArn: c.listenerArn, DefaultActions: [{ Type: 'forward', TargetGroupArn: c.targetGroupArn }] }), { abortSignal: signal });
+    await this.elb.send(new ModifyRuleCommand({ RuleArn: c.gateRuleArn, Actions: [{ Type: 'forward', TargetGroupArn: c.targetGroupArn }] }), { abortSignal: signal });
     await phase('public_health', log, () => this.waitHttp(request.health_path, 200, signal));
     log('public health check passed: HTTP 200 without cookies');
     return { url: c.publicUrl, instances: actual.count, info: {
@@ -120,7 +120,7 @@ export class AwsProvider implements Provider {
     }
   }
   private async closeRoute(signal: AbortSignal) {
-    await this.elb.send(new ModifyListenerCommand({ ListenerArn: this.config.listenerArn, DefaultActions: [{ Type: 'fixed-response', FixedResponseConfig: { StatusCode: '403', ContentType: 'text/plain', MessageBody: 'Shakedown: deployment unavailable' } }] }), { abortSignal: signal });
+    await this.elb.send(new ModifyRuleCommand({ RuleArn: this.config.gateRuleArn, Actions: [{ Type: 'fixed-response', FixedResponseConfig: { StatusCode: '403', ContentType: 'text/plain', MessageBody: 'Shakedown: deployment unavailable' } }] }), { abortSignal: signal });
     await this.waitHttp('/', 403, signal);
   }
   private async waitHttp(path: string, expected: number, signal: AbortSignal) {

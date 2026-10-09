@@ -1,3 +1,4 @@
+import YAML from 'yaml';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -11,6 +12,8 @@ const request = requestSchema.parse({ deployment_id: 'dep_test', project_id: con
 function setup() {
   const provider = new AwsProvider(config);
   let route = 403; let servicePresent = false;
+  const foundation = YAML.parse(readFileSync(new URL('../cloudformation/foundation.yaml', import.meta.url), 'utf8'));
+  let attached = foundation.Resources.Listener.Properties.DefaultActions.some((a: { Type: string }) => a.Type === 'forward');
   const actions: string[] = [];
   const definitions: unknown[] = [];
   const tasks = ['10.42.0.10', '10.42.1.10'].map(ip => ({ lastStatus: 'RUNNING', taskDefinitionArn: 'definition', containers: [{ name: 'app', imageDigest: image.split('@')[1] }], attachments: [{ details: [{ name: 'privateIPv4Address', value: ip }] }] }));
@@ -21,7 +24,10 @@ function setup() {
     switch (name) {
       case 'RegisterTaskDefinitionCommand': definitions.push(command.input); return { taskDefinition: { taskDefinitionArn: 'definition' } };
       case 'DescribeServicesCommand': return { services: servicePresent ? [{ status: 'ACTIVE', pendingCount: 0, deployments: [{ taskDefinition: 'definition', rolloutState: 'COMPLETED' }] }] : [] };
-      case 'CreateServiceCommand': servicePresent = true; return {};
+      case 'CreateServiceCommand':
+        assert.ok(attached, 'ECS requires a target group associated with an ALB');
+        assert.equal(route, 403, 'Traffic must remain blocked during service creation');
+        servicePresent = true; return {};
       case 'ListTasksCommand': return { taskArns: servicePresent ? ['task1', 'task2'] : [] };
       case 'DescribeTasksCommand': return { tasks };
       case 'DescribeTaskDefinitionCommand': return { taskDefinition: { containerDefinitions: [{ name: 'app', environment: [{ name: 'TZ', value: 'UTC' }, { name: 'SPRING_PROFILES_ACTIVE', value: 'demo,session-jdbc' }] }] } };
@@ -29,10 +35,14 @@ function setup() {
       default: return {};
     }
   }) as typeof provider.ecs.send;
-  provider.elb.send = (async (command: { constructor: { name: string }; input: { DefaultActions?: { Type: string }[] } }) => {
+  provider.elb.send = (async (command: { constructor: { name: string }; input: { DefaultActions?: { Type: string }[]; Actions?: { Type: string }[]; RuleArn?: string } }) => {
     const name = command.constructor.name;
     actions.push(name);
-    if (name === 'ModifyListenerCommand') route = command.input.DefaultActions?.[0].Type === 'forward' ? 200 : 403;
+    if (name === 'ModifyListenerCommand') attached = command.input.DefaultActions?.[0].Type === 'forward';
+    if (name === 'ModifyRuleCommand') {
+      assert.equal(command.input.RuleArn, config.gateRuleArn);
+      route = command.input.Actions?.[0].Type === 'forward' ? 200 : 403;
+    }
     if (name === 'DescribeTargetHealthCommand') return { TargetHealthDescriptions: tasks.map(t => ({ Target: { Id: t.attachments[0].details[0].value }, TargetHealth: { State: 'healthy' } })) };
     return {};
   }) as typeof provider.elb.send;
@@ -51,10 +61,10 @@ test('AWS SDK flow exposes only matching healthy tasks, uses secret references a
   assert.equal(definition.containerDefinitions[0].secrets[0].valueFrom, config.dbPasswordSecretArn + ':password::');
   assert.ok(!definition.containerDefinitions[0].environment.some(e => e.name.includes('PASSWORD')));
   assert.equal(definition.containerDefinitions[0].environment.find(e => e.name === 'SPRING_DATASOURCE_URL')?.value, `jdbc:postgresql://${config.dbHost}:5432/${config.dbName}?sslmode=require`);
-  assert.ok(fake.actions.lastIndexOf('ModifyListenerCommand') > fake.actions.indexOf('DescribeTargetHealthCommand'));
+  assert.ok(fake.actions.lastIndexOf('ModifyRuleCommand') > fake.actions.indexOf('DescribeTargetHealthCommand'));
   await fake.provider.stop(() => {});
   assert.equal(fake.route, 403);
-  assert.ok(fake.actions.lastIndexOf('ModifyListenerCommand') < fake.actions.indexOf('DeleteServiceCommand'));
+  assert.ok(fake.actions.lastIndexOf('ModifyRuleCommand') < fake.actions.indexOf('DeleteServiceCommand'));
 });
 
 test('an old image digest never becomes ready or opens traffic', async t => {
@@ -87,4 +97,12 @@ test('CloudWatch collection returns newest 50 lines across instance streams', as
   }) as typeof fake.provider.logs.send;
   const logs = await fake.provider.appLogs('dep_test');
   assert.equal(logs.length, 50); assert.equal(logs[0].line, 'line-100'); assert.equal(logs[49].line, 'line-149');
+});
+
+test('foundation blocks all clients while retaining the ECS target group association', () => {
+  const r = YAML.parse(readFileSync(new URL('../cloudformation/foundation.yaml', import.meta.url), 'utf8')).Resources;
+  assert.deepEqual(r.Listener.Properties.DefaultActions, [{ Type: 'forward', TargetGroupArn: { Ref: 'TargetGroup' } }]);
+  assert.deepEqual(r.TrafficGate.Properties.ListenerArn, { Ref: 'Listener' });
+  assert.deepEqual(r.TrafficGate.Properties.Conditions, [{ Field: 'source-ip', SourceIpConfig: { Values: ['0.0.0.0/0', '::/0'] } }]);
+  assert.equal(r.TrafficGate.Properties.Actions[0].FixedResponseConfig.StatusCode, '403');
 });
