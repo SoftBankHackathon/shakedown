@@ -1,0 +1,28 @@
+{
+  "name": "@shakedown/azure",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "node --import tsx src/server.ts",
+    "start": "node --import tsx src/server.ts",
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@azure/arm-appcontainers": "^4.0.0",
+    "@azure/container-registry": "^1.1.2",
+    "@azure/identity": "^4.13.1",
+    "@azure/monitor-query-logs": "^1.0.0",
+    "fastify": "^5.12.5",
+    "zod": "^4.6.5"
+  }
+}
