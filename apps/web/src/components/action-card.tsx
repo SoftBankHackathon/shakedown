@@ -1,24 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { memo, useEffect, useState, type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { useT } from "@/components/i18n";
-import { Badge, Spinner } from "@/components/ui";
+import { Badge, Elapsed, Spinner } from "@/components/ui";
 import { DONE, formatSeconds, type Deployment } from "@/lib/api";
 import { resultsFor } from "@/lib/steps";
 import { orderTargets, targetLabel } from "@/lib/targets";
 
 type State = "pending" | "running" | "passed" | "failed";
-
-/** Running clock. Only this element re-renders every tick, not the whole card. */
-function Elapsed({ created }: { created: number }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 100);
-    return () => clearInterval(timer);
-  }, []);
-  return <>{formatSeconds(Math.max(0, now / 1000 - created))}</>;
-}
 
 const STATE_STYLE: Record<State, string> = {
   pending: "border-line text-muted",

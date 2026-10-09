@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "@/components/i18n";
-import { AiTag, Badge, Chip, Mono, RuleTag, Section } from "@/components/ui";
+import { AiTag, Badge, Chip, Elapsed, Mono, RuleTag, Section } from "@/components/ui";
 import { DeployReport } from "@/components/deploy-report";
 import { StepTable } from "@/components/step-table";
 import { api, DONE, errorMessage, formatSeconds, type Deployment, type Fix, type Report } from "@/lib/api";
@@ -50,6 +50,14 @@ export default function DeploymentPage() {
     };
   }, [id]);
 
+  // SSE through a dev proxy can arrive in one burst at the end, so also poll until the deployment is done.
+  const finished = dep != null && DONE.has(dep.status);
+  useEffect(() => {
+    if (finished) return;
+    const timer = setInterval(() => api.deployment(id).then(setDep).catch(() => {}), 2500);
+    return () => clearInterval(timer);
+  }, [id, finished]);
+
   if (!dep) return <p className="text-muted">{loadError ?? t("loading")}</p>;
   const attempt = dep.attempts.find((a) => a.n === tab) ?? dep.attempts.at(-1);
   const previous = attempt && dep.attempts.find((a) => a.n === attempt.n - 1);
@@ -73,7 +81,7 @@ export default function DeploymentPage() {
           <p className="text-sm text-muted mt-1">{done ? statusLine(dep, t) : message || t("dep.working")}</p>
         </div>
         <div className="flex items-center gap-4 text-sm">
-          <Metric label={t("dep.total")} value={seconds(dep.timings.total_s)} />
+          <Metric label={t("dep.total")} value={done || dep.timings.total_s != null ? seconds(dep.timings.total_s) : <Elapsed created={dep.created} />} />
           {dep.mode !== "comparison" && <><Metric label={t("dep.build")} value={seconds(dep.timings.build_s)} /><Metric label={t("dep.deploy")} value={seconds(dep.timings.deploy_s)} /></>}
           <Metric label={t("dep.aiCost")} value={`₩${dep.ai_cost.krw}`} hint={t("dep.calls", { n: dep.ai_cost.calls })} />
           <Badge status={dep.status} />
@@ -180,7 +188,7 @@ function statusLine(d: Deployment, t: T) {
   return t("dep.failed");
 }
 
-function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Metric({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
   return (
     <div className="text-right">
       <div className="text-[11px] uppercase tracking-wide text-muted">{label}</div>

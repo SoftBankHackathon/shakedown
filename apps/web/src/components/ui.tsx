@@ -1,6 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { formatSeconds } from "@/lib/api";
 import { useT } from "@/components/i18n";
 
 const STATUS_STYLE: Record<string, string> = {
@@ -71,4 +72,14 @@ export function Spinner({ className = "" }: { className?: string }) {
 
 export function Chip({ children }: { children: ReactNode }) {
   return <span className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-0.5 text-xs text-muted">{children}</span>;
+}
+
+/** Running clock. Only this element re-renders every tick, not the whole page. */
+export function Elapsed({ created }: { created: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(timer);
+  }, []);
+  return <>{formatSeconds(Math.max(0, now / 1000 - created))}</>;
 }
