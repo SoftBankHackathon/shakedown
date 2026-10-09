@@ -204,6 +204,8 @@ export type ImagePlan = {
   source: "existing" | "rule" | "ai-fallback";
   template: string;
   fallback_reason?: string;
+  fallback_diagnostic?: { code: string; stage: "rule_generation"; message: string; details: Record<string, unknown> };
+  prompt_version?: string;
   dockerfile: string;
   runtime?: string;
   entrypoint?: string;

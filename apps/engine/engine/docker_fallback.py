@@ -31,7 +31,7 @@ def build_facts(context, analysis, options):
         try:
             data=json.loads(read(manifest))
             facts['npm']={key:sorted(data.get(key,{}))[:100] for key in ('scripts','dependencies','devDependencies') if isinstance(data.get(key,{}),dict)}
-        except (BuildError,ValueError,TypeError): pass
+        except (BuildError,ValueError,TypeError,AttributeError): pass
     requirements=context/'requirements.txt'
     if requirements.is_file():
         facts['python_dependencies']=re.findall(r'(?m)^([A-Za-z][A-Za-z0-9_.-]*)',read(requirements))[:100]

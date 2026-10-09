@@ -18,6 +18,13 @@ from engine.analyzer import ImageRepoAnalyzer
 class BuildError(ValueError):
     pass
 
+class RuleFailure(BuildError):
+    """Machine-readable local diagnosis; never includes file contents or process logs."""
+    def __init__(self, code, message, **details):
+        super().__init__(message)
+        self.diagnostic = dict(code=code, stage='rule_generation', message=message, details=details)
+
+
 class PlanRequest(Model):
     use_ai: bool = True
     runtime: str | None = Field(default=None,max_length=16)
@@ -66,7 +73,7 @@ def rule_plan(context, analysis, options=None):
         return dict(source='existing',template='existing',dockerfile=read(context/'Dockerfile'),warnings=['기존 Dockerfile을 사용합니다. 저장소 코드는 빌드 중 실행됩니다.'])
     stack=analysis.stack
     template= {'spring-boot-gradle':'spring-gradle','spring-boot-maven':'spring-maven','express':'node-npm','nextjs':'node-npm','fastapi':'fastapi'}.get(stack)
-    if not template: raise BuildError('자동 생성은 Spring Boot(Gradle/Maven), npm start가 있는 Node, FastAPI를 지원합니다. 이 앱에는 Dockerfile을 직접 추가하세요.')
+    if not template: raise RuleFailure('UNSUPPORTED_STACK', '감지된 스택에 대응하는 규칙 템플릿이 없습니다.', detected_stack=stack)
     version=options.runtime or (str(analysis.java_version) if analysis.java_version else None)
     entry=options.entrypoint
     warnings=[]
@@ -74,33 +81,36 @@ def rule_plan(context, analysis, options=None):
     port=analysis.port
     if template.startswith('spring-'):
         version=version or '21'
-        if version not in {'17','21'}: raise BuildError('현재 Java 17 또는 21 템플릿을 지원합니다. 런타임을 확인하세요.')
+        if version not in {'17','21'}: raise RuleFailure('UNSUPPORTED_RUNTIME', '현재 Java 17 또는 21 템플릿을 지원합니다. 런타임을 확인하세요.', runtime='java', requested=version, supported=['17','21'])
         if template=='spring-gradle':
-            for path in ('gradlew','gradle/wrapper/gradle-wrapper.jar','gradle/wrapper/gradle-wrapper.properties'):
-                if not (context/path).is_file() or (context/path).is_symlink(): raise BuildError('Gradle Wrapper 파일이 필요합니다.')
+            missing=[path for path in ('gradlew','gradle/wrapper/gradle-wrapper.jar','gradle/wrapper/gradle-wrapper.properties')
+                     if not (context/path).is_file() or (context/path).is_symlink()]
+            if missing: raise RuleFailure('MISSING_GRADLE_WRAPPER', 'Gradle Wrapper 파일이 필요합니다.', missing_files=missing)
             build=f'FROM --platform=$BUILDPLATFORM eclipse-temurin:{version}-jdk AS build\nWORKDIR /src\nCOPY . .\nRUN chmod +x gradlew && ./gradlew --no-daemon bootJar\nRUN mkdir /out && find build/libs -maxdepth 1 -name "*.jar" ! -name "*-plain.jar" -exec cp {{}} /out/ \\; && test "$(find /out -name "*.jar" | wc -l)" -eq 1 && mv /out/*.jar /app.jar\n'
         else:
             build=f'FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-{version} AS build\nWORKDIR /src\nCOPY . .\nRUN mvn -B -DskipTests package\nRUN mkdir /out && find target -maxdepth 1 -name "*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" -exec cp {{}} /out/ \\; && test "$(find /out -name "*.jar" | wc -l)" -eq 1 && mv /out/*.jar /app.jar\n'
         dockerfile=build+f'FROM eclipse-temurin:{version}-jre\nWORKDIR /app\nCOPY --from=build --chown=10001:10001 /app.jar /app/app.jar\nUSER 10001:10001\nEXPOSE {port}\nENTRYPOINT ["java", "-XX:MaxRAMPercentage=70", "-jar", "/app/app.jar"]\n'
     elif template=='node-npm':
         version=version or '22'
-        if version not in {'22','24'}: raise BuildError('Node 런타임은 22 또는 24를 선택하세요.')
+        if version not in {'22','24'}: raise RuleFailure('UNSUPPORTED_RUNTIME', 'Node 런타임은 22 또는 24를 선택하세요.', runtime='node', requested=version, supported=['22','24'])
         try: package=json.loads(read(context/'package.json'))
-        except (ValueError,TypeError): raise BuildError('package.json을 읽을 수 없습니다.') from None
-        if not package.get('scripts',{}).get('start'): raise BuildError('package.json에 start 스크립트가 필요합니다.')
-        if package.get('workspaces') or (context/'pnpm-lock.yaml').exists() or (context/'yarn.lock').exists(): raise BuildError('워크스페이스·pnpm·Yarn은 기존 Dockerfile을 사용하세요.')
-        if not (context/'package-lock.json').is_file(): raise BuildError('재현 가능한 npm 빌드를 위해 package-lock.json이 필요합니다.')
+        except (ValueError,TypeError): raise RuleFailure('INVALID_MANIFEST', 'package.json을 읽을 수 없습니다.', file='package.json') from None
+        if not isinstance(package,dict) or not isinstance(package.get('scripts',{}),dict):
+            raise RuleFailure('INVALID_MANIFEST', 'package.json 객체 형식을 확인하세요.', file='package.json')
+        if not package.get('scripts',{}).get('start'): raise RuleFailure('MISSING_START_SCRIPT', 'package.json에 start 스크립트가 필요합니다.', file='package.json', required_script='start')
+        if package.get('workspaces') or (context/'pnpm-lock.yaml').exists() or (context/'yarn.lock').exists(): raise RuleFailure('UNSUPPORTED_PACKAGE_LAYOUT', '워크스페이스·pnpm·Yarn은 규칙 템플릿에서 지원하지 않습니다.', workspaces=bool(package.get('workspaces')), lockfiles=[name for name in ('pnpm-lock.yaml','yarn.lock') if (context/name).is_file()])
+        if not (context/'package-lock.json').is_file(): raise RuleFailure('MISSING_LOCKFILE', '재현 가능한 npm 빌드를 위해 package-lock.json이 필요합니다.', missing_files=['package-lock.json'], package_manager='npm')
         dockerfile=f'FROM node:{version}-bookworm-slim\nWORKDIR /app\nCOPY --chown=node:node . .\nRUN npm ci && npm run build --if-present && chown -R node:node /app\nENV NODE_ENV=production\nENV PORT={port}\nUSER node\nEXPOSE {port}\nCMD ["npm", "start"]\n'
     else:
         version=version or '3.12'
-        if version not in {'3.12','3.13'}: raise BuildError('Python 런타임은 3.12 또는 3.13을 선택하세요.')
-        if not (context/'requirements.txt').is_file(): raise BuildError('FastAPI 템플릿에는 requirements.txt가 필요합니다.')
+        if version not in {'3.12','3.13'}: raise RuleFailure('UNSUPPORTED_RUNTIME', 'Python 런타임은 3.12 또는 3.13을 선택하세요.', runtime='python', requested=version, supported=['3.12','3.13'])
+        if not (context/'requirements.txt').is_file(): raise RuleFailure('MISSING_DEPENDENCY_MANIFEST', 'FastAPI 템플릿에는 requirements.txt가 필요합니다.', missing_files=['requirements.txt'])
         choices=python_apps(context)
         if not entry and len(choices)==1: entry=choices[0]
-        if not entry or not re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*',entry): raise BuildError('FastAPI 실행 대상을 지정하세요. 예: main:app')
-        if entry not in choices: raise BuildError('실제 FastAPI 인스턴스와 일치하는 실행 대상을 지정하세요.')
+        if not entry or not re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*',entry): raise RuleFailure('UNRESOLVED_ENTRYPOINT', 'FastAPI 실행 대상을 지정하세요. 예: main:app', candidates=choices, requested=entry)
+        if entry not in choices: raise RuleFailure('ENTRYPOINT_MISMATCH', '실제 FastAPI 인스턴스와 일치하는 실행 대상을 지정하세요.', candidates=choices, requested=entry)
         requirements=read(context/'requirements.txt')
-        if not re.search(r'(?mi)^uvicorn(?:\[.*?\])?\s*(?:[=<>~!]|$)',requirements): raise BuildError('requirements.txt에 uvicorn을 추가하세요.')
+        if not re.search(r'(?mi)^uvicorn(?:\[.*?\])?\s*(?:[=<>~!]|$)',requirements): raise RuleFailure('MISSING_RUNTIME_DEPENDENCY', 'requirements.txt에 uvicorn을 추가하세요.', file='requirements.txt', missing_dependencies=['uvicorn'])
         dockerfile=f'FROM python:{version}-slim\nWORKDIR /app\nCOPY . .\nRUN pip install --no-cache-dir -r requirements.txt\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\nUSER 10001:10001\nEXPOSE {port}\nCMD '+json.dumps(['python','-m','uvicorn',entry,'--host','0.0.0.0','--port',str(port)])+'\n'
     warnings+=['이미지 빌드 성공은 앱 실행·DB 연결 성공을 뜻하지 않습니다. 배포 시 별도 헬스체크를 확인하세요.', '빌드에는 저장소의 스크립트가 실행됩니다. 신뢰하는 저장소를 사용하세요.']
     if not options.runtime: warnings.append(f'런타임 {version}을 선택했습니다. 프로젝트 요구 버전과 일치하는지 확인하세요.')
@@ -119,10 +129,14 @@ def make_plan(context, analysis, options=None, llm=None):
             raise BuildError(f'{exc} 규칙으로 생성하지 못했습니다. API 설정에서 Claude를 연결하면 자동으로 보완합니다.') from None
         from engine.docker_fallback import build_facts, validate_dockerfile
         facts = build_facts(context, analysis, options)
-        suggestion = llm.suggest(facts)
+        from engine.image_prompt import build_request
+        diagnostic = getattr(exc, 'diagnostic', dict(code='UNREADABLE_BUILD_INPUT', stage='rule_generation',
+                                                      message=str(exc), details={}))
+        request = build_request(facts, diagnostic)
+        suggestion = llm.suggest(request)
         dockerfile = validate_dockerfile(suggestion.get('dockerfile'), context)
         return dict(source='ai-fallback', template='llm', dockerfile=dockerfile,
-                    fallback_reason=str(exc), warnings=[
+                    fallback_reason=str(exc), fallback_diagnostic=diagnostic, prompt_version=request['schema_version'], warnings=[
                         '규칙으로 생성하지 못해 Claude를 1회 호출했습니다.',
                         'Dockerfile 구문·빌드 정책 검사를 통과했습니다. 실행 안전성이나 앱 동작을 보장하는 검사는 아닙니다.',
                         '생성 내용을 검토한 뒤 신뢰하는 소스만 빌드하세요. 이미지 생성과 앱 실행 검증은 별개입니다.'])

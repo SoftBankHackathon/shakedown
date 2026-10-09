@@ -152,3 +152,19 @@ API:
 - `GET /api/image-builds/{id}`: queued/building/built/failed
 
 이 UI는 기존 loopback 전용 엔진의 개발용 설정 화면입니다. 공개 멀티유저 서비스용 인증·사용자별 키 격리·영구 Secret Store는 이번 구현 범위가 아닙니다.
+
+
+### Fallback 프롬프트 규격
+
+`engine/image_prompt.py`에서 고정 지침과 `dockerfile-fallback.v1` 요청 형식을 관리합니다. 규칙 검사 중 **처음 중단된 원인**을 엔진이 진단하며, 실제 Docker 빌드 로그를 분석한 결과나 전체 문제 목록은 아닙니다. 오류 문장을 다시 파싱하지 않고 각 규칙이 코드와 상세 정보를 생성합니다.
+
+- `failure`: code, stage (`rule_generation`), message, details (누락 파일/의존성, 요청·지원 런타임, 실행 후보 등)
+- `project`: 제한된 파일 목록, 스택, 포트, 실행 대상, 의존성·스크립트 이름
+- `constraints`: 검증기와 공유하는 허용 지시문/공식 이미지, COPY·USER·명령 제약
+- `response_schema`: 정확히 `{"dockerfile": "..."}` 또는 `{"dockerfile": null}`
+
+진단 코드는 `UNSUPPORTED_STACK`, `UNSUPPORTED_RUNTIME`, `MISSING_GRADLE_WRAPPER`, `INVALID_MANIFEST`, `MISSING_START_SCRIPT`, `UNSUPPORTED_PACKAGE_LAYOUT`, `MISSING_LOCKFILE`, `MISSING_DEPENDENCY_MANIFEST`, `UNRESOLVED_ENTRYPOINT`, `ENTRYPOINT_MISMATCH`, `MISSING_RUNTIME_DEPENDENCY`, `UNREADABLE_BUILD_INPUT`입니다.
+
+예: npm lockfile 누락 시 `failure.code=MISSING_LOCKFILE`, `failure.details={"missing_files":["package-lock.json"],"package_manager":"npm"}`을 전달합니다. 고정 지침은 누락 파일을 있다고 가정하거나 임의의 의존성/실행 대상을 만들지 말고, 근거가 부족하면 null을 반환하도록 요구합니다. 이 지침 준수와 실제 앱 동작을 정적 검사만으로 보장하지는 않습니다. 원본 코드/README/환경값/명령 로그는 요청에 넣지 않습니다.
+
+계획 응답에 `fallback_diagnostic`과 `prompt_version`을 포함해 어떤 진단과 규격으로 생성했는지 확인할 수 있습니다. 프롬프트 본문이나 키를 별도 로그로 저장하지 않습니다.

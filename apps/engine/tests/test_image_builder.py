@@ -90,8 +90,10 @@ def test_unknown_stack_automatically_calls_once_with_facts(tmp_path):
     (tmp_path/'requirements.txt').write_text('flask==3.0.0')
     (tmp_path/'app.py').write_text('from flask import Flask\napp=Flask(__name__)')
     calls=[]
-    def suggest(facts):
-        calls.append(facts)
+    def suggest(request):
+        facts=request['project']
+        assert request['failure']['code']=='UNSUPPORTED_STACK'
+        calls.append(request)
         assert 'TOP_SECRET' not in json.dumps(facts) and '.env' not in facts['files']
         assert facts['python_apps'][0]['framework']=='Flask'
         return {'dockerfile':FALLBACK_FILE}
@@ -276,3 +278,67 @@ def test_ai_copy_stage_must_be_previous(tmp_path):
     valid='FROM node:22 AS build\nWORKDIR /app\nCOPY . .\nFROM node:22\nCOPY --from=build /app /app\nUSER node\nCMD ["node","/app/main.js"]\n'
     assert validate_dockerfile(valid,tmp_path)==valid
     with pytest.raises(BuildError):validate_dockerfile(valid.replace('--from=build','--from=1'),tmp_path)
+
+
+def test_missing_lockfile_diagnosis_reaches_provider(tmp_path):
+    from engine.image_prompt import SCHEMA_VERSION, INSTRUCTIONS
+    (tmp_path/'package.json').write_text(json.dumps({'scripts':{'start':'node app.js # SECRET_SCRIPT'},'dependencies':{'express':'5'}}))
+    (tmp_path/'README.md').write_text('SECRET_README')
+    (tmp_path/'.env').write_text('PASSWORD=SECRET_ENV')
+    payloads=[]
+    def reply(request):
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200,json={'stop_reason':'end_turn','content':[{'type':'text','text':json.dumps({'dockerfile':None})}]})
+    connection=LlmConnection(httpx.MockTransport(reply));connection.key='test';connection.model='test'
+    with pytest.raises(BuildError):make_plan(tmp_path,analysis('express',None),llm=connection)
+    assert len(payloads)==1
+    prompt=payloads[0]['messages'][0]['content']
+    assert prompt.startswith(INSTRUCTIONS)
+    request=json.loads(prompt[len(INSTRUCTIONS):])
+    assert request['schema_version']==SCHEMA_VERSION
+    assert request['failure']=={'code':'MISSING_LOCKFILE','stage':'rule_generation',
+        'message':'재현 가능한 npm 빌드를 위해 package-lock.json이 필요합니다.',
+        'details':{'missing_files':['package-lock.json'],'package_manager':'npm'}}
+    assert request['project']['npm']['scripts']==['start']
+    assert not any(secret in prompt for secret in ('SECRET_SCRIPT','SECRET_README','SECRET_ENV'))
+    assert request['constraints']['final_user']=='non-root'
+    assert request['response_schema']['required']==['dockerfile']
+
+
+def test_wrapper_failure_reports_all_missing_files(gradle):
+    from engine.image_builder import rule_plan, RuleFailure
+    (gradle/'gradlew').unlink();(gradle/'gradle/wrapper/gradle-wrapper.jar').unlink()
+    with pytest.raises(RuleFailure) as error:rule_plan(gradle,analysis())
+    assert error.value.diagnostic['code']=='MISSING_GRADLE_WRAPPER'
+    assert error.value.diagnostic['details']['missing_files']==['gradlew','gradle/wrapper/gradle-wrapper.jar']
+
+
+def test_ambiguous_entrypoint_diagnosis_lists_candidates(tmp_path):
+    from engine.image_builder import rule_plan, RuleFailure
+    (tmp_path/'requirements.txt').write_text('fastapi\nuvicorn\n')
+    for name in ('main','other'):(tmp_path/(name+'.py')).write_text('from fastapi import FastAPI\napp=FastAPI()')
+    with pytest.raises(RuleFailure) as error:rule_plan(tmp_path,analysis('fastapi',None))
+    assert error.value.diagnostic['code']=='UNRESOLVED_ENTRYPOINT'
+    assert error.value.diagnostic['details']['candidates']==['main:app','other:app']
+
+
+def test_runtime_failure_preserves_requested_and_supported(gradle):
+    from engine.image_builder import rule_plan, RuleFailure
+    with pytest.raises(RuleFailure) as error:rule_plan(gradle,analysis(java=25))
+    assert error.value.diagnostic['details']=={'runtime':'java','requested':'25','supported':['17','21']}
+
+
+@pytest.mark.parametrize('manifest',['[]','{"scripts":[]}'])
+def test_malformed_manifest_is_structured_failure(tmp_path,manifest):
+    from engine.image_builder import rule_plan, RuleFailure
+    (tmp_path/'package.json').write_text(manifest)
+    with pytest.raises(RuleFailure) as error:rule_plan(tmp_path,analysis('express',None))
+    assert error.value.diagnostic['code']=='INVALID_MANIFEST'
+
+
+@pytest.mark.parametrize('output',[{}, {'dockerfile':123}, {'dockerfile':None,'extra':'unexpected'}, []])
+def test_provider_response_must_match_prompt_schema(output):
+    connection=LlmConnection(httpx.MockTransport(lambda _:httpx.Response(200,json={
+        'stop_reason':'end_turn','content':[{'type':'text','text':json.dumps(output)}]})))
+    connection.key='test';connection.model='test'
+    with pytest.raises(LlmError):connection.suggest({})

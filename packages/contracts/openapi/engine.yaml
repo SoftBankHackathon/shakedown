@@ -305,6 +305,17 @@ paths:
                     - existing
                     - rule
                     - ai-fallback
+                  prompt_version:
+                    type: string
+                    const: dockerfile-fallback.v1
+                  fallback_diagnostic:
+                    type: object
+                    required: [code, stage, message, details]
+                    properties:
+                      code: { type: string }
+                      stage: { type: string, const: rule_generation }
+                      message: { type: string }
+                      details: { type: object, additionalProperties: true }
                   fallback_reason:
                     type: string
                     description: 규칙 생성 실패로 AI를 호출한 이유
