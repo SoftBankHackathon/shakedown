@@ -30,6 +30,9 @@ TARGETS = {
     'gcp': dict(label='GCP Cloud Run', replicas=(1, 2), sticky=True, replicas_default=2, tz='UTC'),
 }
 CLOUDS = ('aws', 'azure', 'gcp')
+# 차단 뒤 env를 바꿔 같은 이미지로 다시 배포할 수 있는 클라우드. AWS는 같은 경로를 타지만 실계정에서
+# 재배포(새 배포 ID로 ECS 서비스 재생성)를 아직 검증하지 않아서, 검증 전까지는 수정안을 제안만 한다.
+ENV_FIX_TARGETS = {'gcp'}
 VERDICT_RANK = ('PASS', 'WARN', 'BLOCKED')
 
 class Endpoint(Model):
@@ -320,7 +323,9 @@ class DeploymentStore:
             # The shakedown runner compares one candidate at a time, so each cloud gets its own run against the baseline.
             candidates = [Endpoint(name=t, url=d['targets'][t]['url']) for t in others] or ([comparison] if comparison else [])
             if candidates:
-                results = self.compare(d, Endpoint(name=baseline, url=d['targets'][baseline]['url']), candidates, project)
+                # 외부 비교 URL은 엔진이 배포한 게 아니라서 env를 바꿀 수 없다. 엔진이 Local과 함께 배포한 클라우드 하나만 자동 수정 대상이다.
+                results = self.compare(d, Endpoint(name=baseline, url=d['targets'][baseline]['url']), candidates, project,
+                                       can_apply_env=len(others) == 1 and others[0] in ENV_FIX_TARGETS)
                 # Close only the managed clouds that failed; with an external comparison the deployed side is judged.
                 failed = {name for name, result in results.items() if result == 'BLOCKED'}
                 if comparison and failed: failed = set(submitted)
@@ -358,7 +363,7 @@ class DeploymentStore:
         finally:
             d['finished'] = time.time(); d['timings']['total_s'] = d['finished'] - d['created']; self.save(d)
 
-    def compare(self, d, baseline, candidates, project):
+    def compare(self, d, baseline, candidates, project, can_apply_env=False):
         """Run one shakedown per candidate against the same baseline. Returns {candidate: PASS|WARN|BLOCKED}."""
         if any(baseline.url == c.url for c in candidates):
             raise DeploymentError('Cannot compare an environment with itself.')
@@ -372,7 +377,7 @@ class DeploymentStore:
         self.save(d)
         results, verdicts, reports = {}, {}, {}
         for candidate in candidates:
-            verdicts[candidate.name], reports[candidate.name] = self.shakedown_one(d, attempt, baseline, candidate, project)
+            verdicts[candidate.name], reports[candidate.name] = self.shakedown_one(d, attempt, baseline, candidate, project, can_apply_env)
             results[candidate.name] = verdicts[candidate.name]['status']
         worst = max(results, key=lambda name: VERDICT_RANK.index(results[name]))
         attempt['verdict'] = verdicts[worst]
@@ -383,11 +388,15 @@ class DeploymentStore:
         d['traffic_blocked'] = False
         return results
 
-    def shakedown_one(self, d, attempt, baseline, candidate, project):
+    def shakedown_one(self, d, attempt, baseline, candidate, project, can_apply_env=False):
         """One baseline/candidate run. Its rows are appended to the attempt (each row names its candidate)."""
         prior = list(attempt['steps'])
+        hints = {'uses_server_session': project.analysis.uses_server_session}
+        if can_apply_env:
+            # 시운전은 이 힌트가 있을 때만 env 수정안을 자동 적용 가능(auto_applicable)으로 표시한다.
+            hints['can_apply_env'] = True
         body = dict(deployment_id=d['id'], project_id=project.id, baseline=baseline.model_dump(),
-                    candidates=[candidate.model_dump()], hints={'uses_server_session': project.analysis.uses_server_session})
+                    candidates=[candidate.model_dump()], hints=hints)
         started = time.monotonic()
         state = self.shakedown.call('POST', '/shakedowns', body)
         id = state.get('shakedown_id', '')
