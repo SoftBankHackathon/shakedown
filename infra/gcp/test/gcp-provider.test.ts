@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { GcpProvider } from '../src/gcp-provider.js';
 import { CloudRun, type RunJob, type RunService } from '../src/cloud-run.js';
 import { configSchema } from '../src/config.js';
-import { requestSchema, type DeployRequest } from '../src/model.js';
+import { GcpError } from '../src/gcp-http.js';
+import { requestSchema, type DeployRequest, type LogLine } from '../src/model.js';
 
 const config = configSchema.parse({
   gcpProject: 'shakedown-511106', gcpProjectNumber: '700410260240', region: 'asia-northeast3',
@@ -31,8 +32,22 @@ class FakeRun extends CloudRun {
   readyPatch: Partial<RunService> = {};  // 준비 완료 상태의 일부 칸을 덮어써 "아직 준비 안 됨"을 흉내 낸다
   jobError: Error | undefined;
   constructor() { super(async () => { throw new Error('real HTTP is not allowed in tests'); }, config); }
+  instances: number[] = [];
+  revoke: Promise<void> = Promise.resolve();  // setPublic(false)를 이 약속이 풀릴 때까지 붙잡는다
+  revokeError: Error | undefined;
+  logLines: LogLine[] = [];
+  logError: Error | undefined;
+  since: string | undefined;
+  revision: string | undefined;
+  override async setInstances(count: number) { this.actions.push(`setInstances:${count}`); this.instances.push(count); }
+  override async readLogs(revision: string, since: string | undefined) { this.revision = revision; this.since = since; if (this.logError) throw this.logError; return this.logLines; }
+  project = { name: 'projects/700410260240', projectId: 'shakedown-511106' };
+  override async getProject() { return this.project; }
   override async getService() { this.actions.push('getService'); return this.current; }
-  override async setPublic(open: boolean) { this.actions.push(`setPublic:${open}`); }
+  override async setPublic(open: boolean) {
+    this.actions.push(`setPublic:${open}`);
+    if (!open) { await this.revoke; if (this.revokeError) throw this.revokeError; }
+  }
   override async runSchemaJob(job: RunJob) { this.actions.push('runSchemaJob'); this.jobs.push(job); if (this.jobError) throw this.jobError; }
   override async putService(service: RunService) {
     this.actions.push('putService'); this.services.push(service);
@@ -86,9 +101,9 @@ test('service template uses manual scaling, VPC egress, container port and a sec
   assert.deepEqual(service.scaling, { scalingMode: 'MANUAL', manualInstanceCount: 2 });
   assert.equal(service.template.sessionAffinity, false);
   assert.equal(service.invokerIamDisabled, false);
-  const env = Object.fromEntries((container.env ?? []).map(e => [e.name, e]));
   // 배포마다 리비전 이름을 정해 둬야 그 배포의 앱 로그만 골라 읽을 수 있다(서비스 이름으로 시작, 63자 이하).
   assert.equal(service.template.revision, 'shakedown-board-' + createHash('sha256').update('dep_test').digest('hex').slice(0, 12));
+  const env = Object.fromEntries((container.env ?? []).map(e => [e.name, e]));
   assert.equal(env.SPRING_DATASOURCE_URL.value, 'jdbc:postgresql://10.20.0.3:5432/board_db');
   assert.equal(env.SPRING_DATASOURCE_USERNAME.value, 'board');
   assert.equal(env.SPRING_JPA_HIBERNATE_DDL_AUTO.value, 'validate');
@@ -161,4 +176,89 @@ test('HTTP 500 from the health path is not success', async () => {
   const { run, provider } = setup(500);
   await assert.rejects(provider.deploy(input(), AbortSignal.timeout(50), () => {}));
   assert.ok(run.actions.includes('fetch'));
+});
+
+test('verifyProject accepts the configured project and rejects a different one', async () => {
+  const { run, provider } = setup();
+  await provider.verifyProject();
+  run.project = { name: 'projects/700410260240', projectId: 'other-project-1' };
+  await assert.rejects(provider.verifyProject(), /프로젝트 ID와 번호/);
+  run.project = { name: 'projects/111111111111', projectId: 'shakedown-511106' };
+  await assert.rejects(provider.verifyProject(), /프로젝트 ID와 번호/);
+});
+
+const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('stop sets 0 instances, confirms the public URL stops answering, then revokes access without waiting for it', async () => {
+  const { run, requests, provider } = setup(200, 503);
+  let release!: () => void; run.revoke = new Promise(resolve => { release = resolve; });
+  const lines: string[] = [];
+  await provider.stop(line => lines.push(line));
+  await settle();
+  assert.deepEqual(run.actions, ['getService', 'setInstances:0', 'fetch', 'fetch', 'setPublic:false']);
+  assert.equal(requests[0].url, PUBLIC_URL);
+  assert.equal(requests[0].init?.redirect, 'manual');
+  assert.ok(!lines.some(l => l.includes('revoked')));
+  release(); await settle();
+  assert.ok(lines.includes('public access revoked: allUsers removed'));
+});
+
+test('stop fails when the public URL keeps answering 2xx/3xx, and still revokes access', async () => {
+  const { run, provider } = setup(302); provider.stopWaitMs = 50;
+  await assert.rejects(provider.stop(() => {}), /닫히지 않았습니다/);
+  await settle();
+  assert.ok(run.actions.includes('setPublic:false'));
+});
+
+test('a failed access revoke is logged instead of thrown', async () => {
+  const { run, provider } = setup(503); run.revokeError = new Error('IAM denied');
+  const lines: string[] = [];
+  await provider.stop(line => lines.push(line));
+  await settle();
+  assert.ok(lines.includes('public access revoke failed: IAM denied'));
+});
+
+test('settled waits until the background access revoke has finished', async () => {
+  const { run, provider } = setup(503);
+  let release!: () => void; run.revoke = new Promise(resolve => { release = resolve; });
+  await provider.stop(() => {});
+  let done = false;
+  const waiting = provider.settled().then(() => { done = true; });
+  await settle();
+  assert.equal(done, false);
+  release(); await waiting;
+  assert.equal(done, true);
+});
+
+test('stop does nothing when the service does not exist', async () => {
+  const { run, provider } = setup(); run.current = undefined;
+  await provider.stop(() => {});
+  assert.deepEqual(run.actions, ['getService']);
+});
+
+test('a deploy right after stop waits until the access revoke has finished', async () => {
+  const { run, provider } = setup(503, 200);
+  let release!: () => void; run.revoke = new Promise(resolve => { release = resolve; });
+  await provider.stop(() => {});
+  await settle();
+  const mark = run.actions.length;
+  const deploying = provider.deploy(input(), AbortSignal.timeout(2_000), () => {});
+  await settle();
+  assert.equal(run.actions.length, mark);
+  release();
+  await deploying;
+  assert.deepEqual(run.actions.slice(mark, mark + 2), ['getService', 'setPublic:true']);
+});
+
+test('appLogs returns Cloud Logging lines and hides only the read quota error', async () => {
+  const { run, provider } = setup();
+  run.logLines = [{ ts: '2026-10-09T00:00:01.000Z', source: 'app', line: 'started' }];
+  assert.deepEqual(await provider.appLogs('dep_test', '2026-10-09T00:00:00.000Z'), run.logLines);
+  assert.equal(run.since, '2026-10-09T00:00:00.000Z');
+  // 서비스 전체가 아니라 그 배포가 만든 리비전의 로그만 읽는다(이전·다음 배포 로그가 섞이지 않게).
+  assert.equal(run.revision, 'shakedown-board-' + createHash('sha256').update('dep_test').digest('hex').slice(0, 12));
+  run.logError = new GcpError(429, 'Cloud Logging entries.list failed: HTTP 429');
+  assert.deepEqual(await provider.appLogs('dep_test'), []);
+  run.logError = new GcpError(403, 'Cloud Logging entries.list failed: HTTP 403');
+  await assert.rejects(provider.appLogs('dep_test'), (e: unknown) => e instanceof GcpError && e.status === 403);
 });

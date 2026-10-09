@@ -158,12 +158,12 @@ test('readLogs asks for the newest 50 service lines and returns them oldest firs
     { timestamp: '2026-10-09T00:00:02Z', httpRequest: { status: 200 } },
     { timestamp: '2026-10-09T00:00:01Z', jsonPayload: { message: 'first', level: 'INFO' } },
   ] } });
-  const lines = await run.readLogs('2026-10-09T00:00:00.000Z', signal);
+  const lines = await run.readLogs('shakedown-board-0123456789ab', '2026-10-09T00:00:00.000Z', signal);
   assert.equal(calls[0].method, 'POST');
   assert.equal(calls[0].url, 'https://logging.googleapis.com/v2/entries:list');
   assert.deepEqual(calls[0].body, {
     resourceNames: ['projects/shakedown-511106'],
-    filter: 'resource.type="cloud_run_revision" AND resource.labels.service_name="shakedown-board" AND timestamp>="2026-10-09T00:00:00.000Z"',
+    filter: 'resource.type="cloud_run_revision" AND resource.labels.service_name="shakedown-board" AND resource.labels.revision_name="shakedown-board-0123456789ab" AND timestamp>="2026-10-09T00:00:00.000Z"',
     orderBy: 'timestamp desc', pageSize: 50,
   });
   assert.deepEqual(lines, [
@@ -174,11 +174,17 @@ test('readLogs asks for the newest 50 service lines and returns them oldest firs
 
 test('readLogs without since does not filter by time', async () => {
   const { run, calls } = fake({ status: 200, data: {} });
-  assert.deepEqual(await run.readLogs(undefined, signal), []);
-  assert.equal((calls[0].body as { filter: string }).filter, 'resource.type="cloud_run_revision" AND resource.labels.service_name="shakedown-board"');
+  assert.deepEqual(await run.readLogs('shakedown-board-0123456789ab', undefined, signal), []);
+  assert.equal((calls[0].body as { filter: string }).filter, 'resource.type="cloud_run_revision" AND resource.labels.service_name="shakedown-board" AND resource.labels.revision_name="shakedown-board-0123456789ab"');
 });
 
 test('readLogs turns the read quota error into GcpError 429', async () => {
   const { run } = fake({ status: 429, data: { error: { status: 'RESOURCE_EXHAUSTED' } } });
-  await assert.rejects(run.readLogs(undefined, signal), (e: unknown) => e instanceof GcpError && e.status === 429);
+  await assert.rejects(run.readLogs('shakedown-board-0123456789ab', undefined, signal), (e: unknown) => e instanceof GcpError && e.status === 429);
+});
+
+test('getProject reads Resource Manager v3 by project number', async () => {
+  const { run, calls } = fake({ status: 200, data: { name: 'projects/700410260240', projectId: 'shakedown-511106' } });
+  assert.deepEqual(await run.getProject(signal), { name: 'projects/700410260240', projectId: 'shakedown-511106' });
+  assert.deepEqual([calls[0].method, calls[0].url], ['GET', 'https://cloudresourcemanager.googleapis.com/v3/projects/700410260240']);
 });

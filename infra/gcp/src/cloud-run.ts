@@ -5,6 +5,7 @@ import type { Http } from './gcp-http.js';
 import { ok } from './gcp-http.js';
 
 const RUN = 'https://run.googleapis.com/v2';
+const RESOURCE_MANAGER = 'https://cloudresourcemanager.googleapis.com/v3';
 const LOGGING = 'https://logging.googleapis.com/v2';
 const INVOKER = 'roles/run.invoker';
 const PUBLIC = 'allUsers';
@@ -38,6 +39,8 @@ export type RunJob = {
 type Execution = { name: string; completionTime?: string; taskCount?: number; succeededCount?: number; failedCount?: number; cancelledCount?: number };
 
 type LogEntry = { timestamp?: string; textPayload?: string; jsonPayload?: { message?: unknown } };
+
+export type RunProject = { name: string; projectId: string };
 
 export class CloudRun {
   constructor(private http: Http, private config: Config) {}
@@ -107,10 +110,12 @@ export class CloudRun {
     }
   }
 
-  async readLogs(since: string | undefined, signal: AbortSignal): Promise<LogLine[]> {
+  // 한 리비전(= 한 배포)의 앱 로그만 읽는다. 서비스는 배포마다 같아서 서비스 이름만으로 거르면 다른 배포의 로그가 섞인다.
+  async readLogs(revision: string, since: string | undefined, signal: AbortSignal): Promise<LogLine[]> {
     const c = this.config;
-    // since는 app.ts가 ISO 날짜로 검사하고 다시 만든 값이라 필터 문자열에 그대로 넣어도 안전하다.
-    const filter = [`resource.type="cloud_run_revision"`, `resource.labels.service_name="${c.serviceName}"`, ...(since ? [`timestamp>="${since}"`] : [])].join(' AND ');
+    // since는 app.ts가 ISO 날짜로 검사하고 다시 만든 값이고, revision은 GcpProvider가 해시로 만든 이름이라 필터 문자열에 그대로 넣어도 안전하다.
+    const filter = [`resource.type="cloud_run_revision"`, `resource.labels.service_name="${c.serviceName}"`, `resource.labels.revision_name="${revision}"`,
+      ...(since ? [`timestamp>="${since}"`] : [])].join(' AND ');
     const response = await this.http({ method: 'POST', url: `${LOGGING}/entries:list`, body: { resourceNames: [`projects/${c.gcpProject}`], filter, orderBy: 'timestamp desc', pageSize: 50 }, signal });
     // 한도 초과(429)도 ok()가 GcpError(429)로 던진다. 어떻게 다룰지는 GcpProvider가 정한다.
     const result = ok<{ entries?: LogEntry[] }>(response, 'Cloud Logging entries.list');
@@ -121,6 +126,12 @@ export class CloudRun {
       // 시각 자릿수를 배포 로그(toISOString)와 맞춰야 문자열 정렬이 시간 순서와 같아진다.
       return line === undefined || !entry.timestamp ? [] : [{ ts: new Date(entry.timestamp).toISOString(), source: 'app' as const, line }];
     }).reverse();
+  }
+
+  // v3 Project에는 projectNumber 칸이 없고 name이 "projects/{번호}"다. 문서 예시대로 번호로 조회한다.
+  async getProject(signal: AbortSignal): Promise<RunProject> {
+    const response = await this.http({ method: 'GET', url: `${RESOURCE_MANAGER}/projects/${this.config.gcpProjectNumber}`, signal });
+    return ok<RunProject>(response, 'Resource Manager project get');
   }
 
   // 오래 걸리는 작업(Operation)이 끝날 때까지 기다린다. operations.wait는 일찍 돌아올 수 있다고 문서에 적혀 있어 done이 될 때까지 다시 부른다.
