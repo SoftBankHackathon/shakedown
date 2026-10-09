@@ -74,6 +74,24 @@ bash infra/gcp/scripts/spike.sh "$(cat infra/gcp/.data/image.txt)"
 | f Job + 배포 + 첫 health | 49초 (30 + 19 + 0) | 270초 이하 | 매 배포 유지 |
 
 
+### 배포 API로 실측 (2026-10-09)
+
+배포 API(`npm run dev:gcp`)를 실제 설정으로 띄우고 curl로 직접 불렀습니다. 엔진은 거치지 않았습니다. 요청: replicas 2, `demo,session-memory`, health `/health`, 이미지 `kty-board@sha256:c8002296539f…`.
+
+| 항목 | 기준 | 결과 |
+|---|---|---|
+| POST → ready | 270초 이내 | 54초 (schema-init 27초, 서비스 생성 23초, 권한 1초, health 1초) |
+| ready 응답 | instances 2, run.app 주소 | instances 2, `https://shakedown-board-700410260240.asia-northeast3.run.app` |
+| 공개 주소 /health | 리다이렉트 없이 200 | 200 |
+| 로그 API | deploy·app 줄, 200줄 이하, 비밀 가림 | 전체 59줄 (deploy 13, app 46), 비밀 노출 없음 |
+| DELETE | 20초 이내 204 | 204, 2.6초 |
+| DELETE 뒤 GET / logs | 404 / 200 | 404 / 200 |
+| DELETE 직후 공개 주소 | 200 아님 | 503 (`Service is disabled`) |
+| 공개 주소 403까지 | IAM 반영 보통 2분, 길면 7분 이상 | 10분 안에 403이 되지 않음. 0대인 동안은 503이 계속됨 |
+| IAM 정책의 allUsers | DELETE 뒤 없음 | 없음 (DELETE 뒤 1초에 제거 로그) |
+| 서비스 대수 | manualInstanceCount 0 | 0 |
+| 리비전 이름 지정 재배포 (session-jdbc, 스티키 켬, 1대) | 270초 이내, 그 배포 리비전 로그만 | 54초, `shakedown-board-82fc70c10bba`, 앱 로그 44줄이 그 리비전 시작부터. DELETE 204 2.95초 |
+
 ## 배포 API 실행
 
 엔진이 부르는 GCP 배포 API를 `127.0.0.1:9103`에 띄웁니다. 한 프로세스가 Cloud Run 서비스 하나(설정의 `serviceName`)만 다룹니다.
