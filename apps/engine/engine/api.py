@@ -100,8 +100,11 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
 
     @api.post('/api/projects/{project_id}/architecture-plans/{plan_id}/select')
     def architecture_select(project_id: str, plan_id: str, body: ArchitectureSelection):
-        if api.state.store.get(project_id) is None: raise HTTPException(status_code=404, detail='Project not found.')
-        return api.state.architecture.select(project_id,plan_id,body.template_id)
+        project=api.state.store.get(project_id)
+        if project is None: raise HTTPException(status_code=404, detail='Project not found.')
+        try: return api.state.architecture.select(project,plan_id,body.template_id)
+        except ArchitectureError: raise
+        except Exception: raise ArchitectureError('설계안 선택 전 저장소를 확인하지 못했습니다. 저장소 접근과 설정을 확인하세요.') from None
 
     @api.get('/api/health')
     def health():

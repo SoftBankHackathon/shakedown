@@ -124,7 +124,7 @@ def test_api_plan_selection_persists_without_deployment(client,store,repository)
     assert reopened.latest(project.id)['selected_template']=='medium'
     assert client.get('/api/deployments').json()==[]
     # Plan cannot be selected through another project namespace.
-    with pytest.raises(ArchitectureError):reopened.select('other-project',plan['id'],'medium')
+    with pytest.raises(ArchitectureError):reopened.select(SimpleNamespace(id='other-project'),plan['id'],'medium')
 
 
 def test_missing_inputs_and_undersizing_cannot_be_selected(client,store,repository):
@@ -165,3 +165,29 @@ def test_ai_abstention_not_saved_as_approved_selection(client,store,repository):
     p=client.post(url,json=requirements().model_dump()).json()
     assert p['recommended_template'] is None
     assert client.post(url+'/'+p['id']+'/select',json={'template_id':'small'}).status_code==400
+
+
+def test_changed_analysis_evidence_requires_new_plan(client,store,repository):
+    project=store.create(CreateProjectRequest(repo=str(repository)))
+    client.app.state.llm.disconnect()
+    url=f'/api/projects/{project.id}/architecture-plans'
+    plan=client.post(url,json=requirements().model_dump()).json()
+    (repository/'README.md').write_text('Requires websocket and local disk.')
+    response=client.post(url+'/'+plan['id']+'/select',json={'template_id':'small'})
+    assert response.status_code==400
+    assert '분석 근거가 변경' in response.text
+    assert client.get(url+'/latest').json()['selected_template'] is None
+    fresh=client.post(url,json=requirements().model_dump()).json()
+    assert client.post(url+'/'+fresh['id']+'/select',json={'template_id':'small'}).status_code==200
+
+
+def test_selection_source_failure_is_sanitized(client,store,repository,monkeypatch):
+    project=store.create(CreateProjectRequest(repo=str(repository)))
+    client.app.state.llm.disconnect()
+    url=f'/api/projects/{project.id}/architecture-plans'
+    plan=client.post(url,json=requirements().model_dump()).json()
+    def fail(*args):raise RuntimeError('SECRET')
+    monkeypatch.setattr(client.app.state.architecture.runner,'source',fail)
+    response=client.post(url+'/'+plan['id']+'/select',json={'template_id':'small'})
+    assert response.status_code==400 and 'SECRET' not in response.text
+    assert client.get(url+'/latest').json()['selected_template'] is None

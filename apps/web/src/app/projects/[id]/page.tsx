@@ -206,7 +206,7 @@ export default function ProjectPage() {
         </div>
       </div>
 
-      <ArchitecturePlanner projectId={id} />
+      <ArchitecturePlanner key={id} projectId={id} />
       <ImageBuilder projectId={id} />
 
       <Section title={t("project.deployments")}>

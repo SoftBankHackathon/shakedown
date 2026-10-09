@@ -171,7 +171,19 @@ class ArchitecturePlanner:
         with self.connect() as db:row=db.execute('SELECT payload FROM architecture_plans WHERE project_id=? ORDER BY created DESC LIMIT 1',(project_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
-    def select(self,project_id,id,tier):
+    def select(self,project,id,tier):
+        project_id=project.id
+        with self.connect() as db:
+            row=db.execute('SELECT payload FROM architecture_plans WHERE id=? AND project_id=?',(id,project_id)).fetchone()
+        if not row:raise ArchitectureError('설계안을 찾을 수 없습니다.')
+        original=json.loads(row[0])
+        options=ArchitectureRequest.model_validate(original['requirements'])
+        # Recheck extracted evidence, not a guarantee that every source byte is unchanged.
+        with self.runner.source(project.repo) as root:facts=collect(root,options)
+        fingerprint=hashlib.sha256(json.dumps(facts,sort_keys=True).encode()).hexdigest()
+        if fingerprint!=original['evidence_fingerprint']:
+            raise ArchitectureError('저장소의 분석 근거가 변경됐습니다. 아키텍처를 다시 판단하세요.')
+        # Source access may take time; check the latest plan again under the write lock.
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             row=db.execute('SELECT payload FROM architecture_plans WHERE id=? AND project_id=?',(id,project_id)).fetchone()
