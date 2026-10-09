@@ -1,4 +1,4 @@
-"""Local-only orchestration. Never fabricates a shakedown verdict."""
+"""Local and pre-provisioned AWS orchestration. Never fabricates a shakedown verdict."""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import json
@@ -40,7 +40,7 @@ class DeployRequest(Model):
     shakedown: bool = False
     autofix: bool = False
     comparison: Endpoint | None = None
-    targets: list[Literal['local']] = Field(default_factory=lambda: ['local'], min_length=1, max_length=1)
+    targets: list[Literal['local', 'aws']] = Field(default_factory=lambda: ['local'], min_length=1, max_length=2)
     options: dict[str, dict] = Field(default_factory=dict)
 
 class DeploymentError(Exception):
@@ -76,7 +76,7 @@ class LocalRunner:
         except (OSError, subprocess.SubprocessError):
             raise DeploymentError(f'{args[0]} failed or timed out; inspect the local build environment.') from None
 
-    def build(self, project, image):
+    def build(self, project, image, platform=None):
         with self.source(project.repo) as root:
             # Re-analyze the actual checkout, rather than trusting an earlier branch revision.
             analysis = RepoAnalyzer().analyze(str(root))
@@ -86,7 +86,8 @@ class LocalRunner:
                 raise DeploymentError('The analyzed application needs a Dockerfile in its application directory.')
             if analysis.database not in {'postgres', 'postgresql'}:
                 raise DeploymentError('This local integration currently requires the PostgreSQL sample application.')
-            self.command(['docker', 'build', '-t', image, str(context)], 900)
+            command = ['docker', 'build', '-t', image, str(context)] if platform is None else ['docker', 'buildx', 'build', '--platform', platform, '--provenance=false', '--sbom=false', '--load', '-t', image, str(context)]
+            self.command(command, 900)
             return analysis
 
     def call(self, method, path, body=None):
@@ -109,12 +110,14 @@ class ShakedownClient:
             raise DeploymentError('Shakedown request failed; check 127.0.0.1:9201. No PASS was recorded.') from None
 
 class DeploymentStore:
-    def __init__(self, path: Path, runner=None, poll_seconds=1, timeout=300, shakedown=None, shakedown_timeout=180):
+    def __init__(self, path: Path, runner=None, poll_seconds=1, timeout=300, shakedown=None, shakedown_timeout=180, aws=None):
         self.shakedown = shakedown or ShakedownClient()
         self.shakedown_timeout = shakedown_timeout
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self.runner = runner or LocalRunner()
+        from engine.aws_runner import AwsRunner
+        self.aws = aws or AwsRunner()
         self.poll_seconds, self.timeout = poll_seconds, timeout
         self.pool = ThreadPoolExecutor(max_workers=2)
         with self.connect() as db:
@@ -123,7 +126,7 @@ class DeploymentStore:
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS active_project ON deployments(project_id) WHERE status NOT IN ('deployed','promoted','warned','blocked','failed')")
             rows = db.execute("SELECT payload FROM deployments WHERE status NOT IN ('deployed','promoted','warned','blocked','failed')").fetchall()
             for row in rows:
-                d = json.loads(row[0]); d.update(status='failed', finished=time.time(), error='Engine restarted during deployment. Inspect Local Target resources before retrying.')
+                d = json.loads(row[0]); d.update(status='failed', finished=time.time(), error='Engine restarted during deployment. Inspect target resources before retrying.')
                 db.execute('UPDATE deployments SET status=?, payload=? WHERE id=?', ('failed', json.dumps(d), d['id']))
 
     @contextmanager
@@ -150,25 +153,32 @@ class DeploymentStore:
     def start(self, project: Project, request: DeployRequest):
         if request.autofix:
             raise DeploymentError('Automatic fixes are not supported; review the suggested fix manually.')
-        if request.shakedown != (request.comparison is not None):
-            raise DeploymentError('Shakedown requires an existing comparison endpoint; omit it for deploy-only.')
-        if request.comparison and request.comparison.name == 'local':
-            raise DeploymentError('The comparison endpoint must have a different name from local.')
-        if 'local' not in project.targets:
-            raise DeploymentError('Project must include the local target.')
-        opts = {'replicas': 1, 'sticky_sessions': False, 'tz': 'Asia/Seoul'}
-        if set(request.options) - {'local'}:
-            raise DeploymentError('Only local target options are supported.')
-        opts.update(request.options.get('local', {}))
+        targets = [name for name in ('local', 'aws') if name in request.targets]
+        if len(targets) != len(request.targets):
+            raise DeploymentError('Targets must be unique.')
+        if request.comparison and (len(targets) != 1 or request.comparison.name in targets):
+            raise DeploymentError('An external comparison requires one deployed target and a distinct name.')
+        if request.shakedown != (request.comparison is not None or len(targets) == 2):
+            raise DeploymentError('Shakedown requires two deployment targets or an existing comparison endpoint.')
+        if set(request.options) - set(targets):
+            raise DeploymentError('Options must belong to selected targets.')
+        options = {}
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-        try:
-            ZoneInfo(opts['tz'])
-        except (ZoneInfoNotFoundError, TypeError, ValueError):
-            raise DeploymentError('Invalid timezone.') from None
-        if set(opts) != {'replicas','sticky_sessions','tz'} or opts['replicas'] != 1 or opts['sticky_sessions'] is not False:
-            raise DeploymentError('Local deployment supports one replica without sticky sessions.')
+        for target in targets:
+            opts = {'replicas': 1 if target == 'local' else 2, 'sticky_sessions': False, 'tz': 'Asia/Seoul' if target == 'local' else 'UTC'}
+            opts.update(request.options.get(target, {}))
+            try:
+                ZoneInfo(opts['tz'])
+            except (ZoneInfoNotFoundError, TypeError, ValueError):
+                raise DeploymentError('Invalid timezone.') from None
+            if (set(opts) != {'replicas','sticky_sessions','tz'} or type(opts['replicas']) is not int
+                    or opts['replicas'] not in ([1] if target == 'local' else [1, 2]) or opts['sticky_sessions'] is not False):
+                raise DeploymentError('Local supports one replica; AWS supports one or two. Sticky sessions are unsupported.')
+            options[target] = opts
+        if 'aws' in targets:
+            self.aws.preflight(project)
         d = dict(id='dep_' + uuid.uuid4().hex, project_id=project.id, created=time.time(), status='queued',
-                 shakedown=request.shakedown, autofix=False, options={'local': opts}, targets={'local': {'status':'pending','label':'Local Docker'}},
+                 shakedown=request.shakedown, autofix=False, options=options, targets={name: {'status':'pending','label': 'Local Docker' if name == 'local' else 'AWS ECS'} for name in targets},
                  attempts=[], timings={}, ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0))
         try:
             with self.connect() as db:
@@ -178,45 +188,77 @@ class DeploymentStore:
         self.pool.submit(self.run, project, json.loads(json.dumps(d)), request.comparison)
         return d
 
+    def cleanup(self, d, targets):
+        for target in reversed(targets):
+            runner = self.aws if target == 'aws' else self.runner
+            if target == 'aws':
+                try:
+                    # Collect evidence before DELETE stops tasks. Do not persist raw application logs.
+                    runner.call('GET', '/deployments/' + d['id'] + '/logs')
+                    d['targets'][target]['logs_collected'] = True
+                except Exception:
+                    d['targets'][target]['logs_collected'] = False
+            try:
+                runner.call('DELETE', '/deployments/' + d['id'])
+                d['targets'][target]['cleanup'] = 'confirmed'
+                d['targets'][target]['status'] = 'stopped'
+                d['targets'][target]['instances'] = 0
+                if target == 'aws': d['traffic_blocked'] = True
+            except Exception:
+                d['targets'][target]['cleanup'] = 'failed'
+                d['targets'][target]['status'] = 'failed'
+                d['error'] = d.get('error', '') + f' {target} cleanup failed; inspect the adapter and retry DELETE.'
+                if target == 'aws': d['traffic_blocked'] = False
+
     def run(self, project, d, comparison=None):
-        submitted = False
+        submitted = []
         try:
             d['status'] = 'building'; self.save(d)
             start = time.monotonic()
             image = 'shakedown/engine:' + d['id']
-            analysis = self.runner.build(project, image)
+            if 'aws' in d['targets']:
+                analysis, image = self.aws.build_publish(project, d['id'])
+            else:
+                analysis = self.runner.build(project, image)
             d['image'] = image; d['timings']['build_s'] = time.monotonic() - start
-            d['status'] = 'deploying'; d['targets']['local']['status'] = 'deploying'; self.save(d)
+            d['status'] = 'deploying'; self.save(d)
             start = time.monotonic()
-            body = dict(deployment_id=d['id'], project_id=project.id, image=image, port=analysis.port,
-                        health_path=analysis.health_path, database={'engine':'postgres','name':analysis.database_name or 'board_db'},
-                        secret_refs={'SPRING_DATASOURCE_PASSWORD':'db_password'}, options=d['options']['local'])
-            # Mark before POST: a transport timeout may follow a successful server-side acceptance.
-            submitted = True
-            self.runner.call('POST', '/deployments', body)
-            while time.monotonic() - start < self.timeout:
-                state = self.runner.call('GET', '/deployments/' + d['id'])
-                if state.get('status') == 'failed': raise DeploymentError('Local Target deployment failed; inspect its logs.')
-                if state.get('status') == 'ready':
-                    url = urlsplit(state.get('url', ''))
-                    if url.scheme != 'https' or not (url.hostname or '').endswith('.trycloudflare.com'):
-                        raise DeploymentError('Local Target returned an invalid public URL.')
-                    d['targets']['local'] = {k:v for k,v in state.items() if k in {'status','url','instances','info'}}
-                    d['targets']['local']['label'] = 'Local Docker'
-                    d['timings']['deploy_s'] = time.monotonic() - start
-                    d['status'] = 'deployed'
-                    break
-                time.sleep(self.poll_seconds)
-            else: raise DeploymentError('Local deployment readiness timed out.')
+            for target in d['targets']:
+                runner = self.aws if target == 'aws' else self.runner
+                d['targets'][target]['status'] = 'deploying'; self.save(d)
+                body = dict(deployment_id=d['id'], project_id=project.id, image=image, port=analysis.port,
+                            health_path=analysis.health_path, database={'engine':'postgres','name':analysis.database_name or 'board_db'},
+                            secret_refs={'SPRING_DATASOURCE_PASSWORD':'db_password'}, options=d['options'][target])
+                submitted.append(target)
+                runner.call('POST', '/deployments', body)
+                deadline = time.monotonic() + self.timeout
+                while time.monotonic() < deadline:
+                    state = runner.call('GET', '/deployments/' + d['id'])
+                    if state.get('status') == 'failed': raise DeploymentError(f'{target} deployment failed; inspect its logs.')
+                    if state.get('status') == 'ready':
+                        url = urlsplit(state.get('url', ''))
+                        valid = (url.scheme == 'https' and (url.hostname or '').endswith('.trycloudflare.com')) if target == 'local' else runner.valid_url(state.get('url', ''))
+                        if not valid: raise DeploymentError(f'{target} returned an invalid public URL.')
+                        d['targets'][target].update({k:v for k,v in state.items() if k in {'status','url','instances','info'}})
+                        self.save(d)
+                        break
+                    time.sleep(self.poll_seconds)
+                else: raise DeploymentError(f'{target} deployment readiness timed out.')
+            d['timings']['deploy_s'] = time.monotonic() - start
+            d['status'] = 'deployed'
+            baseline = next(iter(d['targets']))
+            if len(d['targets']) == 2:
+                comparison = Endpoint(name='aws', url=d['targets']['aws']['url'])
             if comparison:
-                self.compare(d, Endpoint(name='local', url=d['targets']['local']['url']), comparison, project)
+                self.compare(d, Endpoint(name=baseline, url=d['targets'][baseline]['url']), comparison, project)
+                if d['status'] == 'blocked' and 'aws' in submitted:
+                    self.cleanup(d, ['aws'])
         except Exception as exc:
             d['status'] = 'failed'
-            d['error'] = str(exc) if isinstance(exc, DeploymentError) else 'Deployment failed; inspect the local engine environment.'
-            d['targets']['local'].update(status='failed', error=d['error'])
-            if submitted:
-                try: self.runner.call('DELETE', '/deployments/' + d['id'])
-                except Exception: d['error'] += ' Cleanup failed; inspect Local Target before retrying.'
+            d['error'] = str(exc) if isinstance(exc, DeploymentError) else 'Deployment failed; inspect the engine environment.'
+            for target in d['options']:
+                d['targets'][target].update(status='failed', error=d['error'])
+            self.cleanup(d, submitted)
         finally:
             d['finished'] = time.time(); d['timings']['total_s'] = d['finished'] - d['created']; self.save(d)
 
@@ -289,7 +331,6 @@ class DeploymentStore:
                 d['status'] = {'PASS':'promoted', 'WARN':'warned', 'BLOCKED':'blocked'}[result]
                 d['release_gate'] = 'blocked' if result == 'BLOCKED' else 'review' if result == 'WARN' else 'passed'
                 d['traffic_blocked'] = False
-                self.save(d)
                 return
             if state.get('status') != 'running':
                 raise DeploymentError('Unknown shakedown state; no PASS was recorded.')

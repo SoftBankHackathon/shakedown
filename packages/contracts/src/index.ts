@@ -68,11 +68,13 @@ export type Project = {
 };
 
 export type TargetState = {
-  status: "pending" | "deploying" | "ready" | "failed" | "external";
+  status: "pending" | "deploying" | "ready" | "failed" | "external" | "stopped";
   label: string;
   url?: string;
   instances?: number;
   info?: Record<string, string>;
+  cleanup?: "confirmed" | "failed";
+  logs_collected?: boolean;
   commands?: string[];
   error?: string | null;
 };
@@ -182,6 +184,8 @@ export type TargetDeployment = {
   ready_at?: string;
   error?: string;
   info?: Record<string, string>;
+  cleanup?: "confirmed" | "failed";
+  logs_collected?: boolean;
   commands?: string[];
 };
 export type TargetLogLine = { ts: string; source: "deploy" | "app" | "db"; line: string };

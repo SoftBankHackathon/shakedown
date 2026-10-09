@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useT } from "@/components/i18n";
 
 const STATUS_STYLE: Record<string, string> = {
+  stopped: "bg-line text-muted",
   external: "bg-line text-muted",
   warned: "bg-warn/15 text-warn",
   deployed: "bg-accent/15 text-accent",

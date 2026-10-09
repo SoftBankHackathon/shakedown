@@ -93,7 +93,7 @@ export default function DeploymentPage() {
                 <Badge status={s.status} />
               </div>
               <div className="text-xs text-muted mt-0.5">{s.label}</div>
-              {s.url && (
+              {s.url && s.status !== "stopped" && (
                 <a href={s.url} target="_blank" className="mt-3 block font-mono text-sm text-accent hover:underline">{s.url} ↗</a>
               )}
               <div className="mt-3 flex flex-wrap gap-2 text-xs">
