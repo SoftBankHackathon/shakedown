@@ -158,9 +158,19 @@ class ArchitecturePlanner:
     def connect(self):
         return closing(sqlite3.connect(self.path,timeout=30))
 
+    def checked_facts(self, project, options):
+        from engine.image_builder import checked_source, BuildError
+        try:
+            with self.runner.source(project.repo) as root:
+                with checked_source(root) as (source, _report):
+                    return collect(source, options)
+        except BuildError as exc:
+            raise ArchitectureError(str(exc)) from None
+
     def create(self,project,options):
-        with self.runner.source(project.repo) as root:facts=collect(root,options)
+        facts=self.checked_facts(project,options)
         plan=recommend(facts,options,self.llm)
+        plan['security_gate']={'schema_version':'3.0','decision':'ALLOW','scan_status':'SUCCESS'}
         plan.update(id='arch_'+uuid.uuid4().hex,project_id=project.id,created=time.time(),
                     evidence_fingerprint=hashlib.sha256(json.dumps(facts,sort_keys=True).encode()).hexdigest())
         with self.connect() as db:
@@ -179,7 +189,7 @@ class ArchitecturePlanner:
         original=json.loads(row[0])
         options=ArchitectureRequest.model_validate(original['requirements'])
         # Recheck extracted evidence, not a guarantee that every source byte is unchanged.
-        with self.runner.source(project.repo) as root:facts=collect(root,options)
+        facts=self.checked_facts(project,options)
         fingerprint=hashlib.sha256(json.dumps(facts,sort_keys=True).encode()).hexdigest()
         if fingerprint!=original['evidence_fingerprint']:
             raise ArchitectureError('저장소의 분석 근거가 변경됐습니다. 아키텍처를 다시 판단하세요.')
@@ -206,7 +216,9 @@ class ArchitecturePlanner:
             raise ArchitectureError('최신 아키텍처를 선택한 뒤 배포하세요.')
         options = ArchitectureRequest.model_validate(plan['requirements'])
         try:
-            with self.runner.source(project.repo) as root: facts = collect(root, options)
+            facts = self.checked_facts(project, options)
+        except ArchitectureError:
+            raise
         except Exception:
             raise ArchitectureError('배포 전 저장소 근거를 확인하지 못했습니다.') from None
         fingerprint = hashlib.sha256(json.dumps(facts, sort_keys=True).encode()).hexdigest()

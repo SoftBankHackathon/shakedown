@@ -209,3 +209,9 @@ def test_resolve_rejects_foreign_unselected_and_stale_plans(store,repository,tmp
     with pytest.raises(ArchitectureError):planner.resolve(SimpleNamespace(id='another',repo=project.repo),plan['id'])
     planner.create(project,requirements())
     with pytest.raises(ArchitectureError,match='최신'):planner.resolve(project,plan['id'])
+
+
+@pytest.fixture(autouse=True)
+def approved_security_gate(monkeypatch):
+    # Unit tests for architecture/AWS behavior; negative gates have separate coverage.
+    monkeypatch.setattr('engine.security.require_allow',lambda _: {'decision':'ALLOW'})

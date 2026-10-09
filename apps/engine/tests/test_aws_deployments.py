@@ -193,3 +193,9 @@ def test_api_select_to_deploy_uses_real_planner(store,repository,tmp_path):
         assert response.status_code==202
         d=wait(ds,response.json()['id']);assert d['status']=='deployed'
         assert next(c[2] for c in aws.calls if c[0]=='POST')['architecture']['template_id']=='medium'
+
+
+@pytest.fixture(autouse=True)
+def approved_security_gate(monkeypatch):
+    # Unit tests for architecture/AWS behavior; negative gates have separate coverage.
+    monkeypatch.setattr('engine.security.require_allow',lambda _: {'decision':'ALLOW'})

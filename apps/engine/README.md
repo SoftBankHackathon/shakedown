@@ -214,3 +214,11 @@ can fail scanning. In particular, Java/Gradle samples are not automatically
 approved. Tool installation alone does not make unsupported projects pass.
 Only a sanitized decision is returned; raw scanner findings/output are not
 sent to the dashboard or LLM. No production security guarantee is implied.
+
+Architecture planning follows the same prerequisite: creating, selecting and
+resolving an architecture plan rescan the current repository before collecting
+facts or calling Claude. The actual local/AWS build checks its own fresh source
+snapshot again, so a previously selected plan is not a security approval token.
+Historical AWS smoke-test results predate this integration. No AWS redeployment
+was run for the gate change; the current Java/Gradle scanner limitation must be
+resolved in the gate's supported-scope policy before that demo can pass again.
