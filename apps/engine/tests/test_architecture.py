@@ -191,3 +191,21 @@ def test_selection_source_failure_is_sanitized(client,store,repository,monkeypat
     response=client.post(url+'/'+plan['id']+'/select',json={'template_id':'small'})
     assert response.status_code==400 and 'SECRET' not in response.text
     assert client.get(url+'/latest').json()['selected_template'] is None
+
+
+def test_resolve_rejects_foreign_unselected_and_stale_plans(store,repository,tmp_path):
+    from engine.deployments import LocalRunner
+    gradle=repository/'build.gradle'
+    gradle.write_text(gradle.read_text().replace('com.mysql:mysql-connector-j','org.postgresql:postgresql'))
+    resources=repository/'src/main/resources/application.yml'
+    resources.write_text(resources.read_text().replace('jdbc:mysql://db:3306','jdbc:postgresql://db:5432'))
+    project=store.create(CreateProjectRequest(repo=str(repository),targets=['aws']))
+    planner=ArchitecturePlanner(tmp_path/'plan.db',LocalRunner(),disconnected())
+    plan=planner.create(project,requirements())
+    with pytest.raises(ArchitectureError,match='최신'):planner.resolve(project,plan['id'])
+    planner.select(project,plan['id'],'medium')
+    spec=planner.resolve(project,plan['id'])
+    assert spec['id']=='medium' and spec['cpu']==1024
+    with pytest.raises(ArchitectureError):planner.resolve(SimpleNamespace(id='another',repo=project.repo),plan['id'])
+    planner.create(project,requirements())
+    with pytest.raises(ArchitectureError,match='최신'):planner.resolve(project,plan['id'])

@@ -58,6 +58,11 @@ class AwsRunner(LocalRunner):
         if not health or health.get('target') != 'aws' or health.get('ok') is not True:
             raise DeploymentError('AWS adapter is not ready on 127.0.0.1:9102.')
 
+    def validate_architecture(self, architecture):
+        config = self.config()
+        if not config.get('dbInstanceId') or len(set(config.get('subnetIds', []))) < architecture['availability_zones']:
+            raise DeploymentError('선택 설계용 기반 스택이 필요합니다. foundation.yaml을 갱신하고 DB 식별자와 AZ별 서브넷 설정을 다시 생성하세요.')
+
     def build_publish(self, project, deployment_id):
         self.preflight(project)
         config = self.config()

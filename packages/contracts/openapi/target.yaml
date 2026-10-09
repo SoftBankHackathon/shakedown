@@ -203,6 +203,14 @@ components:
           properties:
             engine: { type: string, enum: [mysql, postgres] }
             name: { type: string }
+        architecture:
+          type: object
+          additionalProperties: false
+          required: [version, template_id]
+          description: "AWS 전용 실행 카탈로그. replicas는 small=1, medium=2, large=3. Local에는 보내지 않음."
+          properties:
+            version: {const: aws-architecture.v1}
+            template_id: {type: string, enum: [small, medium, large]}
         options: { $ref: "#/components/schemas/TargetOptions" }
     TargetOptions:
       type: object

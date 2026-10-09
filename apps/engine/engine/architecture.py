@@ -147,7 +147,7 @@ def recommend(facts, options, llm):
     return dict(schema_version=VERSION,source=source,recommended_template=selected,reasons=reasons,evidence_ids=cited,
                 assessment=assessment,templates=CATALOG,requirements=options.model_dump(),facts=facts,
                 selected_template=None,status='needs_input' if assessment['missing_inputs'] or selected is None else 'proposed',
-                deployment=dict(ready=False,reason='설계안 저장까지 지원합니다. 기존 AWS 데모 배포는 이 계획을 적용하지 않습니다. 템플릿별 인프라 생성·어댑터 연결·실배포 검증이 필요합니다.'))
+                deployment=dict(ready=False,reason='설계를 선택한 뒤 AWS 배포를 시작하면 해당 구성을 적용합니다. 준비된 AWS 기반 스택과 PostgreSQL 샘플 앱이 필요하며 자원 변경 요금이 발생합니다.'))
 
 
 class ArchitecturePlanner:
@@ -195,5 +195,29 @@ class ArchitecturePlanner:
             if tier not in plan['assessment']['eligible_templates']:raise ArchitectureError('이 설계안은 입력된 요구 또는 프로젝트 제약에 맞지 않습니다.')
             if plan['assessment']['missing_inputs']:raise ArchitectureError('누락된 운영 요구를 입력한 뒤 다시 판단하세요.')
             plan.update(selected_template=tier,selected_at=time.time(),status='selected')
+            supported = facts['stack'].startswith('spring-boot') and facts['signals']['database'] in {'postgres','postgresql'}
+            plan['deployment'] = dict(ready=supported, reason='AWS 배포 시 선택한 CPU·메모리·태스크·AZ·RDS·자동 확장을 적용합니다. 기반 스택/권한을 확인하며 비용이 발생합니다.' if supported else '설계 저장은 가능하지만 실제 배포는 현재 Spring PostgreSQL 샘플만 지원합니다.')
             db.execute('UPDATE architecture_plans SET payload=? WHERE id=?',(json.dumps(plan,ensure_ascii=False),id));db.commit()
         return plan
+
+    def resolve(self, project, id):
+        plan = self.latest(project.id)
+        if not plan or plan['id'] != id or not plan.get('selected_template'):
+            raise ArchitectureError('최신 아키텍처를 선택한 뒤 배포하세요.')
+        options = ArchitectureRequest.model_validate(plan['requirements'])
+        try:
+            with self.runner.source(project.repo) as root: facts = collect(root, options)
+        except Exception:
+            raise ArchitectureError('배포 전 저장소 근거를 확인하지 못했습니다.') from None
+        fingerprint = hashlib.sha256(json.dumps(facts, sort_keys=True).encode()).hexdigest()
+        if fingerprint != plan['evidence_fingerprint']:
+            raise ArchitectureError('저장소의 분석 근거가 변경됐습니다. 다시 판단하세요.')
+        current = self.latest(project.id)
+        if not current or current['id'] != id or current.get('selected_at') != plan.get('selected_at'):
+            raise ArchitectureError('설계 선택이 변경됐습니다. 최신 선택으로 다시 배포하세요.')
+        assessment = assess(facts, options)
+        if assessment['blockers'] or assessment['missing_inputs'] or plan['selected_template'] not in assessment['eligible_templates']:
+            raise ArchitectureError('설계 적용을 막는 항목을 먼저 해결하세요.')
+        if not facts['stack'].startswith('spring-boot') or facts['signals']['database'] not in {'postgres','postgresql'}:
+            raise ArchitectureError('실제 배포는 현재 Spring PostgreSQL 샘플만 지원합니다.')
+        return dict(next(t for t in CATALOG if t['id'] == plan['selected_template']))

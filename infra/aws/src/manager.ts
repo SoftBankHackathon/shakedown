@@ -31,7 +31,7 @@ export class Manager {
   private async run(request: DeployRequest, controller: AbortController) {
     const id = request.deployment_id, started = Date.now();
     const log = (line: string) => this.store.log(id, line);
-    const timer = setTimeout(() => controller.abort(new Error('배포 준비 제한 시간 초과')), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(new Error('배포 준비 제한 시간 초과')), request.architecture ? Math.max(this.timeoutMs, 2_400_000) : this.timeoutMs);
     this.store.update(id, { status: 'deploying', started_at: new Date().toISOString() });
     log('deployment started');
     try {

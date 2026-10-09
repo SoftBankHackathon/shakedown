@@ -142,3 +142,54 @@ def test_two_target_order_is_stable(project,tmp_path):
 def test_config_rejects_mismatched_resources(configured,patch):
     config,path=configured;config.update(patch);path.write_text(json.dumps(config))
     with pytest.raises(DeploymentError,match='Invalid AWS'):AwsRunner().config()
+
+@pytest.mark.parametrize('tier,count', [('small',1),('medium',2),('large',3)])
+def test_selected_plan_crosses_engine_boundary_with_catalog_only(project,tmp_path,tier,count):
+    from engine.architecture import CATALOG
+    class Planner:
+        def resolve(self,p,id):
+            assert p.id==project.id and id=='arch_'+'a'*32
+            return dict(next(t for t in CATALOG if t['id']==tier))
+    aws=Aws();aws.validate_architecture=lambda spec:None
+    ds=DeploymentStore(tmp_path/'d.db',Runner(),aws=aws,poll_seconds=.001);ds.architecture=Planner()
+    try:
+        d=wait(ds,ds.start(project,DeployRequest(targets=['aws'],architecture_plan_id='arch_'+'a'*32))['id'])
+        assert d['status']=='deployed' and d['architecture']['id']==tier
+        body=next(c[2] for c in aws.calls if c[0]=='POST')
+        assert body['architecture']=={'version':'aws-architecture.v1','template_id':tier}
+        assert body['options']['replicas']==count
+        assert body['env']['SPRING_PROFILES_ACTIVE']=='demo,session-jdbc'
+    finally:ds.close()
+
+@pytest.mark.parametrize('targets,options',[(['local'],{}),(['aws'],{'aws':{'replicas':2}})])
+def test_plan_target_and_replica_conflicts_never_build(project,tmp_path,targets,options):
+    class Planner:
+        def resolve(self,*_):return {'id':'medium','min_tasks':2}
+    aws=Aws();ds=DeploymentStore(tmp_path/'d.db',Runner(),aws=aws);ds.architecture=Planner()
+    try:
+        with pytest.raises(DeploymentError):ds.start(project,DeployRequest(targets=targets,options=options,architecture_plan_id='arch_'+'a'*32))
+        assert aws.builds==0 and ds.list()==[]
+    finally:ds.close()
+
+
+def test_api_select_to_deploy_uses_real_planner(store,repository,tmp_path):
+    from fastapi.testclient import TestClient
+    from engine.api import create_app
+    from engine.models import CreateProjectRequest
+    from engine.deployments import LocalRunner
+    gradle=repository/'build.gradle'
+    gradle.write_text(gradle.read_text().replace('com.mysql:mysql-connector-j','org.postgresql:postgresql'))
+    resource=repository/'src/main/resources/application.yml'
+    resource.write_text(resource.read_text().replace('jdbc:mysql://db:3306','jdbc:postgresql://db:5432'))
+    p=store.create(CreateProjectRequest(repo=str(repository),targets=['aws']))
+    aws=Aws();aws.validate_architecture=lambda _:None
+    ds=DeploymentStore(tmp_path/'d.db',LocalRunner(),aws=aws,poll_seconds=.001)
+    with TestClient(create_app(store,ds)) as client:
+        base=f'/api/projects/{p.id}'
+        plan=client.post(base+'/architecture-plans',json={'peak_rps':50,'availability':'high','traffic':'steady','use_ai':False}).json()
+        selected=client.post(base+f"/architecture-plans/{plan['id']}/select",json={'template_id':'medium'})
+        assert selected.status_code==200 and selected.json()['deployment']['ready']
+        response=client.post(base+'/deployments',json={'targets':['aws'],'architecture_plan_id':plan['id']})
+        assert response.status_code==202
+        d=wait(ds,response.json()['id']);assert d['status']=='deployed'
+        assert next(c[2] for c in aws.calls if c[0]=='POST')['architecture']['template_id']=='medium'

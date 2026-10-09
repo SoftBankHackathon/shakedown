@@ -154,6 +154,7 @@ export type ComparisonEndpoint = { name: string; url: string };
 export type CompareRequest = { baseline: ComparisonEndpoint; candidate: ComparisonEndpoint };
 
 export type DeployRequest = {
+  architecture_plan_id?: string;
   comparison?: ComparisonEndpoint;
   targets?: TargetName[];
   shakedown: boolean;
@@ -164,6 +165,7 @@ export type DeployRequest = {
 
 /** Target API v0.1.1 proposal — distinct from the engine's DeployRequest. */
 export type TargetDeployRequest = {
+  architecture?: {version: "aws-architecture.v1"; template_id: ArchitectureTier};
   deployment_id: string;
   project_id: string;
   image: string;
@@ -240,5 +242,5 @@ export type ArchitecturePlan = {
   assessment: { minimum_tier: ArchitectureTier; eligible_templates: ArchitectureTier[]; missing_inputs: string[]; blockers: string[]; warnings: string[]; reasons: string[] };
   facts: { stack: string; workload: string; workload_source: string; signals: { database: string | null; server_session: boolean; local_storage: boolean; queue_dependency: boolean; readme_hints: string[] }; evidence: {id: string; value: unknown; source: string}[]; analysis_warnings: string[] };
   templates: { id: ArchitectureTier; name: string; cpu: number; memory_mib: number; min_tasks: number; max_tasks: number; availability_zones: number; autoscaling: boolean; database: string; tradeoff: string }[];
-  deployment: {ready: false; reason: string}; evidence_fingerprint: string;
+  deployment: {ready: boolean; reason: string}; evidence_fingerprint: string;
 };

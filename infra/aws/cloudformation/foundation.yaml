@@ -37,6 +37,15 @@ Resources:
       VpcId: {Ref: Vpc}
       CidrBlock: 10.42.1.0/24
       AvailabilityZone: {Fn::Select: [1, {Fn::GetAZs: ''}]}
+  PublicC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: {Ref: Vpc}
+      CidrBlock: 10.42.2.0/24
+      AvailabilityZone: {Fn::Select: [2, {Fn::GetAZs: ''}]}
+  RouteC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {RouteTableId: {Ref: PublicRoutes}, SubnetId: {Ref: PublicC}}
   PrivateA:
     Type: AWS::EC2::Subnet
     Properties:
@@ -107,7 +116,7 @@ Resources:
       AllocatedStorage: '20'
       StorageType: gp3
       StorageEncrypted: true
-      MultiAZ: false
+      # MultiAZ is managed by the architecture deployment adapter after provisioning.
       PubliclyAccessible: false
       DBName: {Ref: DatabaseName}
       MasterUsername: board_admin
@@ -141,7 +150,7 @@ Resources:
     Properties:
       Scheme: internet-facing
       Type: application
-      Subnets: [{Ref: PublicA}, {Ref: PublicB}]
+      Subnets: [{Ref: PublicA}, {Ref: PublicB}, {Ref: PublicC}]
       SecurityGroups: [{Ref: AlbSg}]
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -242,6 +251,19 @@ Resources:
           - {Effect: Allow, Action: 'elasticloadbalancing:DescribeTargetHealth', Resource: '*'}
           - {Effect: Allow, Action: 'ecr:DescribeImages', Resource: {Fn::GetAtt: [Repository, Arn]}}
           - {Effect: Allow, Action: ['logs:DescribeLogStreams', 'logs:GetLogEvents'], Resource: {Fn::GetAtt: [Logs, Arn]}}
+          - {Effect: Allow, Action: ['ec2:DescribeSubnets', 'rds:DescribeDBInstances', 'application-autoscaling:DescribeScalableTargets'], Resource: '*'}
+          - {Effect: Allow, Action: 'rds:ModifyDBInstance', Resource: {Fn::GetAtt: [Database, DBInstanceArn]}}
+          - Effect: Allow
+            Action: ['application-autoscaling:RegisterScalableTarget', 'application-autoscaling:DeregisterScalableTarget', 'application-autoscaling:PutScalingPolicy']
+            Resource: {Fn::Sub: 'arn:${AWS::Partition}:application-autoscaling:${AWS::Region}:${AWS::AccountId}:scalable-target/*'}
+            Condition:
+              StringEquals:
+                application-autoscaling:service-namespace: ecs
+                application-autoscaling:scalable-dimension: 'ecs:service:DesiredCount'
+          - Effect: Allow
+            Action: 'iam:CreateServiceLinkedRole'
+            Resource: {Fn::Sub: 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService'}
+            Condition: {StringEquals: {'iam:AWSServiceName': ecs.application-autoscaling.amazonaws.com}}
   ImagePublisherPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
@@ -262,11 +284,12 @@ Outputs:
   GateRuleArn: {Value: {Ref: TrafficGate}}
   TargetGroupArn: {Value: {Ref: TargetGroup}}
   PublicUrl: {Value: {Fn::Sub: 'http://${Alb.DNSName}'}}
-  SubnetIds: {Value: {Fn::Join: [',', [{Ref: PublicA}, {Ref: PublicB}]]}}
+  SubnetIds: {Value: {Fn::Join: [',', [{Ref: PublicA}, {Ref: PublicB}, {Ref: PublicC}]]}}
   SecurityGroupId: {Value: {Ref: AppSg}}
   ExecutionRoleArn: {Value: {Fn::GetAtt: [ExecutionRole, Arn]}}
   TaskRoleArn: {Value: {Fn::GetAtt: [TaskRole, Arn]}}
   LogGroup: {Value: {Ref: Logs}}
+  DbInstanceId: {Value: {Ref: Database}}
   DbHost: {Value: {Fn::GetAtt: [Database, Endpoint.Address]}}
   DbName: {Value: {Ref: DatabaseName}}
   DbUsername: {Value: board_admin}

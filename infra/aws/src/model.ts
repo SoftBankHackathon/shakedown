@@ -9,12 +9,13 @@ export const requestSchema = z.object({
   env: z.record(z.string(), z.string().max(4096)).default({}),
   secret_refs: z.record(z.string(), z.string()).default({}),
   database: z.object({ engine: z.literal('postgres'), name: z.string() }).strict().optional(),
+  architecture: z.object({ version: z.literal('aws-architecture.v1'), template_id: z.enum(['small','medium','large']) }).strict().optional(),
   options: z.object({
-    replicas: z.number().int().min(1).max(2).default(1),
+    replicas: z.number().int().min(1).max(12).default(1),
     sticky_sessions: z.literal(false).default(false),
     tz: z.string().max(64).refine(v => { try { new Intl.DateTimeFormat('en', { timeZone: v }); return true; } catch { return false; } }).default('UTC'),
   }).strict().prefault({}),
-}).strict();
+}).strict().refine(v => v.architecture ? v.options.replicas === ({small:1,medium:2,large:3}[v.architecture.template_id]) : v.options.replicas <= 2, 'Replicas must match the architecture or legacy limit');
 export type DeployRequest = z.infer<typeof requestSchema>;
 export type Deployment = {
   deployment_id: string; target: 'aws'; status: 'pending' | 'deploying' | 'ready' | 'failed';

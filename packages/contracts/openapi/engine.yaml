@@ -113,6 +113,7 @@ paths:
                   uniqueItems: true
                   default: [local]
                   items: { type: string, enum: [local, aws] }
+                architecture_plan_id: { type: string, pattern: "^arch_[a-f0-9]{32}$", description: "최신 선택 설계 ID. AWS 필수, replicas 직접 지정 금지. 실행 시 저장소 근거 재검증." }
                 shakedown: { type: boolean, default: false }
                 autofix: { type: boolean, const: false, default: false }
                 comparison: { $ref: "#/components/schemas/Endpoint" }
@@ -623,7 +624,8 @@ components:
           - reason
           properties:
             ready:
-              const: false
+              type: boolean
+              description: "선택 설계가 현재 실행 지원 범위인지 표시. AWS 계정/기반 스택 준비 보장은 아님."
             reason:
               type: string
     Endpoint:
