@@ -6,6 +6,7 @@ import type { AzureApi, Identity, Manifest, LogRow } from '../src/azure-client.j
 import { AzureProvider, revisionName } from '../src/azure-provider.js';
 import { configSchema } from '../src/config.js';
 import { requestSchema } from '../src/model.js';
+import { AZURE_ARCHITECTURE_VERSION, type Tier } from '../src/architecture.js';
 
 const config = configSchema.parse(JSON.parse(readFileSync(new URL('../config.example.json', import.meta.url), 'utf8')));
 const image = config.repositoryUri + '@sha256:' + 'a'.repeat(64);
@@ -16,13 +17,13 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 class FakeAzure implements AzureApi {
   actions: string[] = []; puts: ContainerApp[] = []; queries: string[] = [];
   identityValue: Identity = { tenantId: config.tenantId, subscriptionId: config.subscriptionId, subscriptionTenantId: config.tenantId, state: 'Enabled' };
-  dbState = 'Ready';
+  dbState = 'Ready'; readyReplicas?: number;
   manifestValue: Manifest | undefined = { architecture: 'amd64', operatingSystem: 'linux', multiArch: false };
   app: Mutable<ContainerApp> = { location: 'koreacentral', configuration: { secrets: [{ name: 'db-password', keyVaultUrl: config.dbPasswordSecretUri, identity: '/identity' }] }, template: { containers: [{ name: 'app', image: 'old', resources: { cpu: 0.5, memory: '1Gi' } }] } };
   revisions = new Map<string, Mutable<Revision> & { polls: number }>();
   revisionImage?: string; neverReady = false; streamFails = false;
   async identity() { this.actions.push('identity'); return this.identityValue; }
-  async databaseState() { return this.dbState; }
+  async databaseState() { return { state: this.dbState, highAvailability: 'Disabled', tier: 'Standard_B1ms' }; }
   async getApp() { return structuredClone(this.app) as ContainerApp; }
   async putApp(app: ContainerApp) {
     this.actions.push(app.configuration?.ingress ? 'put:open' : 'put:closed'); this.puts.push(structuredClone(app));
@@ -39,7 +40,7 @@ class FakeAzure implements AzureApi {
     const revision = this.revisions.get(name);
     if (!revision) return undefined;
     if (++revision.polls >= 2 && !this.neverReady && revision.polls < 1000) {
-      Object.assign(revision, { provisioningState: 'Provisioned', active: true, healthState: 'Healthy', runningState: 'RunningAtMaxScale', trafficWeight: 100, replicas: this.app.template?.scale?.maxReplicas, polls: 1000 });
+      Object.assign(revision, { provisioningState: 'Provisioned', active: true, healthState: 'Healthy', runningState: 'RunningAtMaxScale', trafficWeight: 100, replicas: this.readyReplicas ?? this.app.template?.scale?.minReplicas, polls: 1000 });
       this.app.latestReadyRevisionName = name;
     } else if (revision.polls < 1000) Object.assign(revision, { provisioningState: 'Provisioning', runningState: 'Processing' });
     return structuredClone(revision) as Revision;
@@ -93,7 +94,7 @@ test('one update carries image, env, replicas, TZ, health probe and HTTPS ingres
   assert.equal(result.instances, 2); assert.equal(result.url, config.publicUrl);
   assert.deepEqual(result.info, {
     runtime: 'Azure Container Apps', database: 'Azure PostgreSQL Flexible 17', timezone: 'UTC', session: 'jdbc', sticky_sessions: 'true',
-    image_digest: 'sha256:' + 'a'.repeat(64), revision: revisionName(config, 'dep_test'), transport: 'HTTPS',
+    image_digest: 'sha256:' + 'a'.repeat(64), revision: revisionName(config, 'dep_test'), transport: 'HTTPS', architecture: 'legacy', scaling: 'manual',
   });
   assert.ok(!('commands' in result));
   assert.ok(logs.some(l => l.startsWith('phase=wait_revision completed')));
@@ -164,4 +165,47 @@ test('app logs merge the live stream with Log Analytics, deduplicated and oldest
   api.streamFails = true;
   assert.equal((await provider.appLogs('dep_test')).length, 2);
   assert.equal((await provider.appLogs('dep_test', '2026-10-09T01:00:00.500Z')).length, 1);
+});
+
+const arch = (tier: Tier) => ({ version: AZURE_ARCHITECTURE_VERSION, template_id: tier });
+// 실제 숫자를 그대로 적는다. 카탈로그에서 읽어 오면 카탈로그가 틀려도 통과한다.
+const TIERS = [
+  { tier: 'small', cpu: 0.5, memory: '1Gi', min: 1, max: 1, scaling: 'manual' },
+  { tier: 'medium', cpu: 1, memory: '2Gi', min: 2, max: 4, scaling: 'automatic 2-4' },
+  { tier: 'large', cpu: 2, memory: '4Gi', min: 3, max: 6, scaling: 'automatic 3-6' },
+] as const;
+
+test('architecture tiers set CPU, memory, replica range, HTTP scaling and a smaller DB pool', async t => {
+  for (const { tier, cpu, memory, min, max, scaling } of TIERS) {
+    const { api, provider } = setup(t);
+    const planned = requestSchema.parse({ ...request, deployment_id: `dep_${tier}`, architecture: arch(tier), options: { replicas: min } });
+    const result = await provider.deploy(planned, AbortSignal.timeout(5_000), () => {});
+    const app = api.puts[0], container = app.template!.containers![0];
+    assert.deepEqual(container.resources, { cpu, memory });
+    assert.equal(app.template!.scale!.minReplicas, min); assert.equal(app.template!.scale!.maxReplicas, max);
+    assert.deepEqual(app.template!.scale!.rules, min === max ? [] : [{ name: 'http', http: { metadata: { concurrentRequests: '10' } } }]);
+    assert.equal(container.env!.find(e => e.name === 'SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE')?.value, '3');
+    assert.equal(result.instances, min);
+    // DB 값은 꾸며 낸 문장이 아니라 서버에서 읽은 값이다.
+    assert.equal(result.info.architecture, tier); assert.equal(result.info.scaling, scaling);
+    assert.equal(result.info.db_availability, 'Disabled'); assert.equal(result.info.db_tier, 'Standard_B1ms');
+  }
+});
+
+test('a legacy deploy after a planned one resets resources and drops the planned DB pool', async t => {
+  const { api, provider } = setup(t);
+  api.app.template!.containers![0].resources = { cpu: 2, memory: '4Gi' };
+  const result = await provider.deploy(request, AbortSignal.timeout(5_000), () => {});
+  const container = api.puts[0].template!.containers![0];
+  assert.deepEqual(container.resources, { cpu: 0.5, memory: '1Gi' });
+  assert.ok(!container.env!.some(e => e.name === 'SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE'));
+  assert.ok(!('db_availability' in result.info));
+});
+
+test('readiness accepts more replicas than the start count once autoscaling has added some', async t => {
+  const { api, provider } = setup(t);
+  api.readyReplicas = 3;
+  const planned = requestSchema.parse({ ...request, deployment_id: 'dep_scaled', architecture: arch('medium'), options: { replicas: 2 } });
+  const result = await provider.deploy(planned, AbortSignal.timeout(5_000), () => {});
+  assert.equal(result.instances, 3);
 });

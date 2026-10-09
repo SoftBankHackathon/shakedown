@@ -8,11 +8,13 @@ import { registryServer, repositoryName } from './config.js';
 export type Manifest = { architecture?: string; operatingSystem?: string; multiArch: boolean };
 export type LogRow = { ts: string; source: string; line: string };
 export type Identity = { tenantId: string; subscriptionId: string; subscriptionTenantId: string; state: string };
+// PostgreSQL Flexible Server의 상태와, info에 그대로 보여 줄 고가용성 모드·등급.
+export type DatabaseStatus = { state: string; highAvailability: string; tier: string };
 
 // azure-provider가 쓰는 Azure 호출만 모은 얇은 계층. 테스트에서는 가짜로 바꾼다.
 export interface AzureApi {
   identity(signal: AbortSignal): Promise<Identity>;
-  databaseState(signal: AbortSignal): Promise<string>;
+  databaseState(signal: AbortSignal): Promise<DatabaseStatus>;
   getApp(signal: AbortSignal): Promise<ContainerApp>;
   putApp(app: ContainerApp, signal: AbortSignal): Promise<ContainerApp>;
   getRevision(name: string, signal: AbortSignal): Promise<Revision | undefined>;
@@ -52,8 +54,8 @@ export class AzureClient implements AzureApi {
   }
   async databaseState(signal: AbortSignal) {
     const c = this.config, server = c.dbHost.split('.')[0];
-    const result = await this.arm<{ properties?: { state?: string } }>(`/subscriptions/${c.subscriptionId}/resourceGroups/${c.resourceGroup}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${server}`, '2024-08-01', signal);
-    return result.properties?.state ?? 'Unknown';
+    const result = await this.arm<{ sku?: { name?: string }; properties?: { state?: string; highAvailability?: { mode?: string } } }>(`/subscriptions/${c.subscriptionId}/resourceGroups/${c.resourceGroup}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${server}`, '2024-08-01', signal);
+    return { state: result.properties?.state ?? 'Unknown', highAvailability: result.properties?.highAvailability?.mode ?? 'unknown', tier: result.sku?.name ?? 'unknown' };
   }
   getApp(signal: AbortSignal) { return this.apps.containerApps.get(this.config.resourceGroup, this.config.containerApp, { abortSignal: signal }); }
   putApp(app: ContainerApp, signal: AbortSignal) { return this.apps.containerApps.beginCreateOrUpdateAndWait(this.config.resourceGroup, this.config.containerApp, app, { abortSignal: signal }); }

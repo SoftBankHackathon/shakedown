@@ -6,6 +6,7 @@ import type { Config } from './config.js';
 import { validateRequest } from './config.js';
 import type { DeployRequest, Provider, ReadyResult, Log, LogLine } from './model.js';
 import { ApiError } from './model.js';
+import { HTTP_CONCURRENCY, PLANNED_POOL_SIZE, shapeOf } from './architecture.js';
 
 // ingress를 끈 뒤 공개 주소가 돌려주는 상태 코드 (2026-10-09 실측)
 const CLOSED_STATUS = 404;
@@ -38,8 +39,9 @@ export class AzureProvider implements Provider {
     if (identity.state !== 'Enabled') throw new Error(`Azure 구독 상태가 ${identity.state}입니다.`);
   }
   async verifyDatabase(signal: AbortSignal = AbortSignal.timeout(30_000)) {
-    const state = await this.api.databaseState(signal);
-    if (['Stopped', 'Stopping'].includes(state)) throw new Error(`PostgreSQL 서버가 ${state} 상태입니다. az postgres flexible-server start로 먼저 켜세요 (수 분 걸림).`);
+    const db = await this.api.databaseState(signal);
+    if (['Stopped', 'Stopping'].includes(db.state)) throw new Error(`PostgreSQL 서버가 ${db.state} 상태입니다. az postgres flexible-server start로 먼저 켜세요 (수 분 걸림).`);
+    return db;
   }
   validate(request: DeployRequest) { validateRequest(this.config, request); }
   async precheck(request: DeployRequest) {
@@ -49,7 +51,7 @@ export class AzureProvider implements Provider {
   }
   // 이미지·환경변수·복제본·TZ·health 확인 경로·ingress를 한 번의 갱신에 담는다.
   private desired(app: ContainerApp, request: DeployRequest): ContainerApp {
-    const c = this.config, current = app.template?.containers?.[0];
+    const c = this.config, shape = shapeOf(request);
     // 비밀번호는 Bicep이 만든 Key Vault 참조 secret을 이름으로만 가리킨다. 어댑터는 값을 모른다.
     const secret = app.configuration?.secrets?.find(s => s.name === 'db-password');
     if (secret?.keyVaultUrl?.replace(/\/$/, '') !== c.dbPasswordSecretUri.replace(/\/$/, '')) throw new Error('Container App의 db-password가 설정한 Key Vault 비밀을 가리키지 않습니다. provision.sh로 다시 준비하세요.');
@@ -68,7 +70,8 @@ export class AzureProvider implements Provider {
         ...app.template,
         revisionSuffix: revisionSuffix(request.deployment_id),
         containers: [{
-          name: 'app', image: request.image, resources: current?.resources,
+          // 매번 전체 템플릿을 보내므로 자원도 이번 모양으로 다시 쓴다(이전 계획 배포의 자원이 남지 않게).
+          name: 'app', image: request.image, resources: { cpu: shape.cpu, memory: shape.memory },
           env: [
             { name: 'SPRING_DATASOURCE_URL', value: `jdbc:postgresql://${c.dbHost}:5432/${c.dbName}?sslmode=require` },
             { name: 'SPRING_DATASOURCE_USERNAME', value: c.dbUsername },
@@ -77,18 +80,21 @@ export class AzureProvider implements Provider {
             { name: 'SPRING_PROFILES_ACTIVE', value: request.env.SPRING_PROFILES_ACTIVE ?? 'demo,session-memory' },
             { name: 'SERVER_PORT', value: String(c.port) },
             { name: 'TZ', value: request.options.tz },
+            // 계획 배포만: 인스턴스당 DB 연결 3개. 최대 대수까지 늘어도 B1ms 연결 한도 안에 든다.
+            ...(request.architecture ? [{ name: 'SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE', value: PLANNED_POOL_SIZE }] : []),
           ],
           probes: [{ type: 'Readiness', httpGet: { path: request.health_path, port: c.port }, periodSeconds: 5, failureThreshold: 3 }],
         }],
-        // 0으로 줄어들지 않게 최소·최대를 같게 고정 (첫 요청 지연 방지)
-        scale: { minReplicas: request.options.replicas, maxReplicas: request.options.replicas, rules: [] },
+        // 0으로 줄어들지 않게 최소를 시작 대수로 고정 (첫 요청 지연 방지). 자동 확장 등급만 HTTP 동시 요청으로 늘어난다.
+        scale: { minReplicas: shape.min, maxReplicas: shape.max,
+          rules: shape.scaling === 'AUTOMATIC' ? [{ name: 'http', http: { metadata: { concurrentRequests: HTTP_CONCURRENCY } } }] : [] },
       },
     };
   }
   async deploy(request: DeployRequest, signal: AbortSignal, log: Log): Promise<ReadyResult> {
-    const c = this.config, revision = revisionName(c, request.deployment_id);
+    const c = this.config, revision = revisionName(c, request.deployment_id), shape = shapeOf(request);
     await this.verifySubscription(signal); signal.throwIfAborted();
-    await this.verifyDatabase(signal);
+    const db = await this.verifyDatabase(signal);
     await phase('update_app', log, async () => this.api.putApp(this.desired(await this.api.getApp(signal), request), signal));
     log(`revision requested: ${revision}`);
     const actual = await phase('wait_revision', log, () => this.waitRevision(revision, request, signal));
@@ -98,20 +104,26 @@ export class AzureProvider implements Provider {
       runtime: 'Azure Container Apps', database: 'Azure PostgreSQL Flexible 17', timezone: actual.tz,
       session: actual.profile.includes('session-jdbc') ? 'jdbc' : 'memory', sticky_sessions: String(request.options.sticky_sessions),
       image_digest: request.image.split('@')[1], revision, transport: 'HTTPS',
+      // AWS·GCP와 같은 키. scaling은 GCP와 같은 형식, DB 값은 배포 전에 읽은 실제 서버 값이다.
+      architecture: request.architecture?.template_id ?? 'legacy',
+      scaling: shape.scaling === 'AUTOMATIC' ? `automatic ${shape.min}-${shape.max}` : 'manual',
+      ...(request.architecture ? { db_availability: db.highAvailability, db_tier: db.tier } : {}),
     } };
   }
   private async waitRevision(name: string, request: DeployRequest, signal: AbortSignal) {
+    const minReplicas = shapeOf(request).min;
     while (true) {
       signal.throwIfAborted();
-      const revision = await this.api.getRevision(name, signal);
+      const revision = await this.api.getRevision(name, signal), replicas = revision?.replicas ?? 0;
       if (revision?.provisioningState === 'Failed' || revision?.runningState === 'Failed') throw new Error(`리비전 실패: ${revision.provisioningError ?? revision.runningState}`);
       const container = revision?.template?.containers?.find(v => v.name === 'app');
       if (revision && container?.image !== request.image) throw new Error('리비전 이미지가 요청한 digest와 다릅니다.');
       // runningState는 실패 판단에만 쓴다. 정상 값은 SDK에 없는 것도 온다 (최소=최대 복제본이면 'RunningAtMaxScale', 2026-10-09 실측).
       if (revision?.provisioningState === 'Provisioned' && revision.active && revision.healthState === 'Healthy' &&
-        revision.trafficWeight === 100 && revision.replicas === request.options.replicas && (await this.api.getApp(signal)).latestReadyRevisionName === name) {
+        // 자동 확장이 있으면 시작 대수보다 많을 수 있어 '최소 이상'으로 본다.
+        revision.trafficWeight === 100 && replicas >= minReplicas && (await this.api.getApp(signal)).latestReadyRevisionName === name) {
         const env = Object.fromEntries(container?.env?.map(e => [e.name, e.value]) ?? []);
-        return { replicas: revision.replicas, tz: env.TZ ?? 'unknown', profile: env.SPRING_PROFILES_ACTIVE ?? 'unknown' };
+        return { replicas, tz: env.TZ ?? 'unknown', profile: env.SPRING_PROFILES_ACTIVE ?? 'unknown' };
       }
       await sleep(this.pollMs, undefined, { signal });
     }
