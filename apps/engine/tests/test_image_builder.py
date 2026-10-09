@@ -342,3 +342,16 @@ def test_provider_response_must_match_prompt_schema(output):
         'stop_reason':'end_turn','content':[{'type':'text','text':json.dumps(output)}]})))
     connection.key='test';connection.model='test'
     with pytest.raises(LlmError):connection.suggest({})
+
+
+@pytest.mark.parametrize('payload', [
+    [], None, {}, {'content': None}, {'content': 'SECRET'},
+    {'content': [None]}, {'content': ['SECRET']},
+    {'content': [{'type': 'text', 'text': None}]},
+    {'content': [{'type': 'text', 'text': {'secret': 'SECRET'}}]},
+])
+def test_malformed_provider_envelope_is_sanitized(payload):
+    connection=LlmConnection(httpx.MockTransport(lambda _:httpx.Response(200,json=payload)))
+    with pytest.raises(LlmError) as error:
+        connection.message('fake-key','fake-model','test')
+    assert 'SECRET' not in str(error.value)

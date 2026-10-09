@@ -45,6 +45,13 @@ class LlmConnection:
                 if response.status_code == 429: raise LlmError('Claude 사용 한도에 도달했습니다. 잠시 후 다시 시도하세요.')
                 if response.status_code >= 400: raise LlmError('Claude 요청 실패입니다. 모델 이름·계정 잔액을 확인하세요.')
                 data=response.json()
+                if not isinstance(data, dict) or not isinstance(data.get('content'), list):
+                    raise LlmError('Claude 응답 형식이 올바르지 않습니다. 다시 시도하세요.')
+                for block in data['content']:
+                    if not isinstance(block, dict) or not isinstance(block.get('type'), str):
+                        raise LlmError('Claude 응답 형식이 올바르지 않습니다. 다시 시도하세요.')
+                    if block['type'] == 'text' and not isinstance(block.get('text'), str):
+                        raise LlmError('Claude 응답 형식이 올바르지 않습니다. 다시 시도하세요.')
                 if data.get('stop_reason') == 'max_tokens': raise LlmError('Claude 응답이 잘렸습니다. 수동 설정을 사용하세요.')
                 result=''.join(x.get('text','') for x in data.get('content',[]) if x.get('type')=='text')
                 if not result.strip(): raise LlmError('Claude가 빈 응답을 반환했습니다.')
