@@ -1,0 +1,84 @@
+{
+  "schema_version": "3.0",
+  "scope": "docker_semgrep_and_gitleaks_text_secrets",
+  "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\semgrep\\vulnerable",
+  "decision": "DENY",
+  "scan_status": "SUCCESS",
+  "reason_code": "RISK_DETECTED",
+  "docker_compose": {
+    "schema_version": "1.0",
+    "scope": "docker_compose_privileged_only",
+    "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\semgrep\\vulnerable",
+    "scan_status": "SUCCESS",
+    "decision": "ALLOW",
+    "files": [
+      {
+        "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\semgrep\\vulnerable\\compose.yaml",
+        "decision": "ALLOW",
+        "findings": [],
+        "error": null
+      }
+    ],
+    "errors": []
+  },
+  "semgrep": {
+    "tool": "semgrep",
+    "scope": "local_python_mvp_rules",
+    "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\semgrep\\vulnerable",
+    "scan_status": "SUCCESS",
+    "decision": "DENY",
+    "findings": [
+      {
+        "tool": "semgrep",
+        "rule_id": "security-gate-python-eval",
+        "severity": "HIGH",
+        "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\semgrep\\vulnerable\\sample.py",
+        "line": 5,
+        "decision": "DENY",
+        "reason_code": "PYTHON_DYNAMIC_EVAL"
+      },
+      {
+        "tool": "semgrep",
+        "rule_id": "security-gate-python-shell-true",
+        "severity": "HIGH",
+        "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\semgrep\\vulnerable\\sample.py",
+        "line": 9,
+        "decision": "DENY",
+        "reason_code": "PYTHON_SHELL_EXECUTION"
+      }
+    ],
+    "errors": [],
+    "scanned_files": 1
+  },
+  "gitleaks": {
+    "tool": "gitleaks",
+    "scope": "local_directory_text_secrets",
+    "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\semgrep\\vulnerable",
+    "scan_status": "SUCCESS",
+    "decision": "ALLOW",
+    "version": "8.30.0",
+    "scanned_files": 2,
+    "findings": [],
+    "errors": []
+  },
+  "findings": [
+    {
+      "tool": "semgrep",
+      "rule_id": "security-gate-python-eval",
+      "severity": "HIGH",
+      "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\semgrep\\vulnerable\\sample.py",
+      "line": 5,
+      "decision": "DENY",
+      "reason_code": "PYTHON_DYNAMIC_EVAL"
+    },
+    {
+      "tool": "semgrep",
+      "rule_id": "security-gate-python-shell-true",
+      "severity": "HIGH",
+      "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\semgrep\\vulnerable\\sample.py",
+      "line": 9,
+      "decision": "DENY",
+      "reason_code": "PYTHON_SHELL_EXECUTION"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "target": "tests/fixtures/gitleaks/safe",
+  "docker_timeout_seconds": 5.0,
+  "semgrep_timeout_seconds": 30.0,
+  "gitleaks_timeout_seconds": 30.0,
+  "max_file_bytes": 1048576
+}
