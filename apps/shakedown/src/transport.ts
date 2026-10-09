@@ -14,6 +14,8 @@ const resolveTunnel = async (host: string): Promise<string[]> => {
 /** Same fallback as Local Target publicHealth: only a Quick Tunnel DNS miss.
  * Keep the original HTTPS hostname/SNI and certificate verification. No OS DNS changes.
  * Resolution happens before connection; never retry a submitted POST.
+ * (DNS 조회는 연결 전에 끝나므로 이 우회 때문에 POST가 다시 가는 일은 없다는 뜻이다.
+ *  POST를 다시 보내는 경우는 앱에 넘어가지 않은 엣지 530(아래 tunnelNotReady) 하나뿐이고, http.ts의 send가 맡는다.)
  */
 export function createTunnelLookup(
   system: (host: string) => Promise<LookupAddress[]> = host => lookup(host, { all: true }),

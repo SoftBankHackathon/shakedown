@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { createServer, type Server } from "node:http";
+import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -127,6 +127,26 @@ test("기준 환경이 계속 Cloudflare 530(터널 미준비)이면 1단계 실
   assert.equal(done.status, "failed");
   assert.equal(done.error, `baseline local is not reachable: ${tunnel}`);
   assert.deepEqual(done.steps, []);
+});
+
+test("기준 환경이 접속 확인 뒤 잠깐 Cloudflare 530을 내도(200 → 530 → 200) 시운전을 끝낸다", async () => {
+  // Cloudflare 엣지 흉내: 두 번째 요청(접속 확인 다음, 1단계 GET /join)만 앱에 넘기지 않고 530으로 답한다.
+  const app = new URL(await board());
+  let hits = 0;
+  const edge = await listen(createServer((req, res) => {
+    if (++hits === 2) return void res.writeHead(530, { server: "cloudflare", "content-type": "text/html" }).end("Error 1033");
+    req.pipe(httpRequest({ host: app.hostname, port: app.port, path: req.url, method: req.method, headers: req.headers }, (up) => {
+      res.writeHead(up.statusCode ?? 502, up.headers);
+      up.pipe(res);
+    }));
+  }));
+  const base = await api();
+  const { body } = await post(base, request(edge, await board()));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.status, "done", done.error);
+  assert.equal(done.verdict?.status, "PASS");
+  assert.equal(done.steps.length, 8);
+  assert.deepEqual(done.steps[0].local.hops, [{ method: "GET", path: "/join", status: 200, instance: null }]);
 });
 
 test("기준 환경이 시나리오를 통과하지 못하면 failed, 단계 결과는 남긴다", async () => {
