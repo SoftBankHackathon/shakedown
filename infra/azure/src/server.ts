@@ -24,8 +24,8 @@ store.bindStack(JSON.stringify([config.subscriptionId, config.projectId, config.
 const manager = new Manager(store, provider);
 await manager.recover();
 const app = buildApp(manager);
-await app.listen({ port: 9103, host: '127.0.0.1' });
-console.log('Azure adapter listening on http://127.0.0.1:9103');
+await app.listen({ port: 9104, host: '127.0.0.1' });
+console.log('Azure adapter listening on http://127.0.0.1:9104');
 let closing = false;
 for (const event of ['SIGINT', 'SIGTERM'] as const) process.on(event, async () => {
   if (closing) return; closing = true;

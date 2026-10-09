@@ -96,7 +96,7 @@ def test_preflight_requires_azure_adapter_health(monkeypatch, configured, projec
     monkeypatch.setattr(runner, 'call', lambda method, path, body=None: health)
     if ok: runner.preflight(project)
     else:
-        with pytest.raises(DeploymentError, match='9103'): runner.preflight(project)
+        with pytest.raises(DeploymentError, match='9104'): runner.preflight(project)
 
 
 def test_publish_copies_ecr_digest_into_acr_and_keeps_tokens_off_argv(monkeypatch, configured):
@@ -143,4 +143,4 @@ def test_valid_url_matches_configured_public_url_only(configured):
 def test_call_errors_point_at_azure_adapter(monkeypatch):
     def refuse(self, method, url, **kwargs): raise httpx.ConnectError('refused')
     monkeypatch.setattr(httpx.Client, 'request', refuse)
-    with pytest.raises(DeploymentError, match='Azure Target request failed.*9103'): AzureRunner().call('GET', '/health')
+    with pytest.raises(DeploymentError, match='Azure Target request failed.*9104'): AzureRunner().call('GET', '/health')

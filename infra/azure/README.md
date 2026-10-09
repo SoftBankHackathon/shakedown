@@ -13,7 +13,7 @@
 
 ```mermaid
 flowchart LR
-  Engine[엔진] -->|HTTP, 127.0.0.1:9103| Adapter[Azure 어댑터 Node/TS]
+  Engine[엔진] -->|HTTP, 127.0.0.1:9104| Adapter[Azure 어댑터 Node/TS]
   Adapter --> State[(로컬 SQLite 실행 기록)]
   Adapter -->|Azure SDK + az login 자격| ACA[Container App 복제본 1~2개]
   Internet((인터넷)) -->|HTTPS 기본 주소| ACA
@@ -58,7 +58,7 @@ flowchart LR
 지금 엔진은 대상이 `local`, `aws`로 고정되어 있어 Azure를 끼우려면 엔진 수정이 필요하다 (`apps/engine/engine/deployments.py`).
 - **대상 표 하나로 일반화**: 이름 → 어댑터 주소, 허용 옵션, 시간 제한, 이미지 저장소. 대상 목록 2개 제한, `aws` 하드코딩, 비교 대상 `Endpoint(name='aws')`를 이 표 기준으로 변경
 - **이미지 게시 일반화**: 한 번 빌드한 digest를 선택된 대상마다 그 대상의 저장소로 `crane copy` (내용을 그대로 복사해 digest 유지). `docker push`를 두 번 하는 방식은 digest가 달라질 수 있어 쓰지 않음. 복사는 Local·AWS 배포와 동시에 진행. ECR→ACR 고정이 아니므로 Local+Azure만으로도 동작
-- **계약 문서**: `target.yaml` 서버 목록에 9103 추가, 대상별 제약은 산문 대신 `packages/contracts/README.md`에 표 하나로 정리
+- **계약 문서**: `target.yaml` 서버 목록에 9104 추가, 대상별 제약은 산문 대신 `packages/contracts/README.md`에 표 하나로 정리
 - 대시보드: `apps/web/src/lib/targets.ts`에서 azure `available: true`
 
 ## 5. 설정 파일 (`.data/azure/config.json`, 비밀값 없음)

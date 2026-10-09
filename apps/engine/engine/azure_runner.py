@@ -20,7 +20,7 @@ ACR_TOKEN_USER = '00000000-0000-0000-0000-000000000000'
 
 class AzureRunner(LocalRunner):
     def __init__(self):
-        self.base = 'http://127.0.0.1:9103'
+        self.base = 'http://127.0.0.1:9104'
 
     def config(self):
         path = os.environ.get('AZURE_ADAPTER_CONFIG')
@@ -68,7 +68,7 @@ class AzureRunner(LocalRunner):
             raise DeploymentError('Azure CLI subscription does not match the configured stack.')
         health = self.call('GET', '/health')
         if not health or health.get('target') != 'azure' or health.get('ok') is not True:
-            raise DeploymentError('Azure adapter is not ready on 127.0.0.1:9103.')
+            raise DeploymentError('Azure adapter is not ready on 127.0.0.1:9104.')
 
     def docker_env(self, auth):
         # A private, temporary Docker config prevents persisting registry tokens in the user's config.
@@ -133,4 +133,4 @@ class AzureRunner(LocalRunner):
                 response.raise_for_status()
                 return response.json() if response.content else None
         except (httpx.HTTPError, ValueError):
-            raise DeploymentError('Azure Target request failed; inspect the adapter on 127.0.0.1:9103 and its deployment logs.') from None
+            raise DeploymentError('Azure Target request failed; inspect the adapter on 127.0.0.1:9104 and its deployment logs.') from None
