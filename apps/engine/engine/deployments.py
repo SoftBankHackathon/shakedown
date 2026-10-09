@@ -80,12 +80,15 @@ class LocalRunner:
     def build(self, project, image, platform=None):
         with self.source(project.repo) as root:
             # Re-analyze the actual checkout, rather than trusting an earlier branch revision.
-            analysis = RepoAnalyzer().analyze(str(root))
+            from engine.analyzer import ImageRepoAnalyzer
+            analysis = ImageRepoAnalyzer().analyze(str(root))
+            if getattr(project,'runtime',None):
+                analysis.port=project.runtime['port']; analysis.health_path=project.runtime['health_path']
             from engine.image_builder import app_context, prepared, BuildError
             from engine.llm import LlmError
             try:
                 context = app_context(root, analysis)
-                if analysis.database not in {'postgres', 'postgresql'}:
+                if not getattr(project, 'runtime', None) and analysis.database not in {'postgres', 'postgresql'}:
                     raise DeploymentError('Deployment currently requires the PostgreSQL sample application; use image build for other stacks.')
                 def build_at(path):
                     command = ['docker', 'build', '-t', image, str(path)] if platform is None else ['docker', 'buildx', 'build', '--platform', platform, '--provenance=false', '--sbom=false', '--load', '-t', image, str(path)]
@@ -195,7 +198,7 @@ class DeploymentStore:
             options[target] = opts
         if 'aws' in targets:
             self.aws.preflight(project)
-            if architecture: self.aws.validate_architecture(architecture)
+            if architecture: self.aws.validate_architecture(architecture, project)
         d = dict(id='dep_' + uuid.uuid4().hex, project_id=project.id, created=time.time(), status='queued',
                  shakedown=request.shakedown, autofix=False, options=options, targets={name: {'status':'pending','label': 'Local Docker' if name == 'local' else 'AWS ECS'} for name in targets},
                  architecture=architecture, architecture_plan_id=request.architecture_plan_id, attempts=[], timings={}, ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0))
@@ -251,7 +254,11 @@ class DeploymentStore:
                 if target == 'aws' and d.get('architecture'):
                     # Only server-resolved catalog IDs cross the adapter boundary.
                     body['architecture'] = {'version': 'aws-architecture.v1', 'template_id': d['architecture']['id']}
-                    body['env'] = {'SPRING_PROFILES_ACTIVE': 'demo,session-jdbc'}
+                    if not project.runtime: body['env'] = {'SPRING_PROFILES_ACTIVE': 'demo,session-jdbc'}
+                if project.runtime:
+                    body.pop('database',None); body.pop('secret_refs',None)
+                    body['runtime']=project.runtime
+                    body['port']=project.runtime['port']; body['health_path']=project.runtime['health_path']
                 submitted.append(target)
                 runner.call('POST', '/deployments', body)
                 deadline = time.monotonic() + (max(self.timeout, 2700) if target == 'aws' and d.get('architecture') else self.timeout)

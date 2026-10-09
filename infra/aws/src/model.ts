@@ -1,6 +1,8 @@
+import { validateRuntime, type HttpRuntime } from '../../../packages/contracts/runtime.mjs';
 import { z } from 'zod';
 
 export const requestSchema = z.object({
+  runtime: z.custom<HttpRuntime>(v=>{try { validateRuntime(v);return true; } catch { return false; }}).optional(),
   deployment_id: z.string().regex(/^dep_[a-z0-9]{1,60}$/),
   project_id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
   image: z.string().max(512),

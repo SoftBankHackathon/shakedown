@@ -107,3 +107,68 @@ test('foundation blocks all clients while retaining the ECS target group associa
   assert.deepEqual(r.TrafficGate.Properties.Conditions, [{ Field: 'source-ip', SourceIpConfig: { Values: ['0.0.0.0/0', '::/0'] } }]);
   assert.equal(r.TrafficGate.Properties.Actions[0].FixedResponseConfig.StatusCode, '403');
 });
+
+for (const mode of ['none','postgres','external'] as const) {
+  test(`generic ${mode} runtime uses ECS env/secret mappings without Spring injection`,async t=>{
+    const fake=setup();
+    if(mode!=='postgres') {
+      fake.provider.config={...config,dbHost:undefined,dbName:undefined,dbUsername:undefined,dbPasswordSecretArn:undefined};
+      fake.provider.scaling.send=(async()=>({})) as typeof fake.provider.scaling.send;
+    }
+    fake.provider.config.secrets={external_url:`arn:aws:secretsmanager:ap-northeast-2:${config.accountId}:secret:external`};
+    fake.provider.rds.send=(async()=>{throw new Error('DB must not be mutated without architecture selection');}) as typeof fake.provider.rds.send;
+    t.mock.method(globalThis,'fetch',async()=>new Response('',{status:fake.route}));
+    const runtime={version:'http-runtime.v1',port:8080,health_path:'/health',env:{NODE_ENV:'production'},secret_refs:mode==='external'?{DATABASE_URL:'external_url'}:{},database:{mode,name:config.dbName!,bindings:mode==='postgres'?{PGHOST:'host',PGUSER:'username',PGPASSWORD:'password'}:{}},init_command:[]};
+    const r=requestSchema.parse({...request,env:{},runtime,health_path:'/health'});
+    const result=await fake.provider.deploy(r,AbortSignal.timeout(2000),()=>{});
+    assert.equal(result.info.session,'app-managed');
+    const app=(fake.definitions[0] as any).containerDefinitions[0];
+    assert.ok(!app.environment.some((e:any)=>e.name.startsWith('SPRING')));
+    assert.equal(app.environment.find((e:any)=>e.name==='PORT').value,'8080');
+    assert.equal(app.secrets.length,mode==='none'?0:1);
+    if(mode==='postgres') {
+      assert.equal(app.secrets[0].name,'PGPASSWORD');
+      assert.equal(app.environment.find((e:any)=>e.name==='PGHOST').value,config.dbHost);
+    }
+    assert.ok(!fake.actions.includes('RunTaskCommand'));
+  });
+}
+
+test('generic initialization overrides image entrypoint and a failing migration stops rollout',async()=>{
+  const fake=setup();let definition:any;
+  fake.provider.ecs.send=(async(c:any)=>{
+    if(c.constructor.name==='RegisterTaskDefinitionCommand'){definition=c.input;return {taskDefinition:{taskDefinitionArn:'migration'}};}
+    if(c.constructor.name==='RunTaskCommand')return {tasks:[{taskArn:'migration-task'}]};
+    if(c.constructor.name==='DescribeTasksCommand')return {tasks:[{lastStatus:'STOPPED',containers:[{name:'app',exitCode:1}]}]};
+    return {};
+  }) as typeof fake.provider.ecs.send;
+  const runtime={version:'http-runtime.v1',port:8080,health_path:'/',env:{},secret_refs:{},database:{mode:'postgres',name:config.dbName!,bindings:{DB_PASSWORD:'password'}},init_command:['python','migrate.py']};
+  await assert.rejects(fake.provider.initialize(requestSchema.parse({...request,env:{},runtime}),()=>{}),/initialization failed/);
+  assert.deepEqual(definition.containerDefinitions[0].entryPoint,['python']);
+  assert.deepEqual(definition.containerDefinitions[0].command,['migrate.py']);
+});
+
+test('DB-free foundation makes RDS resources/secret grants conditional and parameterizes app port',()=>{
+  const f=YAML.parse(readFileSync(new URL('../cloudformation/foundation.yaml',import.meta.url),'utf8'));
+  for(const name of ['Database','DbSecret','DbSg','DbSubnets'])assert.equal(f.Resources[name].Condition,'WithDatabase');
+  assert.deepEqual(f.Resources.TargetGroup.Properties.Port,{Ref:'AppPort'});
+  assert.equal(f.Outputs.DbHost.Condition,'WithDatabase');
+});
+
+test('DB-free medium architecture applies compute and scaling without any RDS call',async t=>{
+  const fake=setup();
+  fake.provider.config={...config,dbHost:undefined,dbName:undefined,dbUsername:undefined,dbPasswordSecretArn:undefined};
+  fake.tasks.forEach((task,i)=>Object.assign(task,{availabilityZone:`az${i}`}));
+  fake.provider.ec2.send=(async()=>({Subnets:[{AvailabilityZone:'az0',VpcId:'v'},{AvailabilityZone:'az1',VpcId:'v'}]})) as typeof fake.provider.ec2.send;
+  const scale:string[]=[];
+  fake.provider.scaling.send=(async(c:any)=>{scale.push(c.constructor.name);return {};}) as typeof fake.provider.scaling.send;
+  fake.provider.rds.send=(async()=>{assert.fail('DB-free architecture must not call RDS');}) as typeof fake.provider.rds.send;
+  t.mock.method(globalThis,'fetch',async()=>new Response('',{status:fake.route}));
+  const runtime={version:'http-runtime.v1',port:8080,health_path:'/',env:{},secret_refs:{},database:{mode:'none',name:'app',bindings:{}},init_command:[]};
+  const r=requestSchema.parse({...request,env:{},runtime,architecture:{version:'aws-architecture.v1',template_id:'medium'}});
+  const result=await fake.provider.deploy(r,AbortSignal.timeout(2000),()=>{});
+  assert.equal(result.info.database,'none');
+  assert.equal((fake.definitions[0] as any).cpu,'1024');
+  assert.ok(scale.includes('RegisterScalableTargetCommand'));
+  assert.ok(!fake.actions.includes('RunTaskCommand'));
+});

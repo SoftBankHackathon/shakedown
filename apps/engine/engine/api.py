@@ -12,6 +12,7 @@ from engine.llm import LlmConnection, ConnectionRequest, LlmError
 from engine.image_builder import ImageBuilder, PlanRequest, BuildError
 from engine.analyzer import AnalysisError
 from engine.models import CreateProjectRequest, Project
+from engine.runtime import HttpRuntime
 from engine.architecture import ArchitecturePlanner, ArchitectureRequest, ArchitectureSelection, ArchitectureError
 from engine.projects import DATA_DIR, ProjectStore
 
@@ -44,6 +45,8 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
     async def invalid_request(_request, _exc):
         # Pydantic errors include raw input; never serialize them or log bodies.
         detail = '아키텍처 입력을 확인하세요. RPS는 0 이상의 정수이며 서비스 형태·가용성·트래픽 옵션은 제공된 값이어야 합니다.' if '/architecture-plans' in _request.url.path else 'Invalid request body; check repo, name and targets.'
+        if _request.url.path.endswith('/runtime'):
+            detail='실행 설정을 확인하세요. 포트·경로·DB 변수 연결·초기화 명령 형식이 필요하며, 비밀값은 등록된 참조 이름으로만 입력하세요.'
         return JSONResponse(status_code=400, content={'detail': detail})
 
     @api.exception_handler(ArchitectureError)
@@ -106,6 +109,12 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
         try: return api.state.architecture.select(project,plan_id,body.template_id)
         except ArchitectureError: raise
         except Exception: raise ArchitectureError('설계안 선택 전 저장소를 확인하지 못했습니다. 저장소 접근과 설정을 확인하세요.') from None
+
+    @api.post('/api/projects/{project_id}/runtime')
+    def runtime_config(project_id: str, body: HttpRuntime):
+        project=api.state.store.set_runtime(project_id,body)
+        if project is None: raise HTTPException(status_code=404,detail='Project not found.')
+        return project
 
     @api.get('/api/health')
     def health():

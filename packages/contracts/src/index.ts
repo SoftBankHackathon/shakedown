@@ -1,3 +1,5 @@
+export type { HttpRuntime } from '../runtime.mjs';
+import type { HttpRuntime } from '../runtime.mjs';
 // Shared data contracts between the deploy engine, the shakedown runner and the dashboard.
 // Change these together: every package imports from here.
 //
@@ -54,6 +56,7 @@ export type Deployment = {
 };
 
 export type Project = {
+  runtime?: HttpRuntime | null;
   id: string;
   name: string;
   repo: string;
@@ -165,6 +168,7 @@ export type DeployRequest = {
 
 /** Target API v0.1.1 proposal — distinct from the engine's DeployRequest. */
 export type TargetDeployRequest = {
+  runtime?: HttpRuntime;
   architecture?: {version: "aws-architecture.v1"; template_id: ArchitectureTier};
   deployment_id: string;
   project_id: string;

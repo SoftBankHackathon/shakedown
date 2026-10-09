@@ -1,3 +1,4 @@
+import { validateRuntime } from '../../packages/contracts/runtime.mjs';
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, readdir, rm } from 'node:fs/promises';
@@ -25,6 +26,10 @@ export function validate(input) {
   if (opts.tz !== undefined) {
     if (typeof opts.tz !== 'string') throw new Error('Invalid tz');
     try { new Intl.DateTimeFormat('en', { timeZone: opts.tz }); } catch { throw new Error('Invalid tz'); }
+  }
+  if (input.runtime !== undefined) {
+    validateRuntime(input.runtime);
+    if (input.port!==input.runtime.port || input.health_path!==input.runtime.health_path || input.database || Object.keys(input.env??{}).length || Object.keys(input.secret_refs??{}).length) throw new Error('Do not mix runtime and legacy settings');
   }
   return input;
 }

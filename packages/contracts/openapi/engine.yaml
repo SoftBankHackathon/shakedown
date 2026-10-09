@@ -93,6 +93,24 @@ paths:
               schema: { $ref: "#/components/schemas/Project" }
         "404":
           description: 없음
+  /api/projects/{project_id}/runtime:
+    post:
+      summary: Save explicit HTTP container runtime and DB bindings
+      parameters:
+        - {name: project_id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/HttpRuntime'}
+      responses:
+        '200':
+          description: Updated project
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Project'}
+        '400': {description: Invalid runtime; use secret references, not secret values}
+        '404': {description: Project not found}
   /api/projects/{project_id}/deployments:
     post:
       operationId: deploy
@@ -659,6 +677,7 @@ components:
             properties:
               name: { type: string }
               value: { type: string, example: "••••••••" }
+        runtime: {oneOf: [{$ref: '#/components/schemas/HttpRuntime'}, {type: 'null'}]}
         last_deployment: { oneOf: [{ $ref: "#/components/schemas/Deployment" }, { type: "null" }] }
     Deployment:
       type: object
@@ -688,3 +707,77 @@ components:
       type: object
       properties:
         detail: { type: string }
+
+    HttpRuntime:
+      additionalProperties: false
+      properties:
+        version:
+          const: http-runtime.v1
+          default: http-runtime.v1
+          title: Version
+          type: string
+        port:
+          maximum: 65535
+          minimum: 1
+          title: Port
+          type: integer
+        health_path:
+          default: /
+          maxLength: 256
+          pattern: ^/(?!/)[^\s?#\\]*$
+          title: Health Path
+          type: string
+        env:
+          additionalProperties:
+            type: string
+          maxProperties: 64
+          title: Env
+          type: object
+        secret_refs:
+          additionalProperties:
+            type: string
+          maxProperties: 32
+          title: Secret Refs
+          type: object
+        database:
+          $ref: '#/components/schemas/RuntimeDatabase'
+        init_command:
+          items:
+            type: string
+          maxItems: 32
+          title: Init Command
+          type: array
+      required:
+      - port
+      title: HttpRuntime
+      type: object
+    RuntimeDatabase:
+      additionalProperties: false
+      properties:
+        mode:
+          default: none
+          enum:
+          - none
+          - postgres
+          - external
+          title: Mode
+          type: string
+        name:
+          default: app
+          pattern: ^[a-z][a-z0-9_]{0,62}$
+          title: Name
+          type: string
+        bindings:
+          additionalProperties:
+            enum:
+            - host
+            - port
+            - name
+            - username
+            - password
+            - jdbc_url
+            type: string
+          title: Bindings
+          type: object
+      title: RuntimeDatabase
+      type: object

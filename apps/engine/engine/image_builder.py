@@ -192,6 +192,9 @@ class ImageBuilder:
         with self.runner.source(project.repo) as root:
             with checked_source(root) as (source,report):
                 analysis=ImageRepoAnalyzer().analyze(str(source))
+                if getattr(project, "runtime", None):
+                    analysis.port = project.runtime["port"]
+                    analysis.health_path = project.runtime["health_path"]
                 context=app_context(source,analysis)
                 plan=make_plan(context,analysis,options,self.llm)
                 plan['security_gate']=report

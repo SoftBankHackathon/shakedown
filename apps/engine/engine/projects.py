@@ -81,3 +81,12 @@ class ProjectStore:
                            (project.id, repo, project.model_dump_json()))
                 row = db.execute('SELECT payload FROM projects WHERE repo = ?', (repo,)).fetchone()
             return Project.model_validate_json(row[0])
+
+    def set_runtime(self, project_id, runtime):
+        with self.lock, self.connect() as db:
+            row=db.execute('SELECT payload FROM projects WHERE id=?',(project_id,)).fetchone()
+            if not row: return None
+            project=Project.model_validate_json(row[0])
+            project.runtime=runtime.model_dump()
+            db.execute('UPDATE projects SET payload=? WHERE id=?',(project.model_dump_json(),project_id))
+            return project

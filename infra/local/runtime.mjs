@@ -1,6 +1,7 @@
+import { databaseEnvironment, validateRuntime } from '../../packages/contracts/runtime.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, writeFile, chmod } from 'node:fs/promises';
+import { mkdir, writeFile, chmod, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { publicHealth } from './probe.mjs';
 const exec = promisify(execFile);
@@ -8,6 +9,17 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const literal = value => String(value).replaceAll('$', () => '$$');
 
 export function composeSpec(request, password, secrets = {}) {
+  if (request.runtime) {
+    const r=validateRuntime(request.runtime), managed=r.database.mode==='postgres';
+    const env={...r.env,...secrets,PORT:String(r.port),TZ:request.options?.tz??'UTC',
+      ...(managed?databaseEnvironment(r,{host:'db',username:'app',ssl:false}):{}),
+      ...Object.fromEntries(Object.entries(r.database.bindings).filter(([,v])=>v==='password').map(([k])=>[k,password]))};
+    return {services:{
+      ...(managed?{db:{image:'postgres:17-alpine',environment:{POSTGRES_DB:r.database.name,POSTGRES_USER:'app',POSTGRES_PASSWORD:literal(password)},volumes:['pgdata:/var/lib/postgresql/data'],healthcheck:{test:['CMD','pg_isready','-U','app','-d',r.database.name],interval:'2s',timeout:'3s',retries:30}}}:{}),
+      app:{image:request.image,environment:Object.fromEntries(Object.entries(env).map(([k,v])=>[k,literal(v)])),...(managed?{depends_on:{db:{condition:'service_healthy'}}}:{})},
+      tunnel:{image:'cloudflare/cloudflared@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07',command:['tunnel','--no-autoupdate','--protocol','http2','--url',`http://app:${r.port}`],depends_on:['app']},
+    },...(managed?{volumes:{pgdata:{}}}:{})};
+  }
   const database = request.database?.name ?? 'board_db';
   const env = {
     ...request.env, ...secrets,
@@ -53,7 +65,7 @@ export class DockerRuntime {
   }
   resolved(request) {
     const result = {};
-    for (const [env, ref] of Object.entries(request.secret_refs ?? {})) {
+    for (const [env, ref] of Object.entries(request.runtime?.secret_refs ?? request.secret_refs ?? {})) {
       const value = this.secrets[ref] ?? (ref === 'db_password' ? this.password : undefined);
       if (typeof value !== 'string' || !value) throw new Error(`Unknown secret reference: ${ref}`);
       result[env] = value;
@@ -62,7 +74,7 @@ export class DockerRuntime {
   }
   validate(request) {
     const secrets = this.resolved(request);
-    if (!(secrets.SPRING_DATASOURCE_PASSWORD || this.password)) throw new Error('Set LOCAL_DB_PASSWORD or a database password secret reference');
+    if ((!request.runtime || request.runtime.database.mode==='postgres') && !(secrets.SPRING_DATASOURCE_PASSWORD || this.password)) throw new Error('Set LOCAL_DB_PASSWORD or a database password secret reference');
   }
   redact(value) {
     let text = String(value);
@@ -76,11 +88,15 @@ export class DockerRuntime {
     const file = path.join(this.dir(request.deployment_id), 'compose.json');
     await writeFile(file, JSON.stringify(spec), { mode: 0o600 });
     await chmod(file, 0o600);
-    log('Starting PostgreSQL, app and Cloudflare Tunnel');
+    log('Starting configured HTTP application and dependencies');
     try {
-      await this.command(request.deployment_id, ['up', '-d', '--wait', '--wait-timeout', '90', 'db']);
-      // Initialize shared JDBC session tables before app startup, also for PG.
-      await this.command(request.deployment_id, ['run', '--rm', '--no-deps', '-e', 'SPRING_PROFILES_ACTIVE=schema-init', '-e', 'SPRING_JPA_HIBERNATE_DDL_AUTO=update', 'app']);
+      if (!request.runtime || request.runtime.database.mode==='postgres') await this.command(request.deployment_id, ['up', '-d', '--wait', '--wait-timeout', '90', 'db']);
+      if (!request.runtime) {
+        await this.command(request.deployment_id, ['run', '--rm', '--no-deps', '-e', 'SPRING_PROFILES_ACTIVE=schema-init', '-e', 'SPRING_JPA_HIBERNATE_DDL_AUTO=update', 'app']);
+      } else if (request.runtime.init_command.length) {
+        const [entry,...args]=request.runtime.init_command;
+        await this.command(request.deployment_id,['run','--rm','--no-deps','--entrypoint',entry,'app',...args]);
+      }
       await this.command(request.deployment_id, ['up', '-d', '--wait', '--wait-timeout', '90']);
     } catch (e) {
       // exec errors may contain environment data; expose only redacted diagnostics.
@@ -95,7 +111,7 @@ export class DockerRuntime {
         try {
           if (await publicHealth(url + request.health_path)) {
             log('Public health check returned HTTP 200');
-            return { url, instances: 1, info: { runtime: 'Docker Compose', database: 'PostgreSQL 17', timezone: request.options?.tz ?? 'UTC', sticky_sessions: 'false', replicas: '1' } };
+            return { url, instances: 1, info: { runtime: 'Docker Compose', database: request.runtime?.database.mode==='none'?'none':request.runtime?.database.mode==='external'?'external':'PostgreSQL 17', timezone: request.options?.tz ?? 'UTC', sticky_sessions: 'false', replicas: '1' } };
           }
         } catch { /* DNS and tunnel readiness may lag container startup. */ }
       }
@@ -106,7 +122,8 @@ export class DockerRuntime {
   async remove(id) { await this.command(id, ['down', '--remove-orphans']); }
   async logs(id) {
     const lines = [];
-    for (const service of ['app','db','tunnel']) {
+    const spec=JSON.parse(await readFile(path.join(this.dir(id),'compose.json'),'utf8'));
+    for (const service of ['app',...(spec.services.db?['db']:[]),'tunnel']) {
       const output = await this.command(id, ['logs', '--no-color', '--no-log-prefix', '--timestamps', '--tail', '200', service]);
       for (const line of output.split('\n').filter(Boolean)) {
         const match = line.match(/^(\S+)\s+(.*)$/);

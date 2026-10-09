@@ -92,3 +92,26 @@ test('invalid requests and unknown secret refs never start Docker',async t=>{
   assert.equal((await api('POST','/deployments',request)).status,400);
   assert.equal((await api('GET','/deployments/dep_test1')).status,404);
 });
+
+test('generic HTTP app without DB has no database, secret or Spring dependency',()=>{
+  const runtime={version:'http-runtime.v1',port:3000,health_path:'/health',env:{NODE_ENV:'production'},secret_refs:{},database:{mode:'none',name:'app',bindings:{}},init_command:[]};
+  const request={deployment_id:'dep_generic',project_id:'test',image:'test:app',port:3000,health_path:'/health',runtime};
+  validate(request);
+  new DockerRuntime('/tmp/unused').validate(request);
+  const spec=composeSpec(request);
+  assert.equal(spec.services.db,undefined);assert.equal(spec.volumes,undefined);
+  assert.equal(spec.services.app.environment.PORT,'3000');
+  assert.ok(!Object.keys(spec.services.app.environment).some(k=>k.startsWith('SPRING')));
+});
+
+test('generic PostgreSQL binds app-specific names and excludes secrets from plain environment contract',()=>{
+  const runtime={version:'http-runtime.v1',port:8000,health_path:'/',env:{},secret_refs:{},database:{mode:'postgres',name:'app',bindings:{CUSTOM_HOST:'host',CUSTOM_PASS:'password',PGUSER:'username'}},init_command:['python','migrate.py']};
+  const request={deployment_id:'dep_generic',project_id:'test',image:'test:app',port:8000,health_path:'/',runtime};
+  validate(request);
+  const spec=composeSpec(request,'p$a');
+  assert.equal(spec.services.app.environment.CUSTOM_PASS,'p$$a');
+  assert.equal(spec.services.app.environment.CUSTOM_HOST,'db');
+  assert.equal(spec.services.db.environment.POSTGRES_USER,'app');
+  assert.ok(!Object.keys(spec.services.app.environment).some(k=>k.startsWith('SPRING')));
+  assert.throws(()=>validate({...request,runtime:{...runtime,secret_refs:{CUSTOM_HOST:'bad'}}}));
+});

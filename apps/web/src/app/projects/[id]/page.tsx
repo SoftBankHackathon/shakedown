@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { RuntimeSettings } from "@/components/runtime-settings";
 import { ArchitecturePlanner } from "@/components/architecture-planner";
 import { ImageBuilder } from "@/components/image-builder";
 import { useParams, useRouter } from "next/navigation";
@@ -215,7 +216,8 @@ export default function ProjectPage() {
       </div>
 
       <p className="text-sm text-muted">AWS가 선택된 Action은 저장한 최신 아키텍처를 적용합니다. 선택한 설계가 없으면 기존 AWS 기본 구성으로 배포합니다.</p>
-      <ArchitecturePlanner key={id} projectId={id} />
+      <RuntimeSettings key={id} project={project} onSaved={setProject} />
+      <ArchitecturePlanner key={id+JSON.stringify(project.runtime)} projectId={id} />
       <ImageBuilder projectId={id} />
 
       <Section title={t("project.deployments")}>

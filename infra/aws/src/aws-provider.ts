@@ -1,3 +1,4 @@
+import { databaseEnvironment } from '../../../packages/contracts/runtime.mjs';
 import { architectures } from './architecture.js';
 import { RDSClient, DescribeDBInstancesCommand, ModifyDBInstanceCommand } from '@aws-sdk/client-rds';
 import { EC2Client, DescribeSubnetsCommand } from '@aws-sdk/client-ec2';
@@ -46,20 +47,28 @@ export class AwsProvider implements Provider {
     const image = await this.ecr.send(new DescribeImagesCommand({ repositoryName: c.repository, imageIds: [{ imageDigest: request.image.split('@')[1] }] }), { abortSignal: signal });
     const mediaType = image.imageDetails?.[0]?.imageManifestMediaType;
     if (!mediaType || mediaType.includes('index') || mediaType.includes('manifest.list')) throw new Error('A single Linux AMD64 image manifest is required; publish with --provenance=false --sbom=false');
+    const runtime=request.runtime;
+    const genericEnv=runtime ? {...runtime.env,PORT:String(runtime.port),TZ:request.options.tz,
+      ...(runtime.database.mode==='postgres'?databaseEnvironment(runtime,{host:c.dbHost!,username:c.dbUsername!,ssl:true}):{})} : {};
+    const genericSecrets=runtime ? [
+      ...Object.entries(runtime.secret_refs).map(([name,ref])=>({name,valueFrom:c.secrets[ref]})),
+      ...Object.entries(runtime.database.bindings).filter(([,v])=>v==='password').map(([name])=>({name,valueFrom:`${c.dbPasswordSecretArn}:password::`})),
+    ] : [];
     const result = await this.ecs.send(new RegisterTaskDefinitionCommand({
       family: c.serviceName, networkMode: 'awsvpc', requiresCompatibilities: ['FARGATE'], cpu: request.architecture ? architectures[request.architecture.template_id].cpu : '512', memory: request.architecture ? architectures[request.architecture.template_id].memory : '1024',
       runtimePlatform: { cpuArchitecture: 'X86_64', operatingSystemFamily: 'LINUX' },
       executionRoleArn: c.executionRoleArn, taskRoleArn: c.taskRoleArn,
       containerDefinitions: [{ name: 'app', image: request.image, essential: true,
         portMappings: [{ containerPort: c.port, protocol: 'tcp' }],
-        environment: Object.entries({
+        environment: Object.entries(runtime ? genericEnv : {
           SPRING_DATASOURCE_URL: `jdbc:postgresql://${c.dbHost}:5432/${c.dbName}?sslmode=require`,
           SPRING_DATASOURCE_USERNAME: c.dbUsername,
           SPRING_JPA_HIBERNATE_DDL_AUTO: initialize ? 'update' : 'validate',
           SPRING_PROFILES_ACTIVE: initialize ? 'schema-init' : (request.env.SPRING_PROFILES_ACTIVE ?? 'demo,session-memory'),
           SERVER_PORT: String(c.port), TZ: request.options.tz,
         }).map(([name, value]) => ({ name, value })),
-        secrets: [{ name: 'SPRING_DATASOURCE_PASSWORD', valueFrom: `${c.dbPasswordSecretArn}:password::` }],
+        secrets: runtime ? genericSecrets : [{ name: 'SPRING_DATASOURCE_PASSWORD', valueFrom: `${c.dbPasswordSecretArn}:password::` }],
+        ...(initialize && runtime ? {entryPoint:[runtime.init_command[0]],command:runtime.init_command.slice(1)} : {}),
         logConfiguration: { logDriver: 'awslogs', options: { 'awslogs-group': c.logGroup, 'awslogs-region': c.region, 'awslogs-stream-prefix': request.deployment_id } },
       }],
     }), { abortSignal: signal });
@@ -74,11 +83,11 @@ export class AwsProvider implements Provider {
     await phase('close_route', log, () => this.closeRoute(signal));
     log('route closed: new deployment is preparing');
     // Stop previous scaling before a rollout; never allow it to undo desiredCount.
-    if (c.dbInstanceId) await this.removeScaling(signal);
-    if (request.architecture) {
+    if (c.dbInstanceId || !c.dbHost) await this.removeScaling(signal);
+    if (request.architecture && (!request.runtime || request.runtime.database.mode==='postgres')) {
       await phase('database_architecture', log, () => this.configureDatabase(request, signal));
-      await phase('schema_init', log, () => this.initialize(request, log, signal));
     }
+    if (request.runtime ? request.runtime.init_command.length>0 : !!request.architecture) await phase('schema_init', log, () => this.initialize(request, log, signal));
     const taskDefinition = await phase('register_task', log, () => this.taskDefinition(request, signal));
     log(`task definition registered: ${taskDefinition}`);
     await this.elb.send(new ModifyTargetGroupCommand({ TargetGroupArn: c.targetGroupArn, HealthCheckPath: request.health_path, Matcher: { HttpCode: '200' } }), { abortSignal: signal });
@@ -104,8 +113,8 @@ export class AwsProvider implements Provider {
     log('public health check passed: HTTP 200 without cookies');
     return { url: c.publicUrl, instances: actual.count, info: {
       architecture: request.architecture?.template_id ?? 'legacy',
-      runtime: 'ECS Fargate', database: 'RDS PostgreSQL 17', timezone: actual.tz,
-      session: actual.profile.includes('session-jdbc') ? 'jdbc' : 'memory', sticky_sessions: 'false',
+      runtime: 'ECS Fargate', database: request.runtime?.database.mode==='none'?'none':request.runtime?.database.mode==='external'?'external':'RDS PostgreSQL 17', timezone: actual.tz,
+      session: request.runtime ? 'app-managed' : actual.profile.includes('session-jdbc') ? 'jdbc' : 'memory', sticky_sessions: 'false',
       image_digest: actual.digest, task_definition: taskDefinition, transport: 'HTTP (demo)',
     } };
   }
@@ -159,7 +168,7 @@ export class AwsProvider implements Provider {
     await this.verifyAccount();
     await this.closeRoute(signal);
     log('public route blocked: HTTP 403 confirmed');
-    if (c.dbInstanceId) await this.removeScaling(signal);
+    if (c.dbInstanceId || !c.dbHost) await this.removeScaling(signal);
     const result = await this.ecs.send(new DescribeServicesCommand({ cluster: c.clusterArn, services: [c.serviceName] }), { abortSignal: signal });
     const service = result.services?.[0];
     if (!service || service.status === 'INACTIVE') return;
@@ -195,6 +204,7 @@ export class AwsProvider implements Provider {
     const spec = architectures[request.architecture!.template_id];
     const subnets = await this.ec2.send(new DescribeSubnetsCommand({ SubnetIds: this.config.subnetIds.slice(0, spec.azs) }), { abortSignal: signal });
     if (subnets.Subnets?.length !== spec.azs || new Set(subnets.Subnets.map(s => s.AvailabilityZone)).size !== spec.azs || new Set(subnets.Subnets.map(s => s.VpcId)).size !== 1) throw new Error('선택 구성의 AZ별 서브넷이 필요합니다. 기반 스택 설정을 갱신하세요.');
+    if (request.runtime && request.runtime.database.mode!=='postgres') return;
     const db = (await this.rds.send(new DescribeDBInstancesCommand({ DBInstanceIdentifier: this.config.dbInstanceId }), { abortSignal: signal })).DBInstances?.[0];
     if (!db || db.Engine !== 'postgres' || db.Endpoint?.Address !== this.config.dbHost || db.DBSubnetGroup?.VpcId !== subnets.Subnets[0].VpcId) throw new Error('준비된 PostgreSQL DB/네트워크가 어댑터 설정과 일치하지 않습니다.');
   }
@@ -221,6 +231,8 @@ export class AwsProvider implements Provider {
   }
 
   async initialize(request: DeployRequest, log: Log, parentSignal?: AbortSignal) {
+    this.validate(request);
+    if (request.runtime && !request.runtime.init_command.length) return;
     await this.verifyAccount();
     const signal = parentSignal ? AbortSignal.any([parentSignal, AbortSignal.timeout(600_000)]) : AbortSignal.timeout(600_000);
     const definition = await this.taskDefinition(request, signal, true);

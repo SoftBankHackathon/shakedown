@@ -222,3 +222,11 @@ snapshot again, so a previously selected plan is not a security approval token.
 Historical AWS smoke-test results predate this integration. No AWS redeployment
 was run for the gate change; the current Java/Gradle scanner limitation must be
 resolved in the gate's supported-scope policy before that demo can pass again.
+
+### Generic HTTP runtime
+
+See [HTTP runtime contract and setup](../../docs/http-runtime.md) for DB-free
+HTTP apps, configurable PostgreSQL bindings and initialization. Saving an
+explicit runtime replaces the Spring-only execution assumption; the security
+gate limitation above remains separate. Existing projects without a runtime
+retain legacy behavior.

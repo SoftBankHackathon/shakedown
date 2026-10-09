@@ -150,7 +150,7 @@ def test_selected_plan_crosses_engine_boundary_with_catalog_only(project,tmp_pat
         def resolve(self,p,id):
             assert p.id==project.id and id=='arch_'+'a'*32
             return dict(next(t for t in CATALOG if t['id']==tier))
-    aws=Aws();aws.validate_architecture=lambda spec:None
+    aws=Aws();aws.validate_architecture=lambda spec,project=None:None
     ds=DeploymentStore(tmp_path/'d.db',Runner(),aws=aws,poll_seconds=.001);ds.architecture=Planner()
     try:
         d=wait(ds,ds.start(project,DeployRequest(targets=['aws'],architecture_plan_id='arch_'+'a'*32))['id'])
@@ -182,7 +182,7 @@ def test_api_select_to_deploy_uses_real_planner(store,repository,tmp_path):
     resource=repository/'src/main/resources/application.yml'
     resource.write_text(resource.read_text().replace('jdbc:mysql://db:3306','jdbc:postgresql://db:5432'))
     p=store.create(CreateProjectRequest(repo=str(repository),targets=['aws']))
-    aws=Aws();aws.validate_architecture=lambda _:None
+    aws=Aws();aws.validate_architecture=lambda _,project=None:None
     ds=DeploymentStore(tmp_path/'d.db',LocalRunner(),aws=aws,poll_seconds=.001)
     with TestClient(create_app(store,ds)) as client:
         base=f'/api/projects/{p.id}'

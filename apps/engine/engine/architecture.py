@@ -124,11 +124,15 @@ def assess(facts, options):
 
 
 def recommend(facts, options, llm):
+    catalog=[dict(t) for t in CATALOG]
+    if facts.get('runtime_database') in {'none','external'}:
+        for template in catalog:
+            template['database']='DB 없음' if facts['runtime_database']=='none' else '기존 외부 DB (가용성 변경 없음)'
     assessment=assess(facts,options)
     selected=assessment['minimum_tier'] if assessment['eligible_templates'] else None
     source='rule';reasons=assessment['reasons']; cited=[]
     if options.use_ai and llm.status()['configured']:
-        request=dict(schema_version=VERSION,task='choose_aws_architecture',catalog=CATALOG,project=facts,
+        request=dict(schema_version=VERSION,task='choose_aws_architecture',catalog=catalog,project={k:v for k,v in facts.items() if k!='runtime_fingerprint'},
                      requirements=options.model_dump(exclude={'use_ai'}),assessment=assessment,
                      response_schema=AiDecision.model_json_schema())
         key,model=llm.credentials()
@@ -145,9 +149,9 @@ def recommend(facts, options, llm):
     elif options.use_ai:assessment['warnings'].append('Claude가 연결되지 않아 규칙으로 판단했습니다. API 설정 후 AI로 다시 판단할 수 있습니다.')
     if selected is None and not assessment['blockers']:assessment['blockers'].append('AI가 제공된 정보로 설계안을 선택하지 못했습니다. 운영 요구를 보완하세요.')
     return dict(schema_version=VERSION,source=source,recommended_template=selected,reasons=reasons,evidence_ids=cited,
-                assessment=assessment,templates=CATALOG,requirements=options.model_dump(),facts=facts,
+                assessment=assessment,templates=catalog,requirements=options.model_dump(),facts=facts,
                 selected_template=None,status='needs_input' if assessment['missing_inputs'] or selected is None else 'proposed',
-                deployment=dict(ready=False,reason='설계를 선택한 뒤 AWS 배포를 시작하면 해당 구성을 적용합니다. 준비된 AWS 기반 스택과 PostgreSQL 샘플 앱이 필요하며 자원 변경 요금이 발생합니다.'))
+                deployment=dict(ready=False,reason='설계를 선택한 뒤 AWS 배포를 시작하면 해당 구성을 적용합니다. 준비된 AWS 기반 스택과 앱 실행 설정이 필요하며 자원 변경 요금이 발생합니다.'))
 
 
 class ArchitecturePlanner:
@@ -163,7 +167,10 @@ class ArchitecturePlanner:
         try:
             with self.runner.source(project.repo) as root:
                 with checked_source(root) as (source, _report):
-                    return collect(source, options)
+                    facts=collect(source, options)
+                    facts['runtime_database']=(getattr(project,'runtime',None) or {}).get('database',{}).get('mode')
+                    facts['runtime_fingerprint']=hashlib.sha256(json.dumps(getattr(project,'runtime',None),sort_keys=True).encode()).hexdigest()
+                    return facts
         except BuildError as exc:
             raise ArchitectureError(str(exc)) from None
 
@@ -205,8 +212,8 @@ class ArchitecturePlanner:
             if tier not in plan['assessment']['eligible_templates']:raise ArchitectureError('이 설계안은 입력된 요구 또는 프로젝트 제약에 맞지 않습니다.')
             if plan['assessment']['missing_inputs']:raise ArchitectureError('누락된 운영 요구를 입력한 뒤 다시 판단하세요.')
             plan.update(selected_template=tier,selected_at=time.time(),status='selected')
-            supported = facts['stack'].startswith('spring-boot') and facts['signals']['database'] in {'postgres','postgresql'}
-            plan['deployment'] = dict(ready=supported, reason='AWS 배포 시 선택한 CPU·메모리·태스크·AZ·RDS·자동 확장을 적용합니다. 기반 스택/권한을 확인하며 비용이 발생합니다.' if supported else '설계 저장은 가능하지만 실제 배포는 현재 Spring PostgreSQL 샘플만 지원합니다.')
+            supported = bool(getattr(project,'runtime',None)) or (facts['stack'].startswith('spring-boot') and facts['signals']['database'] in {'postgres','postgresql'})
+            plan['deployment'] = dict(ready=supported, reason='AWS 배포 시 선택한 컴퓨팅·확장 구성을 적용합니다. 관리형 PostgreSQL을 선택한 경우에만 RDS 가용성을 변경합니다. 기반 스택과 권한이 필요하며 비용이 발생합니다.' if supported else '설계 저장은 가능하지만 언어 공통 HTTP 실행 설정을 먼저 저장하세요.')
             db.execute('UPDATE architecture_plans SET payload=? WHERE id=?',(json.dumps(plan,ensure_ascii=False),id));db.commit()
         return plan
 
@@ -230,6 +237,6 @@ class ArchitecturePlanner:
         assessment = assess(facts, options)
         if assessment['blockers'] or assessment['missing_inputs'] or plan['selected_template'] not in assessment['eligible_templates']:
             raise ArchitectureError('설계 적용을 막는 항목을 먼저 해결하세요.')
-        if not facts['stack'].startswith('spring-boot') or facts['signals']['database'] not in {'postgres','postgresql'}:
-            raise ArchitectureError('실제 배포는 현재 Spring PostgreSQL 샘플만 지원합니다.')
+        if not getattr(project,'runtime',None) and (not facts['stack'].startswith('spring-boot') or facts['signals']['database'] not in {'postgres','postgresql'}):
+            raise ArchitectureError('언어 공통 HTTP 실행 설정을 먼저 저장하세요.')
         return dict(next(t for t in CATALOG if t['id'] == plan['selected_template']))
