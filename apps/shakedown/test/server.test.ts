@@ -119,6 +119,16 @@ test("기준 환경이 꺼져 있으면 비교할 수 없으니 failed", async (
   assert.equal(done.error, `baseline local is not reachable: ${down.url}`);
 });
 
+test("기준 환경이 계속 Cloudflare 530(터널 미준비)이면 1단계 실패가 아니라 접속 불가로 failed", async () => {
+  const tunnel = await listen(createServer((_, res) => res.writeHead(530, { server: "cloudflare" }).end("error code: 1033")));
+  const base = await api();
+  const { body } = await post(base, request(tunnel, await board()));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.status, "failed");
+  assert.equal(done.error, `baseline local is not reachable: ${tunnel}`);
+  assert.deepEqual(done.steps, []);
+});
+
 test("기준 환경이 시나리오를 통과하지 못하면 failed, 단계 결과는 남긴다", async () => {
   const base = await api();
   const { body } = await post(base, request(await board({ instances: 2 }), await board()));

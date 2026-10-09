@@ -34,6 +34,14 @@ export function createTunnelLookup(
   };
 }
 
+/** Cloudflare 엣지가 앱에 넘기기 전에 직접 만든 530인지 본다.
+ * 터널 연결기가 아직 없거나(1033) Quick Tunnel 주소가 아직 등록되지 않은(1016) 상태라서, 앱은 이 요청을 받은 적이 없다.
+ * 실측(2026-10-09): HTTP 530, server: cloudflare, text/html 'Error 1016' 페이지.
+ * 터널을 거친 앱 응답에도 server: cloudflare가 붙으므로 상태 코드 530까지 같이 봐야 앱 오류(500 등)와 구분된다.
+ */
+export const tunnelNotReady = (res: { status: number; headers: { get(name: string): string | null } }) =>
+  res.status === 530 && res.headers.get("server") === "cloudflare";
+
 const tunnelAgent = new Agent({ connect: { lookup: createTunnelLookup() } });
 export function targetFetch(url: string | URL, options: RequestInit = {}) {
   const target = new URL(url);

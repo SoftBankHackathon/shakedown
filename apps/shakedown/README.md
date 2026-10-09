@@ -42,7 +42,7 @@ HOST=0.0.0.0 PORT=9201 npm start -w @shakedown/shakedown   # 엔진이 다른 PC
 - 요청에 `scenario`가 없거나 null이면 kty-board 기본 시나리오로 실행하고 `scenario_source: "fallback"`
 - 비교 대상(`candidates`)은 지금 1개만 받습니다. 2개 이상이면 422
 - 잘못된 요청은 400 `{error, detail}` (target.yaml과 같은 모양)
-- 시작 전에 두 주소가 응답하는지 최대 20초 다시 시도합니다(터널 주소가 늦게 잡히는 경우)
+- 시작 전에 두 주소가 응답하는지 최대 20초 다시 시도합니다(터널 주소가 늦게 잡히는 경우). 앱이 낸 응답은 500이어도 닿은 것으로 봅니다. Cloudflare 엣지가 낸 530(`server: cloudflare`, 터널 미준비 1033·1016)은 앱 응답이 아니라서 계속 기다립니다
 - 기준 환경이 닿지 않거나 기준 환경에서 시나리오가 실패하면 비교할 수 없으므로 `status: "failed"`와 `error`
 - 비교 환경만 실패하면 `status: "done"`과 `verdict: BLOCKED`
 - 전체 실행은 150초 안에 끝냅니다. 넘으면 `status: "failed"`, `error: "timed out after 150s"` (엔진은 3분이 지나면 실패로 봅니다)
