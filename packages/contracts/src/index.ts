@@ -120,6 +120,7 @@ export type StepDiff = {
 };
 export type Fix = {
   target: string;
+  /** sticky_sessions | tz | env | code_change | none. env면 value는 KEY=VALUE 한 개이고, 같은 이미지에 그 env만 더해 다시 배포한다. */
   option: string;
   value: string;
   description: string;

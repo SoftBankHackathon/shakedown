@@ -95,7 +95,7 @@ test("비교 환경이 서버 2대면 BLOCKED, 4단계에서 갈라진다", asyn
   });
   assert.equal(done.report?.headline, "Login is lost on aws: requests land on different instances");
   assert.equal(done.report?.by, "rule");
-  assert.equal(done.report?.fix?.option, "sticky_sessions");
+  assert.equal(done.report?.fix?.option, "env");
 });
 
 test("비교 환경이 꺼져 있으면 BLOCKED와 접속 불가 보고서", async () => {

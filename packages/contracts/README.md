@@ -23,7 +23,7 @@
 
 ## 상태: 초안
 
-Target API는 **v0.1.2 통합 제안**, Engine API는 **v0.1.4 통합 제안**, Shakedown API는 **v0.1.0 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
+Target API는 **v0.1.2 통합 제안**, Engine API는 **v0.1.4 통합 제안**, Shakedown API는 **v0.1.1 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
 
 바뀔 가능성이 있는 것
 - 상태 확인 방식: 지금은 GET 폴링(2~3초 간격). 콜백(`callback_url`) 방식이 추가될 수 있음
@@ -39,6 +39,8 @@ Target API는 **v0.1.2 통합 제안**, Engine API는 **v0.1.4 통합 제안**, 
 
 ## 변경 이력
 
+- **Shakedown v0.1.1 (2026-10-09, 팀 채널 공유 후 제안)**: `Report.fix.option`에 `env` 추가(value는 `KEY=VALUE` 한 개, 같은 이미지에 env만 더해 재배포). 로그인 풀림 규칙 수정안을 스티키 세션에서 `SPRING_PROFILES_ACTIVE=demo,session-jdbc`(세션을 공유 DB에)로 바꿈. 요청·응답 형식은 그대로.
+- **fixture `deployment-blocked-then-fixed.json` (2026-10-09)**: 1회차 수정안·applied_fix를 위 env 수정안으로 교체하고, 2회차가 스티키를 켜지 않도록 aws `sticky_sessions`를 모두 false로, `targets.aws.info.session`을 `jdbc`로, `autofix`를 false(사용자가 수정 적용을 누르는 흐름)로 맞춤. 단계·판정·원인 문장은 그대로.
 - **Target v0.1.2 (2026-10-09, 팀 채널 공유 후 제안)**: GCP 구현(infra/gcp, Cloud Run + Cloud SQL PostgreSQL) 추가. servers에 9103, 설명에 GCP 구현 제약 절(수동 스케일링 replicas 1~2, sticky best-effort, digest 필수, DELETE 뒤 공개 주소는 403 대신 503, 매 배포 schema-init). 요청·응답 형식은 그대로라 타입은 TargetName 주석만 고쳤고 fixture는 추가하지 않음. `infra/gcp/README.md` 참고.
 - **Engine v0.1.4 (2026-10-10, 팀 채널 공유 후 제안)**: 배포 요청 targets에 gcp 추가. gcp는 다른 클라우드(aws·azure)와 함께 보내면 400. 엔진에 이미 들어간 Azure(#23)에 맞춰 enum에 azure, maxItems를 3으로. 요청·응답 형식은 그대로. `apps/engine/README.md`의 GCP 연결 설정 참고.
 - **Engine v0.1.1 (2026-10-08, PR #5 리뷰 대기)**: 로컬 배포 후 선택적 HTTP 시운전, 기존 URL 비교 API, external 대상 상태, warned 종료 상태, release_gate/traffic_blocked 의미 추가. `fixtures/deployment-comparison-pass.json` 참고. AWS 자동배포·자동수정·실제 트래픽 차단은 미연결.

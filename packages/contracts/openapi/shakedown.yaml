@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Runner API
-  version: 0.1.0
+  version: 0.1.1
   description: |
-    > **상태: 초안 (v0.1.0, 2026-10-08)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 초안 (v0.1.1, 2026-10-09)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     AI 시운전 서비스가 구현하는 API (apps/shakedown, 김태현). 엔진이 호출합니다.
@@ -203,8 +203,8 @@ components:
           type: [object, "null"]
           properties:
             target: { type: string }
-            option: { type: string, description: "sticky_sessions | tz | code_change | none" }
-            value: { type: string }
+            option: { type: string, description: "sticky_sessions | tz | env | code_change | none" }
+            value: { type: string, description: "option=env면 KEY=VALUE 한 개(비밀이 아닌 환경변수). 같은 이미지에 이 env만 더해 다시 배포함. 예 SPRING_PROFILES_ACTIVE=demo,session-jdbc" }
             description: { type: string }
             native: { type: string, description: 대상 환경에서의 실제 설정 이름 }
             auto_applicable: { type: boolean }

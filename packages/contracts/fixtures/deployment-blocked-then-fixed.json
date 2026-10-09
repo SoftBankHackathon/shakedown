@@ -4,7 +4,7 @@
   "created": 1791332033.418946,
   "status": "promoted",
   "shakedown": true,
-  "autofix": true,
+  "autofix": false,
   "options": {
     "local": {
       "replicas": 1,
@@ -13,7 +13,7 @@
     },
     "aws": {
       "replicas": 2,
-      "sticky_sessions": true,
+      "sticky_sessions": false,
       "tz": "UTC"
     }
   },
@@ -48,8 +48,9 @@
       "info": {
         "runtime": "Cloud (simulated: LB + multiple instances, UTC)",
         "instances": "2",
-        "sticky_sessions": "true",
-        "timezone": "UTC"
+        "sticky_sessions": "false",
+        "timezone": "UTC",
+        "session": "jdbc"
       },
       "commands": [
         "docker compose -p sd-prj-59c0ee1d86-cloud up -d",
@@ -59,7 +60,7 @@
       ],
       "options": {
         "replicas": 2,
-        "sticky_sessions": true,
+        "sticky_sessions": false,
         "tz": "UTC"
       }
     }
@@ -622,10 +623,10 @@
         ],
         "fix": {
           "target": "aws",
-          "option": "sticky_sessions",
-          "value": "true",
-          "description": "Pin each user to one instance (session affinity).",
-          "native": "nginx upstream ip_hash (on AWS: ALB target-group stickiness; on Cloud Run: --session-affinity)",
+          "option": "env",
+          "value": "SPRING_PROFILES_ACTIVE=demo,session-jdbc",
+          "description": "Keep the login in the shared database (Spring Session JDBC) so every instance sees it.",
+          "native": "Cloud Run / ECS env SPRING_PROFILES_ACTIVE=demo,session-jdbc (sessions in the spring_session table of Cloud SQL / RDS)",
           "auto_applicable": true
         },
         "confidence": "high",
@@ -634,10 +635,10 @@
       "duration_s": 1.3,
       "applied_fix": {
         "target": "aws",
-        "option": "sticky_sessions",
-        "value": "true",
-        "description": "Pin each user to one instance (session affinity).",
-        "native": "nginx upstream ip_hash (on AWS: ALB target-group stickiness; on Cloud Run: --session-affinity)",
+        "option": "env",
+        "value": "SPRING_PROFILES_ACTIVE=demo,session-jdbc",
+        "description": "Keep the login in the shared database (Spring Session JDBC) so every instance sees it.",
+        "native": "Cloud Run / ECS env SPRING_PROFILES_ACTIVE=demo,session-jdbc (sessions in the spring_session table of Cloud SQL / RDS)",
         "auto_applicable": true
       }
     },
@@ -651,7 +652,7 @@
         },
         "aws": {
           "replicas": 2,
-          "sticky_sessions": true,
+          "sticky_sessions": false,
           "tz": "UTC"
         }
       },
