@@ -4,7 +4,8 @@ import Link from "next/link";
 import { memo, useEffect, useState, type ReactNode } from "react";
 import { useT } from "@/components/i18n";
 import { Badge, Spinner } from "@/components/ui";
-import { DONE, formatSeconds, type Deployment, type StepResult } from "@/lib/api";
+import { DONE, formatSeconds, type Deployment } from "@/lib/api";
+import { resultsFor } from "@/lib/steps";
 import { orderTargets, targetLabel } from "@/lib/targets";
 
 type State = "pending" | "running" | "passed" | "failed";
@@ -58,18 +59,17 @@ function Stage({ name, children }: { name: string; children: ReactNode }) {
 const Arrow = () => <div className="flex items-center self-stretch pt-6 text-muted" aria-hidden>→</div>;
 
 /** Shakedown results for one target across the latest attempt. */
-function targetShakedown(d: Deployment, name: string, baseline: string): { state: State; passed: number; total: number } {
+function targetShakedown(d: Deployment, names: string[], name: string, baseline: string): { state: State; passed: number; total: number } {
   const attempt = d.attempts.at(-1);
   const total = d.scenario?.steps.length ?? 0;
   if (!attempt?.steps?.length) {
     return { state: d.status === "shakedown" ? "running" : "pending", passed: 0, total };
   }
-  const side = (row: NonNullable<typeof attempt.steps>[number]): StepResult =>
-    (row.baseline ?? baseline) === name ? row.local : row.cloud;
-  const results = attempt.steps.map(side);
+  const results = resultsFor(attempt.steps, names, baseline, name);
   const passed = results.filter((r) => r.status === "passed").length;
   const failed = results.some((r) => r.status === "failed");
-  const finished = attempt.verdict != null;
+  // With several clouds, a target is done once all its rows are in, even before the overall verdict.
+  const finished = attempt.verdict != null || (total > 0 && results.length >= total);
   return { state: failed ? "failed" : finished ? "passed" : "running", passed, total };
 }
 
@@ -130,7 +130,7 @@ export const ActionCard = memo(function ActionCard({ deployment: d, projectName 
           <Arrow />
           <Stage name={t("stage.shakedown")}>
             {names.map((name) => {
-              const r = targetShakedown(d, name, baseline);
+              const r = targetShakedown(d, names, name, baseline);
               const sub = !d.shakedown ? t("dep.notRun") : r.total ? t("pipe.steps", { passed: r.passed, total: r.total }) : undefined;
               return <Box key={name} title={targetLabel(name)} state={r.state} sub={sub} />;
             })}
