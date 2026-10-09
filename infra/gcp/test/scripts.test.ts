@@ -68,6 +68,18 @@ exit 99
   // Cloud SQL 상태를 15초마다 다시 보는 대기를 테스트에서는 건너뛴다.
   sleep: '#!/usr/bin/env bash\nexit 0\n',
   openssl: '#!/usr/bin/env bash\necho "$*" >> "$FAKE_STATE/openssl.log"\necho ' + PASSWORD + '\n',
+  docker: String.raw`#!/usr/bin/env bash
+# 가짜 docker. 호출을 docker.log에 남기고, buildx처럼 --metadata-file 자리에 digest JSON을 쓴다.
+echo "$*" >> "$FAKE_STATE/docker.log"
+echo "#1 [internal] load build definition from Dockerfile"
+if [ -n "$FAKE_DOCKER_FAIL" ]; then echo "ERROR: failed to build" >&2; exit 1; fi
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--metadata-file" ]; then printf '{\n  "containerimage.digest": "sha256:%s"\n}\n' "$FAKE_DIGEST" > "$arg"; fi
+  prev="$arg"
+done
+exit 0
+`,
 };
 
 function sandbox() {
@@ -223,5 +235,67 @@ test('provision writes the engine project id from GCP_APP_PROJECT_ID and rejects
     const bad = run('provision.sh', ['shakedown-511106', box.config], { ...box.env, GCP_APP_PROJECT_ID: 'prj"x' });
     assert.notEqual(bad.status, 0);
     assert.match(bad.stderr, /GCP_APP_PROJECT_ID/);
+  } finally { rmSync(box.root, { recursive: true, force: true }); }
+});
+
+const REPOSITORY = 'asia-northeast3-docker.pkg.dev/shakedown-511106/shakedown/kty-board';
+const DIGEST_HEX = 'b'.repeat(64);
+// publish-image는 provision이 쓴 설정 파일의 허용 저장소(imagePrefixes[0])에 올린다.
+function withConfig(box: ReturnType<typeof sandbox>) {
+  mkdirSync(join(box.root, 'out'), { recursive: true });
+  writeFileSync(box.config, JSON.stringify(EXPECTED_CONFIG));
+  return box;
+}
+
+test('publish-image builds one linux/amd64 manifest, pushes it and prints only image@digest', () => {
+  const box = withConfig(sandbox());
+  try {
+    const result = run('publish-image.sh', ['abc123', box.config], { ...box.env, FAKE_DIGEST: DIGEST_HEX });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, `${REPOSITORY}@sha256:${DIGEST_HEX}\n`);
+    const build = read(join(box.state, 'docker.log')).split('\n')[0];
+    assert.ok(build.startsWith('buildx build --platform linux/amd64 --provenance=false --sbom=false'), build);
+    assert.ok(build.includes(`-t ${REPOSITORY}:abc123 --push`), build);
+    assert.ok(build.endsWith('/samples/kty-board'), build);
+  } finally { rmSync(box.root, { recursive: true, force: true }); }
+});
+
+test('publish-image rejects a malformed tag before calling docker', () => {
+  const box = withConfig(sandbox());
+  try {
+    const result = run('publish-image.sh', ['bad tag', box.config], { ...box.env, FAKE_DIGEST: DIGEST_HEX });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /태그 형식/);
+    assert.equal(read(join(box.state, 'docker.log')), '');
+  } finally { rmSync(box.root, { recursive: true, force: true }); }
+});
+
+test('publish-image pushes to the repository in the config and stops without one', () => {
+  const box = sandbox();
+  try {
+    const missing = run('publish-image.sh', ['abc123', box.config], { ...box.env, FAKE_DIGEST: DIGEST_HEX });
+    assert.notEqual(missing.status, 0);
+    assert.equal(missing.stdout, '');
+    assert.match(missing.stderr, /provision\.sh를 먼저/);
+    assert.equal(read(join(box.state, 'docker.log')), '');
+    mkdirSync(join(box.root, 'out'), { recursive: true });
+    writeFileSync(box.config, JSON.stringify({ ...EXPECTED_CONFIG, imagePrefixes: ['asia-northeast3-docker.pkg.dev/other-proj-123/shakedown/'] }));
+    const other = run('publish-image.sh', ['abc123', box.config], { ...box.env, FAKE_DIGEST: DIGEST_HEX });
+    assert.equal(other.status, 0, other.stderr);
+    assert.equal(other.stdout, `asia-northeast3-docker.pkg.dev/other-proj-123/shakedown/kty-board@sha256:${DIGEST_HEX}\n`);
+  } finally { rmSync(box.root, { recursive: true, force: true }); }
+});
+
+test('publish-image prints nothing on stdout when the build fails or the digest is unreadable', () => {
+  const box = withConfig(sandbox());
+  try {
+    const failed = run('publish-image.sh', ['abc123', box.config], { ...box.env, FAKE_DIGEST: DIGEST_HEX, FAKE_DOCKER_FAIL: '1' });
+    assert.notEqual(failed.status, 0);
+    assert.equal(failed.stdout, '');
+    assert.match(failed.stderr, /failed to build/);
+    const unreadable = run('publish-image.sh', ['abc123', box.config], { ...box.env, FAKE_DIGEST: 'not-a-digest' });
+    assert.notEqual(unreadable.status, 0);
+    assert.equal(unreadable.stdout, '');
+    assert.match(unreadable.stderr, /digest를 읽지 못했습니다/);
   } finally { rmSync(box.root, { recursive: true, force: true }); }
 });
