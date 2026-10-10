@@ -1,16 +1,18 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
-import type { ContainerApp } from '@azure/arm-appcontainers';
-import type { AzureApi } from './azure-client.js';
-import type { Config } from './config.js';
-import { validateRequest } from './config.js';
+import { KnownJobExecutionRunningState as JobState, type ContainerApp, type EnvironmentVar, type Job, type JobExecutionContainer, type Secret } from '@azure/arm-appcontainers';
+import type { AzureApi, DatabaseStatus } from './azure-client.js';
+import type { Config, DbEngine } from './config.js';
+import { DATABASE_ENGINES, secretRefName, secretUris, validateRequest } from './config.js';
 import type { DeployRequest, Provider, ReadyResult, Log, LogLine } from './model.js';
 import { ApiError } from './model.js';
 import { HTTP_CONCURRENCY, PLANNED_POOL_SIZE, shapeOf } from './architecture.js';
-import { databaseEnvironment } from '../../../packages/contracts/runtime.mjs';
+import { databaseEnvironment, managedDatabase } from '../../../packages/contracts/runtime.mjs';
 
 // ingress를 끈 뒤 공개 주소가 돌려주는 상태 코드 (2026-10-09 실측)
 const CLOSED_STATUS = 404;
+// 작업 실행이 실패로 끝난 상태
+const JOB_FAILED: string[] = [JobState.Failed, JobState.Stopped, JobState.Degraded];
 
 async function phase<T>(name: string, log: Log, work: () => Promise<T>): Promise<T> {
   const started = Date.now();
@@ -28,6 +30,14 @@ async function phase<T>(name: string, log: Log, work: () => Promise<T>): Promise
 // 배포 ID마다 고정된 리비전 이름. 상태 확인과 로그 조회에 같은 이름을 쓴다.
 export function revisionSuffix(deploymentId: string) { return 'd' + createHash('sha256').update(deploymentId).digest('hex').slice(0, 12); }
 export function revisionName(config: Pick<Config, 'containerApp'>, deploymentId: string) { return `${config.containerApp}--${revisionSuffix(deploymentId)}`; }
+// 앱이 실제로 쓰는 DB 모드. 기존 Spring 샘플 요청은 스택의 PostgreSQL을 쓴다.
+const databaseMode = (request: DeployRequest) => request.runtime?.database.mode ?? 'postgres';
+// DB를 쓰지 않는 런타임이면 스택의 DB가 있어도 'none'으로 적는다 (앱이 실제로 쓰는 것만 보고).
+function databaseLabel(engine: DbEngine, request: DeployRequest, db?: DatabaseStatus) {
+  const mode = databaseMode(request);
+  // info.database: 엔진 이름에 배포 전에 읽은 실제 서버 버전을 붙인다.
+  return mode === 'none' ? 'none' : mode === 'external' ? 'external (app-defined)' : `${DATABASE_ENGINES[engine].label} ${db?.version ?? 'unknown'}`;
+}
 
 export class AzureProvider implements Provider {
   constructor(public config: Config, public api: AzureApi, private pollMs = 2_000) {}
@@ -41,7 +51,7 @@ export class AzureProvider implements Provider {
   }
   async verifyDatabase(signal: AbortSignal = AbortSignal.timeout(30_000)) {
     const db = await this.api.databaseState(signal);
-    if (['Stopped', 'Stopping'].includes(db.state)) throw new Error(`PostgreSQL 서버가 ${db.state} 상태입니다. az postgres flexible-server start로 먼저 켜세요 (수 분 걸림).`);
+    if (['Stopped', 'Stopping'].includes(db.state)) throw new Error(`${DATABASE_ENGINES[this.config.dbEngine].label} 서버가 ${db.state} 상태입니다. 먼저 켜세요 (수 분 걸림).`);
     return db;
   }
   validate(request: DeployRequest) { validateRequest(this.config, request); }
@@ -51,15 +61,13 @@ export class AzureProvider implements Provider {
     if (manifest.multiArch || manifest.architecture !== 'amd64' || manifest.operatingSystem !== 'linux') throw new ApiError(400, '단일 linux/amd64 이미지 manifest가 필요합니다.');
   }
   // 이미지·환경변수·복제본·TZ·health 확인 경로·ingress를 한 번의 갱신에 담는다.
-  private desired(app: ContainerApp, request: DeployRequest): ContainerApp {
+  private desired(app: ContainerApp, request: DeployRequest, env: EnvironmentVar[]): ContainerApp {
     const c = this.config, shape = shapeOf(request);
-    // 비밀번호는 Bicep이 만든 Key Vault 참조 secret을 이름으로만 가리킨다. 어댑터는 값을 모른다.
-    const secret = app.configuration?.secrets?.find(s => s.name === 'db-password');
-    if (secret?.keyVaultUrl?.replace(/\/$/, '') !== c.dbPasswordSecretUri.replace(/\/$/, '')) throw new Error('Container App의 db-password가 설정한 Key Vault 비밀을 가리키지 않습니다. provision.sh로 다시 준비하세요.');
     return {
       ...app,
       configuration: {
         ...app.configuration,
+        secrets: this.secrets(app, env),
         activeRevisionsMode: 'Single',
         ingress: {
           external: true, targetPort: c.port, transport: 'auto', allowInsecure: false,
@@ -72,18 +80,7 @@ export class AzureProvider implements Provider {
         revisionSuffix: revisionSuffix(request.deployment_id),
         containers: [{
           // 매번 전체 템플릿을 보내므로 자원도 이번 모양으로 다시 쓴다(이전 계획 배포의 자원이 남지 않게).
-          name: 'app', image: request.image, resources: { cpu: shape.cpu, memory: shape.memory },
-          env: request.runtime ? this.runtimeEnv(request) : [
-            { name: 'SPRING_DATASOURCE_URL', value: `jdbc:postgresql://${c.dbHost}:5432/${c.dbName}?sslmode=require` },
-            { name: 'SPRING_DATASOURCE_USERNAME', value: c.dbUsername },
-            { name: 'SPRING_DATASOURCE_PASSWORD', secretRef: 'db-password' },
-            { name: 'SPRING_JPA_HIBERNATE_DDL_AUTO', value: 'validate' },
-            { name: 'SPRING_PROFILES_ACTIVE', value: request.env.SPRING_PROFILES_ACTIVE ?? 'demo,session-memory' },
-            { name: 'SERVER_PORT', value: String(c.port) },
-            { name: 'TZ', value: request.options.tz },
-            // 계획 배포만: 인스턴스당 DB 연결 3개. 최대 대수까지 늘어도 B1ms 연결 한도 안에 든다.
-            ...(request.architecture ? [{ name: 'SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE', value: PLANNED_POOL_SIZE }] : []),
-          ],
+          name: 'app', image: request.image, resources: { cpu: shape.cpu, memory: shape.memory }, env,
           probes: [{ type: 'Readiness', httpGet: { path: request.health_path, port: c.port }, periodSeconds: 5, failureThreshold: 3 }],
         }],
         // 0으로 줄어들지 않게 최소를 시작 대수로 고정 (첫 요청 지연 방지). 자동 확장 등급만 HTTP 동시 요청으로 늘어난다.
@@ -92,31 +89,82 @@ export class AzureProvider implements Provider {
       },
     };
   }
-  // 범용 런타임의 환경변수: 앱 env + PORT·TZ + DB 바인딩. password 바인딩과 db_password 참조만 Key Vault 비밀로 연결한다.
-  private runtimeEnv(request: DeployRequest) {
-    const c = this.config, runtime = request.runtime!;
+  // 앱(과 초기화 작업)의 환경변수. 비밀값은 전부 Key Vault 참조 secret의 이름으로만 연결하고 어댑터는 값을 모른다.
+  private env(request: DeployRequest): EnvironmentVar[] {
+    const c = this.config, runtime = request.runtime;
+    if (!runtime) return [
+      // 기존 Spring 샘플 계약 (PostgreSQL 스택 전용, validateRequest가 보장)
+      { name: 'SPRING_DATASOURCE_URL', value: `jdbc:postgresql://${c.dbHost}:5432/${c.dbName}?sslmode=require` },
+      { name: 'SPRING_DATASOURCE_USERNAME', value: c.dbUsername },
+      { name: 'SPRING_DATASOURCE_PASSWORD', secretRef: 'db-password' },
+      { name: 'SPRING_JPA_HIBERNATE_DDL_AUTO', value: 'validate' },
+      { name: 'SPRING_PROFILES_ACTIVE', value: request.env.SPRING_PROFILES_ACTIVE ?? 'demo,session-memory' },
+      { name: 'SERVER_PORT', value: String(c.port) },
+      { name: 'TZ', value: request.options.tz },
+      // 계획 배포만: 인스턴스당 DB 연결 3개. 최대 대수까지 늘어도 B1ms 연결 한도 안에 든다.
+      ...(request.architecture ? [{ name: 'SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE', value: PLANNED_POOL_SIZE }] : []),
+    ];
+    // 범용 런타임: 앱 env + PORT·TZ + 관리 DB의 평문 바인딩(host·port·name·username·jdbc_url).
     const plain: Record<string, string> = { ...runtime.env, PORT: String(c.port), TZ: request.options.tz,
-      ...(runtime.database.mode === 'postgres' ? databaseEnvironment(runtime, { host: c.dbHost, username: c.dbUsername, ssl: true }) : {}) };
-    const secretNames = [...Object.keys(runtime.secret_refs), ...Object.entries(runtime.database.bindings).filter(([, v]) => v === 'password').map(([k]) => k)];
-    return [...Object.entries(plain).map(([name, value]) => ({ name, value })), ...secretNames.map(name => ({ name, secretRef: 'db-password' }))];
+      ...(managedDatabase(runtime.database.mode) ? databaseEnvironment(runtime, { host: c.dbHost, username: c.dbUsername, ssl: true }) : {}) };
+    // password 바인딩 → db-password, *_url 바인딩 → db-url(Bicep이 비밀번호를 넣어 만든 URL), secret_refs → 등록된 비밀
+    const refs: EnvironmentVar[] = [
+      ...Object.entries(runtime.secret_refs).map(([name, reference]) => ({ name, secretRef: secretRefName(reference) })),
+      ...Object.entries(runtime.database.bindings).flatMap(([name, binding]) =>
+        // URL 바인딩은 모드와 같은 엔진만 온다 (validateRuntime). jdbc_url은 비밀번호가 없어 평문이다.
+        binding === 'password' ? [{ name, secretRef: 'db-password' }] : binding === `${runtime.database.mode}_url` ? [{ name, secretRef: 'db-url' }] : []),
+    ];
+    return [...Object.entries(plain).map(([name, value]) => ({ name, value })), ...refs];
+  }
+  // 이번 env가 참조하는 Key Vault 비밀만 Container App secret으로 둔다 (db-password는 항상). 관리 ID는 Bicep이 붙인 것을 그대로 쓴다.
+  // 참조할 비밀은 validateRequest가 설정에 있는 것만 통과시킨다.
+  private secrets(resource: ContainerApp | Job, env: EnvironmentVar[]): Secret[] {
+    // Bicep이 만든 db-password 항목이 이 스택의 Key Vault와 관리 ID를 알려 준다. 다른 스택이면 덮어쓰지 않고 멈춘다.
+    const current = resource.configuration?.secrets?.find(s => s.name === 'db-password');
+    if (!current?.identity || current.keyVaultUrl?.replace(/\/$/, '') !== this.config.dbPasswordSecretUri.replace(/\/$/, '')) throw new Error('Container App의 db-password가 설정한 Key Vault 비밀을 가리키지 않습니다. provision.sh로 다시 준비하세요.');
+    const uris = Object.fromEntries(Object.entries(secretUris(this.config)).map(([reference, uri]) => [secretRefName(reference), uri]));
+    const needed = new Set(['db-password', ...env.flatMap(e => e.secretRef ? [e.secretRef] : [])]);
+    return [...needed].map(name => ({ name, keyVaultUrl: uris[name], identity: current.identity }));
+  }
+  // runtime.init_command를 같은 이미지·환경변수로 Container Apps 작업에서 한 번 실행하고 끝날 때까지 기다린다 (AWS schema_init과 같은 단계).
+  // 이미지·명령·환경변수는 이번 실행에만 넘기고, 작업 자체는 비밀 목록이 바뀔 때만 갱신한다.
+  private async runInit(request: DeployRequest, env: EnvironmentVar[], signal: AbortSignal, log: Log) {
+    const [entrypoint, ...args] = request.runtime!.init_command, shape = shapeOf(request);
+    const job = await this.api.getJob(signal), secrets = this.secrets(job, env);
+    const listed = (list: Secret[] = []) => JSON.stringify(list.map(({ name, keyVaultUrl, identity }) => ({ name, keyVaultUrl, identity })));
+    if (listed(job.configuration?.secrets) !== listed(secrets)) await this.api.putJob({ ...job, configuration: { ...job.configuration!, secrets } }, signal);
+    const container: JobExecutionContainer = { name: 'init', image: request.image, command: [entrypoint], args, env, resources: { cpu: shape.cpu, memory: shape.memory } };
+    const execution = await this.api.startJob(container, signal);
+    log(`init execution started: ${execution}`);
+    while (true) {
+      signal.throwIfAborted();
+      const status = await this.api.jobExecutionStatus(execution, signal);
+      if (status === JobState.Succeeded) return;
+      if (status && JOB_FAILED.includes(status)) throw new Error(`초기화 명령이 ${status}로 끝났습니다. az containerapp job logs show -n ${this.config.initJob} -g ${this.config.resourceGroup} 로 확인하세요.`);
+      await sleep(this.pollMs, undefined, { signal });
+    }
   }
   async deploy(request: DeployRequest, signal: AbortSignal, log: Log): Promise<ReadyResult> {
     const c = this.config, revision = revisionName(c, request.deployment_id), shape = shapeOf(request);
     await this.verifySubscription(signal); signal.throwIfAborted();
-    const db = await this.verifyDatabase(signal);
-    await phase('update_app', log, async () => this.api.putApp(this.desired(await this.api.getApp(signal), request), signal));
+    // 스택 DB를 쓰는 배포(또는 info에 DB 등급이 필요한 계획 배포)만 서버 상태를 확인한다.
+    const db = managedDatabase(databaseMode(request)) || request.architecture ? await this.verifyDatabase(signal) : undefined;
+    // 초기화 작업과 앱이 같은 환경변수를 쓴다.
+    const env = this.env(request);
+    if (request.runtime?.init_command.length) await phase('schema_init', log, () => this.runInit(request, env, signal, log));
+    await phase('update_app', log, async () => this.api.putApp(this.desired(await this.api.getApp(signal), request, env), signal));
     log(`revision requested: ${revision}`);
     const actual = await phase('wait_revision', log, () => this.waitRevision(revision, request, signal));
     await phase('public_health', log, () => this.waitHttp(request.health_path, 200, signal));
     log('public health check passed: HTTPS 200 without cookies');
     return { url: c.publicUrl, instances: actual.replicas, info: {
-      runtime: 'Azure Container Apps', database: 'Azure PostgreSQL Flexible 17', timezone: actual.tz,
+      runtime: 'Azure Container Apps', database: databaseLabel(c.dbEngine, request, db), timezone: actual.tz,
       session: request.runtime ? 'app-defined' : actual.profile.includes('session-jdbc') ? 'jdbc' : 'memory', sticky_sessions: String(request.options.sticky_sessions),
       image_digest: request.image.split('@')[1], revision, transport: 'HTTPS',
       // AWS·GCP와 같은 키. scaling은 GCP와 같은 형식, DB 값은 배포 전에 읽은 실제 서버 값이다.
       architecture: request.architecture?.template_id ?? 'legacy',
       scaling: shape.scaling === 'AUTOMATIC' ? `automatic ${shape.min}-${shape.max}` : 'manual',
-      ...(request.architecture ? { db_availability: db.highAvailability, db_tier: db.tier } : {}),
+      ...(request.architecture && db ? { db_availability: db.highAvailability, db_tier: db.tier } : {}),
     } };
   }
   private async waitRevision(name: string, request: DeployRequest, signal: AbortSignal) {
@@ -157,7 +205,7 @@ export class AzureProvider implements Provider {
     const active = app.latestRevisionName ? await this.api.getRevision(app.latestRevisionName, signal) : undefined;
     if (active?.active) await this.api.deactivateRevision(app.latestRevisionName!, signal);
     await this.waitHttp('/', CLOSED_STATUS, signal);
-    log(`public route blocked: HTTP ${CLOSED_STATUS} confirmed; revision deactivated, PostgreSQL and Log Analytics retained`);
+    log(`public route blocked: HTTP ${CLOSED_STATUS} confirmed; revision deactivated, database and Log Analytics retained`);
   }
   async appLogs(id: string, since?: string): Promise<LogLine[]> {
     const signal = AbortSignal.timeout(15_000), revision = revisionName(this.config, id);

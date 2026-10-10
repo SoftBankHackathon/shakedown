@@ -90,6 +90,18 @@ def test_project_mismatch_before_any_azure_call(monkeypatch, configured, project
     assert shell.calls == []
 
 
+@pytest.mark.parametrize('mode,engine,ok', [('mysql', 'mysql', True), ('mysql', 'postgres', False), ('mongodb', 'mysql', False), ('external', 'mysql', True), ('none', 'mongodb', True)])
+def test_preflight_matches_runtime_database_engine_to_the_stack(monkeypatch, tmp_path, configured, project, mode, engine, ok):
+    config, path = configured; config = {**config, 'dbEngine': engine}; path.write_text(json.dumps(config))
+    project.runtime = {'version': 'http-runtime.v1', 'port': config['port'], 'health_path': '/', 'env': {}, 'secret_refs': {},
+                       'database': {'mode': mode, 'name': config['dbName'], 'bindings': {}}, 'init_command': []}
+    runner = runner_with(monkeypatch, Shell(subscription=SUBSCRIPTION))
+    monkeypatch.setattr(runner, 'call', lambda method, path, body=None: {'ok': True, 'target': 'azure'})
+    if ok: runner.preflight(project)
+    else:
+        with pytest.raises(DeploymentError, match=f'needs {mode}'): runner.preflight(project)
+
+
 @pytest.mark.parametrize('health,ok', [({'ok': True, 'target': 'azure'}, True), ({'ok': True, 'target': 'aws'}, False), (None, False)])
 def test_preflight_requires_azure_adapter_health(monkeypatch, configured, project, health, ok):
     runner = runner_with(monkeypatch, Shell(subscription=SUBSCRIPTION.upper()))
