@@ -9,7 +9,7 @@ import pytest
 import jsonschema
 from referencing import Registry, Resource
 
-from security_gate import semgrep, source_syntax, source_targets
+from security_gate import discovery, semgrep, source_syntax, source_targets
 from security_gate.gate import scan_repository
 from security_gate.models import ScanError
 
@@ -124,7 +124,7 @@ def test_size_limit_applies_before_ast_validation(tmp_path, monkeypatch):
 
 def test_link_rejection_applies_before_ast_validation(monkeypatch):
     monkeypatch.setattr(semgrep, "validate_sources", lambda *a, **kw: pytest.fail("must not parse unsafe input"))
-    monkeypatch.setattr(source_targets, "is_link", lambda metadata: True)
+    monkeypatch.setattr(discovery, "is_link", lambda metadata: True)
     report = semgrep.scan_semgrep(FIXTURES / "safe", runner=lambda *a, **kw: None)
     assert report["errors"] == ["SYMLINK_OR_REPARSE_POINT"]
 

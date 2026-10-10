@@ -36,7 +36,9 @@ $env:TMP = $env:TEMP
 .\.venv\Scripts\semgrep.exe --version
 ```
 
-`requirements.txt`는 PyYAML, `requirements-dev.txt`는 pytest·jsonschema, `requirements-semgrep.txt`는 선택적 Semgrep 의존성입니다. 원본에서 검증한 버전은 Python 3.12.10, Semgrep 1.180.0, Gitleaks 8.30.0입니다. 의존성 범위가 완전 고정된 lockfile은 아니므로 설치 버전을 기록하고 실제 테스트를 다시 실행하세요.
+`requirements.txt`는 PyYAML, `requirements-dev.txt`는 pytest·jsonschema, `requirements-semgrep.txt`는 선택적 Semgrep 의존성입니다.
+
+macOS·Linux에서는 임시 폴더가 심볼릭 링크(`/var` → `/private/var`)라 스캔이 `SYMLINK_OR_REPARSE_POINT`로 거부됩니다. 테스트와 실행 전에 `export TMPDIR="$PWD/.tmp"`로 프로젝트 안 `.tmp`를 쓰세요(`.tmp`는 gitignore 대상). 원본에서 검증한 버전은 Python 3.12.10, Semgrep 1.180.0, Gitleaks 8.30.0입니다. 의존성 범위가 완전 고정된 lockfile은 아니므로 설치 버전을 기록하고 실제 테스트를 다시 실행하세요.
 
 Gitleaks는 Python 패키지가 아닌 네이티브 CLI입니다. [공식 Releases](https://github.com/gitleaks/gitleaks/releases)에서 Windows 아키텍처에 맞는 ZIP을 `.tmp/gitleaks.zip`으로 저장하고, 같은 릴리스의 체크섬과 비교한 다음 아래 명령을 실행합니다. 지원 정책은 **8.24.2 이상, 9 미만**입니다.
 

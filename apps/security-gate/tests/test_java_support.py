@@ -59,16 +59,12 @@ def test_java_rules_are_local_fixed_and_known():
     assert all(set(r) <= {"id", "languages", "severity", "message", "pattern-either"} for r in rules)
 
 
-def test_java_skips_python_ast_worker(tmp_path, monkeypatch):
-    original_run = subprocess.run
+def test_java_skips_syntax_preflight(tmp_path, monkeypatch):
+    # Only Python has a local parser; Java parse errors come back from Semgrep --strict instead.
     calls = []
-    def java_only(command, *args, **kwargs):
-        assert source_syntax.CHECK_PROGRAM not in command, "Python AST process must not parse Java"
-        calls.append(command)
-        return original_run(command, *args, **kwargs)
-    monkeypatch.setattr(source_syntax.subprocess, "run", java_only)
+    monkeypatch.setattr(source_syntax.subprocess, "run", lambda command, *a, **k: calls.append(command))
     assert semgrep.scan_semgrep(java_project(tmp_path), runner=output_runner())["decision"] == "ALLOW"
-    assert len(calls) == 1 and source_syntax.JAVA_CHECK_PROGRAM in calls[0]
+    assert calls == []
 
 
 def test_mixed_snapshot_preserves_both_languages_and_checks_all_files(tmp_path):

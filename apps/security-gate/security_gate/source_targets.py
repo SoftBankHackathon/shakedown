@@ -1,23 +1,22 @@
 """Bounded source discovery; never follows links or executes project code."""
 import os
 from pathlib import Path
-import stat
 from urllib.parse import unquote, urlsplit
 
-from .discovery import is_link, validate_target
+from .discovery import MAX_FILES, iter_files, validate_target
 from .models import ScanError
 from .parsing import read_bounded
 from .source_units import MAX_UNITS, SourceUnit, TemplateScripts
 
-EXCLUDED_DIRECTORIES = frozenset({".git", ".venv", "venv", "__pycache__",
-                                  ".pytest_cache", ".pytest-tmp", ".tmp", ".pip-cache"})
-MAX_ENTRIES = 10_000
-MAX_FILES = 256
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
-SUPPORTED = {".py": "python", ".java": "java", ".js": "javascript", ".jsx": "javascript",
-             ".mjs": "javascript", ".cjs": "javascript", ".ts": "typescript", ".tsx": "typescript",
-             ".mts": "typescript", ".cts": "typescript"}
-SUFFIXES = {"python": ".py", "java": ".java", "javascript": ".js", "typescript": ".ts"}
+# extension -> (language, snapshot suffix). JSX/TSX keep their own suffix so Semgrep parses them as such.
+SUPPORTED = {".py": ("python", ".py"), ".java": ("java", ".java"),
+             ".js": ("javascript", ".js"), ".jsx": ("javascript", ".jsx"),
+             ".mjs": ("javascript", ".js"), ".cjs": ("javascript", ".js"),
+             ".ts": ("typescript", ".ts"), ".tsx": ("typescript", ".tsx"),
+             ".mts": ("typescript", ".ts"), ".cts": ("typescript", ".ts")}
+# Markup whose inline scripts and handlers are extracted as JavaScript units.
+TEMPLATE_SUFFIXES = frozenset({".html", ".htm", ".svg"})
 UNSUPPORTED = {
     ".vue": "vue", ".svelte": "svelte",
     ".kt": "kotlin", ".kts": "kotlin", ".scala": "scala", ".groovy": "groovy",
@@ -39,7 +38,7 @@ DATA_NAMES = frozenset({"Dockerfile", "Makefile", "gradlew", "gradlew.bat", "mvn
 def source_language(path):
     suffix = path.suffix.lower()
     if suffix in SUPPORTED:
-        return SUPPORTED[suffix]
+        return SUPPORTED[suffix][0]
     if path.name.endswith(".gradle.kts"):
         return None
     if suffix in UNSUPPORTED:
@@ -58,52 +57,30 @@ def sources(target, max_file_bytes, coverage=None):
     root = validate_target(target)
     if not root.is_dir():
         raise ScanError("SEMGREP_DIRECTORY_REQUIRED")
-    pending, paths, visited = [(root, 0)], [], 0
-    detected, unsupported = set(), set()
-    unsupported_files = 0
-    while pending:
-        directory, depth = pending.pop()
-        if depth > 64:
+    paths, detected, unsupported, unsupported_files = [], set(), set(), 0
+    for path in iter_files(root, limit_code="SOURCE_DISCOVERY_LIMIT_EXCEEDED"):
+        language = source_language(path)
+        if language:
+            detected.add(language)
+        suffix = path.suffix.lower()
+        if suffix in SUPPORTED or suffix in TEMPLATE_SUFFIXES:
+            paths.append(path)
+        elif language:
+            unsupported.add(language)
+            unsupported_files += 1
+        if len(paths) > MAX_FILES:
             raise ScanError("SOURCE_DISCOVERY_LIMIT_EXCEEDED")
-        if is_link(directory.lstat()):
-            raise ScanError("SYMLINK_OR_REPARSE_POINT")
-        with os.scandir(directory) as entries:
-            for entry in entries:
-                visited += 1
-                if visited > MAX_ENTRIES:
-                    raise ScanError("SOURCE_DISCOVERY_LIMIT_EXCEEDED")
-                metadata = entry.stat(follow_symlinks=False)
-                if is_link(metadata):
-                    raise ScanError("SYMLINK_OR_REPARSE_POINT")
-                if entry.name in EXCLUDED_DIRECTORIES and stat.S_ISDIR(metadata.st_mode):
-                    continue
-                if stat.S_ISDIR(metadata.st_mode):
-                    pending.append((Path(entry.path), depth + 1))
-                else:
-                    if not stat.S_ISREG(metadata.st_mode):
-                        raise ScanError("UNSUPPORTED_PATH_TYPE")
-                    path = Path(entry.path)
-                    language = source_language(path)
-                    if language:
-                        detected.add(language)
-                    if path.suffix.lower() in SUPPORTED or path.suffix.lower() in {".html", ".htm", ".svg"}:
-                        paths.append(path)
-                    elif language:
-                        unsupported.add(language)
-                        unsupported_files += 1
-                    if len(paths) > MAX_FILES:
-                        raise ScanError("SOURCE_DISCOVERY_LIMIT_EXCEEDED")
     total = 0
     result, gaps, references = [], [], []
     for path in sorted(paths):
+        # read_bounded enforces max_file_bytes per file; only the total needs checking here.
         source = read_bounded(path, max_file_bytes)
         total += len(source.encode("utf-8"))
         if total > MAX_TOTAL_BYTES:
             raise ScanError("SOURCE_TOTAL_SIZE_LIMIT_EXCEEDED")
-        if path.suffix.lower() in SUPPORTED:
-            language = SUPPORTED[path.suffix.lower()]
-            suffix = path.suffix.lower() if path.suffix.lower() in {".jsx", ".tsx"} else SUFFIXES[language]
-            result.append(SourceUnit(path, source, language, suffix))
+        suffix = path.suffix.lower()
+        if suffix in SUPPORTED:
+            result.append(SourceUnit(path, source, *SUPPORTED[suffix]))
         else:
             template = TemplateScripts(path).finish(source)
             result.extend(template.units)
@@ -125,10 +102,6 @@ def sources(target, max_file_bytes, coverage=None):
                 gaps.append("UNRESOLVED_SCRIPT_REFERENCE")
         except ValueError:
             gaps.append("UNRESOLVED_SCRIPT_REFERENCE")
-    if any(len(unit.text.encode("utf-8")) > max_file_bytes for unit in result):
-        raise ScanError("FILE_SIZE_LIMIT_EXCEEDED")
-    if sum(len(unit.text.encode("utf-8")) for unit in result) > MAX_TOTAL_BYTES:
-        raise ScanError("SOURCE_TOTAL_SIZE_LIMIT_EXCEEDED")
     if coverage is not None:
         coverage.update(detected_languages=sorted(detected), unsupported_languages=sorted(unsupported),
                         unsupported_files=unsupported_files, unscanned_sources=len(gaps),
