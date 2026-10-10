@@ -129,9 +129,11 @@ class DeploymentStore:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self.runner = runner or LocalRunner()
+        # Imported here: both runner modules import this one.
         from engine.aws_runner import AwsRunner
+        from engine.azure_runner import AzureRunner
         self.aws = aws or AwsRunner()
-        self._azure = azure
+        self.azure = azure or AzureRunner()
         self.poll_seconds, self.timeout = poll_seconds, timeout
         self.pool = ThreadPoolExecutor(max_workers=2)
         with self.connect() as db:
@@ -143,19 +145,8 @@ class DeploymentStore:
                 d = json.loads(row[0]); d.update(status='failed', finished=time.time(), error='Engine restarted during deployment. Inspect target resources before retrying.')
                 db.execute('UPDATE deployments SET status=?, payload=? WHERE id=?', ('failed', json.dumps(d), d['id']))
 
-    @property
-    def azure(self):
-        # NOTE(conflict): engine/azure_runner.py is written in a separate change. Imported lazily so the
-        # engine still starts without it. Interface: preflight(project), build_publish(project, id) -> (analysis, image),
-        # publish(source_image, id) -> same-digest ACR image, valid_url(url), call(method, path, body).
-        if self._azure is None:
-            from engine.azure_runner import AzureRunner
-            self._azure = AzureRunner()
-        return self._azure
-
     def runner_for(self, target):
-        if target == 'azure': return self.azure
-        return {'local': self.runner, 'aws': self.aws}[target]
+        return {'local': self.runner, 'aws': self.aws, 'azure': self.azure}[target]
 
     @contextmanager
     def connect(self):
@@ -319,7 +310,7 @@ class DeploymentStore:
 
     def run_comparison(self, project, d, request):
         try:
-            self.compare(d, request.baseline, request.candidate, project)
+            self.compare(d, request.baseline, [request.candidate], project)
         except Exception as exc:
             d['status'] = 'failed'
             d['error'] = str(exc) if isinstance(exc, DeploymentError) else 'Comparison failed; no PASS was recorded.'
@@ -328,7 +319,6 @@ class DeploymentStore:
 
     def compare(self, d, baseline, candidates, project):
         """Run one shakedown per candidate against the same baseline. Returns {candidate: PASS|WARN|BLOCKED}."""
-        if isinstance(candidates, Endpoint): candidates = [candidates]
         if any(baseline.url == c.url for c in candidates):
             raise DeploymentError('Cannot compare an environment with itself.')
         # Registered URLs are existing environments. Never deploy/delete someone else's resources.

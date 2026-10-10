@@ -31,16 +31,21 @@ const notFound = (error: unknown) => (error as { statusCode?: number }).statusCo
 
 export class AzureClient implements AzureApi {
   // 키나 비밀번호를 파일에 두지 않고 az login 정보만 사용한다.
-  credential: AzureCliCredential;
-  apps: ContainerAppsAPIClient; registry: ContainerRegistryClient; logs: LogsQueryClient;
-  private workspace?: string;
+  private readonly credential: AzureCliCredential;
+  private readonly apps: ContainerAppsAPIClient; private readonly registry: ContainerRegistryClient; private readonly logs: LogsQueryClient;
+  private armToken?: Awaited<ReturnType<AzureCliCredential['getToken']>>;
+  private workspace?: string; private eventStream?: string;
   constructor(private config: Config) {
     this.credential = new AzureCliCredential({ tenantId: config.tenantId });
     this.apps = new ContainerAppsAPIClient(this.credential, config.subscriptionId);
     this.registry = new ContainerRegistryClient(`https://${registryServer(config)}`, this.credential, { audience: KnownContainerRegistryAudience.AzureResourceManagerPublicCloud });
     this.logs = new LogsQueryClient(this.credential);
   }
-  private async token(signal: AbortSignal) { return (await this.credential.getToken(`${ARM}/.default`, { abortSignal: signal })).token; }
+  // AzureCliCredential은 부를 때마다 az 프로세스를 새로 띄우므로, 만료 5분 전까지 같은 토큰을 쓴다.
+  private async token(signal: AbortSignal) {
+    if (!this.armToken || this.armToken.expiresOnTimestamp - Date.now() < 300_000) this.armToken = await this.credential.getToken(`${ARM}/.default`, { abortSignal: signal });
+    return this.armToken.token;
+  }
   private async arm<T>(path: string, apiVersion: string, signal: AbortSignal): Promise<T> {
     const response = await fetch(`${ARM}${path}?api-version=${apiVersion}`, { headers: { Authorization: `Bearer ${await this.token(signal)}` }, signal });
     if (!response.ok) throw new Error(`Azure 리소스를 조회할 수 없습니다 (HTTP ${response.status}): ${path.split('/').at(-1)}`);
@@ -72,14 +77,14 @@ export class AzureClient implements AzureApi {
   }
   async streamLogs(revision: string, signal: AbortSignal) {
     const c = this.config;
-    const [app, auth, replicas] = await Promise.all([
-      this.getApp(signal),
+    const [endpoint, auth, replicas] = await Promise.all([
+      this.eventStream ?? this.getApp(signal).then(app => this.eventStream = app.eventStreamEndpoint),
       this.apps.containerApps.getAuthToken(c.resourceGroup, c.containerApp, { abortSignal: signal }),
       this.apps.containerAppsRevisionReplicas.listReplicas(c.resourceGroup, c.containerApp, revision, { abortSignal: signal }),
     ]);
-    if (!app.eventStreamEndpoint || !auth.token) return [];
+    if (!endpoint || !auth.token) return [];
     // az containerapp logs show와 같은 주소 (확인 필요: 실제 Azure에서 응답 형식 실측)
-    const base = app.eventStreamEndpoint.slice(0, app.eventStreamEndpoint.indexOf('/subscriptions/'));
+    const base = endpoint.slice(0, endpoint.indexOf('/subscriptions/'));
     const lines = await Promise.all(replicas.value.map(async replica => {
       const url = `${base}/subscriptions/${c.subscriptionId}/resourceGroups/${c.resourceGroup}/containerApps/${c.containerApp}/revisions/${revision}/replicas/${replica.name}/containers/app/logstream?tailLines=50&follow=false&output=json`;
       const response = await fetch(url, { headers: { Authorization: `Bearer ${auth.token}` }, signal });

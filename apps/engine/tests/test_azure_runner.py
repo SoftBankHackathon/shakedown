@@ -125,7 +125,7 @@ def test_publish_requires_a_pinned_ecr_source_before_any_command(monkeypatch, co
 
 def test_build_publish_builds_amd64_and_returns_acr_digest(monkeypatch, configured, project):
     shell = Shell(); runner = runner_with(monkeypatch, shell)
-    monkeypatch.setattr(runner, 'preflight', lambda p: None)
+    monkeypatch.setattr(runner, 'preflight', lambda p: runner.config())
     monkeypatch.setattr(runner, 'build', lambda p, image, platform: p.analysis if platform == 'linux/amd64' and image == ACR + ':dep_test' else None)
     analysis, image = runner.build_publish(project, 'dep_test')
     assert image == ACR + '@' + DIGEST and analysis == project.analysis

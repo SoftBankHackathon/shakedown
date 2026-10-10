@@ -48,10 +48,12 @@ class AzureRunner(LocalRunner):
 
     @staticmethod
     def registry(config):
-        return config['repositoryUri'].split('/')[0]
+        """(server, ACR name, repository) from '<name>.azurecr.io/<repo>'."""
+        server, repo = config['repositoryUri'].split('/', 1)
+        return server, server.split('.')[0], repo
 
     def acr_digest(self, config, tag):
-        name, repo = self.registry(config).split('.')[0], config['repositoryUri'].split('/', 1)[1]
+        _, name, repo = self.registry(config)
         digest = self.capture(['az', 'acr', 'repository', 'show', '-n', name, '--image', f'{repo}:{tag}', '--query', 'digest', '-o', 'tsv'])
         if not re.fullmatch(DIGEST, digest):
             raise DeploymentError('ACR did not return a valid image digest.')
@@ -69,6 +71,7 @@ class AzureRunner(LocalRunner):
         health = self.call('GET', '/health')
         if not health or health.get('target') != 'azure' or health.get('ok') is not True:
             raise DeploymentError('Azure adapter is not ready on 127.0.0.1:9104.')
+        return config
 
     def docker_env(self, auth):
         # A private, temporary Docker config prevents persisting registry tokens in the user's config.
@@ -79,9 +82,9 @@ class AzureRunner(LocalRunner):
         return env
 
     def login_acr(self, config, env):
-        name = self.registry(config).split('.')[0]
+        server, name, _ = self.registry(config)
         token = self.capture(['az', 'acr', 'login', '-n', name, '--expose-token', '--query', 'accessToken', '-o', 'tsv'])
-        self.capture(['docker', 'login', '--username', ACR_TOKEN_USER, '--password-stdin', self.registry(config)], input=token.encode(), env=env)
+        self.capture(['docker', 'login', '--username', ACR_TOKEN_USER, '--password-stdin', server], input=token.encode(), env=env)
 
     def publish(self, source_image, deployment_id):
         """Copy an already published image (ECR) into ACR without changing its digest."""
@@ -108,8 +111,7 @@ class AzureRunner(LocalRunner):
 
     def build_publish(self, project, deployment_id):
         """Azure-only selection: build locally for linux/amd64 and push straight to ACR."""
-        self.preflight(project)
-        config = self.config()
+        config = self.preflight(project)
         tag = config['repositoryUri'] + ':' + deployment_id
         analysis = self.build(project, tag, platform='linux/amd64')
         if analysis.port != config['port'] or (analysis.database_name or 'board_db') != config['dbName']:
