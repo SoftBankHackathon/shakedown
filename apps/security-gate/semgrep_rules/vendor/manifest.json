@@ -1,0 +1,27 @@
+[
+  {
+    "file": "patched-codes/LICENSE",
+    "url": "https://github.com/patched-codes/semgrep-rules/blob/1118d79823ae756534678378a4aac0cbfa5d3041/LICENSE",
+    "sha256": "a3801fde4f248f335926db5dbec84ea70d196a63e3f51ddca8cb0e46a43c61ef"
+  },
+  {
+    "file": "patched-codes/rule-subproc.yml",
+    "url": "https://github.com/patched-codes/semgrep-rules/blob/1118d79823ae756534678378a4aac0cbfa5d3041/go/subproc/rule-subproc.yml",
+    "sha256": "d360bb504a7bebf7e76b69a3cfbac52ebf9a6b5b19943dcf84d6a5268872d3b4"
+  },
+  {
+    "file": "patched-codes/rule-concat-sqli.yml",
+    "url": "https://github.com/patched-codes/semgrep-rules/blob/1118d79823ae756534678378a4aac0cbfa5d3041/go/sql/rule-concat-sqli.yml",
+    "sha256": "5027676311a38a90077875f78b1a5e7c95beda527567f56a36e8aa5835424a28"
+  },
+  {
+    "file": "trailofbits/LICENSE",
+    "url": "https://github.com/trailofbits/semgrep-rules/blob/31390b3a99c04c81522d1b37c8d1900aa2dd4094/LICENSE",
+    "sha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
+  },
+  {
+    "file": "trailofbits/panic-in-function-returning-result.yaml",
+    "url": "https://github.com/trailofbits/semgrep-rules/blob/31390b3a99c04c81522d1b37c8d1900aa2dd4094/rs/panic-in-function-returning-result.yaml",
+    "sha256": "6dba22c562e9fe6d23d6fe9eb0571a438263b1eaf36218118a26f78ccf1aab9b"
+  }
+]

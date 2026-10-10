@@ -43,3 +43,9 @@ Extracted HTML/SVG scripts/handlers use their effective JS/TS suffix. A dynamic 
 Language/extension fixtures cover valid and invalid inputs, JSX/TSX and TypeScript angle assertions, PHP with HTML, C/C++ headers, extraction failures, mixed supported/unsupported sources and input size limits. Engine integration checks JS/TS syntax failure and valid/invalid Go never being approved. No AWS resources were created.
 
 Latest validation: gate 424 passed / 1 Windows-only skip; #11 engine 203 passed. The new language suite contributes 72 real-parser/contract cases. Python 3.12 scanner and Python 3.14 engine environments both have pinned grammar dependencies installed.
+
+## Go / Rust security-rule extension
+
+Go and Rust are no longer syntax-only. Three unchanged, pinned upstream rules are included: patched-codes/gosec-derived dynamic executable and constructed SQL (MIT repository with Apache-2.0 file notices), and Trail of Bits Result-function unwrap/expect audit (AGPL-3.0). Licenses, source commits and hashes are under semgrep_rules/vendor. The gate's schema recognizes their original IDs and sanitized reason codes. An audit finding is treated as DENY for review; absence of findings is only a limited-rule ALLOW, not comprehensive security certification. C/C++/C#/Ruby/PHP remain syntax-only REVIEW.
+
+Validation: gate suite 426 passed / 1 Windows-only skip, plus the separately added provenance/hash test passed (427 passing cases total). Real scanner safe/risky Go/Rust and SQL parameterization comparison passed. Engine #11: 207 passed, including real Go/Rust gate contracts. No Docker build, AWS deployment or target execution in these checks.

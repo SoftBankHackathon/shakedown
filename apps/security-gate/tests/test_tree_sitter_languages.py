@@ -35,7 +35,7 @@ def test_all_registered_extensions_use_real_parser(suffix, valid):
             source_syntax.validate_sources(inputs, timeout_seconds=5)
 
 
-@pytest.mark.parametrize('suffix', ['.go', '.rs', '.c', '.h', '.cpp', '.cs', '.rb', '.php', '.phtml'])
+@pytest.mark.parametrize('suffix', ['.c', '.h', '.cpp', '.cs', '.rb', '.php', '.phtml'])
 @pytest.mark.parametrize('valid', [True, False])
 def test_syntax_only_language_never_implies_security_approval(tmp_path, suffix, valid):
     grammar = source_syntax.SYNTAX_SUFFIXES[suffix][-1]
@@ -51,11 +51,11 @@ def test_syntax_only_language_never_implies_security_approval(tmp_path, suffix, 
 
 def test_mixed_supported_and_syntax_only_repo_still_requires_review(tmp_path):
     (tmp_path / 'app.js').write_text('const value = 1;')
-    (tmp_path / 'lib.go').write_text(SAMPLES['go'][0])
+    (tmp_path / 'lib.c').write_text(SAMPLES['c'][0])
     report = semgrep.scan_semgrep(tmp_path, runner=output_runner())
     assert report['decision'] == 'REVIEW'
     assert report['scanned_languages'] == ['javascript']
-    assert report['unsupported_languages'] == ['go']
+    assert report['unsupported_languages'] == ['c']
 
 
 @pytest.mark.parametrize('source', [
@@ -87,7 +87,7 @@ def test_syntax_only_files_obey_existing_limits(tmp_path):
 
 def test_syntax_only_sources_count_toward_total_size(tmp_path, monkeypatch):
     monkeypatch.setattr(source_targets, 'MAX_TOTAL_BYTES', 30)
-    (tmp_path / 'lib.go').write_text(SAMPLES['go'][0])
+    (tmp_path / 'lib.c').write_text(SAMPLES['c'][0])
     (tmp_path / 'lib.rs').write_text(SAMPLES['rust'][0])
     report = semgrep.scan_semgrep(tmp_path, runner=output_runner())
     assert report['errors'] == ['SOURCE_TOTAL_SIZE_LIMIT_EXCEEDED']

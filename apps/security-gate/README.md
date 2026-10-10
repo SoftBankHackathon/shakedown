@@ -257,7 +257,9 @@ Java 및 아래 언어는 오픈소스 [Tree-sitter Python 바인딩](https://gi
 | Java | tree-sitter-java | 기존 Semgrep 규칙 |
 | JS / JSX / MJS / CJS | tree-sitter-javascript | 기존 Semgrep 규칙 |
 | TS / MTS / CTS / TSX | tree-sitter-typescript (TSX 별도 grammar) | 기존 Semgrep 규칙 |
-| Go / Rust / C / C++ / C# / Ruby / PHP | 각 언어별 Tree-sitter 패키지 | 미지원: 정상 문법도 REVIEW 유지 |
+| Go | tree-sitter-go | patched-codes/gosec 유래: 동적 실행 파일·SQL 문자열 결합 |
+| Rust | tree-sitter-rust | Trail of Bits: Result 반환 함수의 unwrap/expect audit |
+| C / C++ / C# / Ruby / PHP | 각 언어별 Tree-sitter 패키지 | 미지원: 정상 문법도 REVIEW 유지 |
 
 고정 버전은 `requirements.txt`에 명시합니다. PHP는 태그/HTML을 포함하는 PHP grammar를 사용합니다.
 C/C++ 공용 `.h`는 두 문법 중 하나가 허용하면 문법 검사만 통과합니다. `.cxx`, `.hh`, `.hxx`, `.phtml`도 수집합니다.
@@ -389,3 +391,14 @@ ALLOW는 선택한 버전의 제한된 규칙 통과이며 전체 보안 보장�
 - 크기·탐색·결과·시간 제한은 적용하지만 OS 수준의 완전한 파일/네트워크/메모리 격리나 소스 동시 변경 방지는 제공하지 않습니다. 신뢰된 도구와 고정 로컬 스냅샷을 사용하세요.
 
 README는 현재 인터페이스의 기준이고, [LAB_VALIDATION_HISTORY.md](docs/LAB_VALIDATION_HISTORY.md)는 과거 실험·오류 수정·당시 결과를 보존하는 기록입니다. 역사 문서의 과거 미설치·미구현 문구를 현재 기능 상태로 해석하지 마세요. [PACKAGING_VALIDATION.md](docs/PACKAGING_VALIDATION.md)는 제출본의 검증 및 미검증 항목을 기록합니다.
+
+### Go / Rust 공개 규칙
+
+`semgrep_rules/vendor/`의 원본 규칙을 수정 없이 사용합니다. 커밋/파일 SHA-256과 원본 URL은 manifest.json에 기록했고 라이선스는 함께 보관합니다.
+Go 규칙은 patched-codes 저장소(MIT)에서 가져왔으며 파일에 표시된 gosec Apache-2.0 고지도 보존합니다.
+Rust 규칙은 Trail of Bits의 AGPL-3.0 소스와 라이선스를 그대로 포함합니다.
+검사 시 네트워크로 규칙을 받지 않으며 원문 코드/메시지를 API로 노출하지 않습니다.
+
+Go의 동적 실행 파일 및 결합 SQL, Rust의 Result 함수 내 unwrap/expect만 선택했습니다. Rust 탐지는 검토가 필요한 panic 위험이지 악용 가능성의 확정이 아닙니다.
+양쪽 모두 해당 제한된 규칙에서 미탐지면 ALLOW, 탐지면 DENY입니다. 전체 취약점/의존성 CVE/unsafe 메모리 검사를 제공하지 않습니다.
+`go.mod`/`go.sum`은 데이터로 분류하고 비밀 검사는 계속 적용합니다. 문법 오류는 이전처럼 SCAN_FAILED입니다.
