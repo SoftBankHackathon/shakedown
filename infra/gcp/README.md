@@ -92,6 +92,8 @@ bash infra/gcp/scripts/spike.sh "$(cat infra/gcp/.data/image.txt)"
 | 서비스 대수 | manualInstanceCount 0 | 0 |
 | 리비전 이름 지정 재배포 (session-jdbc, 스티키 켬, 1대) | 270초 이내, 그 배포 리비전 로그만 | 54초, `shakedown-board-82fc70c10bba`, 앱 로그 44줄이 그 리비전 시작부터. DELETE 204 2.95초 |
 
+위 두 표의 기준 270초는 실측 당시의 배포 제한입니다. 2026-10-10부터 420초입니다(아래 "엔진이 맞춰야 할 것"의 대기).
+
 ## 배포 API 실행
 
 엔진이 부르는 GCP 배포 API를 `127.0.0.1:9103`에 띄웁니다. 한 프로세스가 Cloud Run 서비스 하나(설정의 `serviceName`)만 다룹니다.
@@ -202,10 +204,10 @@ ready 응답 예:
 }
 ```
 
-엔진이 맞춰야 할 것 (엔진 수정은 별도 PR `feat/engine-gcp-target`)
+엔진이 맞춰야 할 것 (엔진 쪽 구현: `apps/engine/engine/gcp_runner.py`·`deployments.py`)
 - 이미지: `linux/amd64`로 빌드해 허용 저장소에 push하고 `image@sha256:…`을 보냅니다. 태그는 받지 않습니다.
 - 주소: `https://…run.app`을 공개 주소로 받아들입니다.
-- 대기: 배포는 270초 안에 `ready` 또는 `failed`가 됩니다. 엔진의 5분 제한 안입니다.
+- 대기: 배포가 420초(7분) 안에 `ready`가 되지 않으면 0대로 내린 뒤(최대 19초) `failed`가 됩니다. 그래서 엔진은 GCP를 450초(7분 30초) 기다려, 시간 초과로 끊기 전에 어댑터의 `failed`를 받습니다. 처음에는 AWS와 같은 270초였으나, 2026-10-10 13:19 Cloud Run이 최소 인스턴스 2대를 확보하는 데 4분 15초가 걸려(평소 1분 안) 한도를 12초 넘긴 뒤 늘렸습니다.
 - DELETE: 보통 20초 안에 204입니다. 204 뒤 공개 주소는 403이 아니라 503(`Service is disabled`)입니다(아래 "내리기").
 - env는 `SPRING_PROFILES_ACTIVE` 하나, secret_refs는 `SPRING_DATASOURCE_PASSWORD: db_password` 하나만 받습니다. 프로필을 빼면 `demo,session-memory`입니다. 실행 설정(runtime)을 보내면 아래 "범용 런타임" 절의 규칙을 따릅니다.
 - 계획 배포는 아래 "계획 배포" 절의 모양으로 보냅니다.
@@ -322,7 +324,7 @@ PR #20 첫 버전은 medium·large에서 미리 고가용성으로 바꿔 둔 Cl
 
 ## 상태와 오류 규칙
 
-계약은 `packages/contracts/openapi/target.yaml`(v0.1.4, "GCP 구현 제약" 절)입니다. 여기에는 GCP에서 실제로 무엇을 하는지 적습니다.
+계약은 `packages/contracts/openapi/target.yaml`(v0.1.5, "GCP 구현 제약" 절)입니다. 여기에는 GCP에서 실제로 무엇을 하는지 적습니다.
 
 **받기 (POST)**
 - 202와 `pending`을 바로 주고 배포는 뒤에서 합니다. 상태는 `pending → deploying → ready | failed`.
@@ -336,12 +338,12 @@ PR #20 첫 버전은 medium·large에서 미리 고가용성으로 바꿔 둔 Cl
 3. 서비스 갱신: 이미지 digest, env(DB 주소·사용자·DDL validate·프로필·TZ), 비밀번호는 Secret Manager 참조, 사설망, 수동 스케일링 대수(= replicas), 세션 어피니티(= sticky_sessions). 계획 배포는 사양·확장 방식(자동이면 서비스 min/max와 리비전 max)을 카탈로그에서 가져오고 등급별 연결 풀을 더합니다(small 제외). 마스크 없는 전체 교체라 다음 계획 없는 배포는 min/max가 지워진 수동 모드로 돌아갑니다.
 4. 준비 대기: `terminalCondition`이 Ready·성공이고, 진행 중(`reconciling`)이 아니고, 최신 생성 리비전과 최신 준비 리비전이 같고, `observedGeneration`이 `generation`과 같고, 서비스의 이미지가 요청 digest와 같을 때. 옛 digest로 떠 있으면 ready가 아닙니다. 계획 배포는 이어서 `phase=verify_scaling`에서 이때 읽은 실제 min과 max(서비스·리비전 중 작은 값)가 카탈로그와 다르면 실패합니다. 이때 새 리비전은 이미 공개 주소로 답하고 있습니다.
 5. 공개 확인: 쿠키 없이 `{url}{health_path}`가 리다이렉트 없이 200이 될 때까지 1초마다 봅니다. 302(로그인 화면)·500은 성공으로 치지 않습니다.
-- 전체 270초 제한. 넘거나 중간에 실패하면 서비스를 0대로 내리고 `failed`로 둡니다. 내리기까지 실패하면 프로젝트를 잠그고(새 배포 409) DELETE 재시도를 기다립니다.
+- 전체 420초 제한(`READY_TIMEOUT_MS`, `src/gcp-provider.ts`). 넘거나 중간에 실패하면 서비스를 0대로 내리고 `failed`로 둡니다. 내리기까지 실패하면 프로젝트를 잠그고(새 배포 409) DELETE 재시도를 기다립니다.
 
 **내리기 (DELETE)**
 - 최신 배포면: 서비스를 0대로 바꾸고, 공개 주소가 4xx·5xx를 줄 때까지 확인한 뒤(최대 15초) 204를 줍니다. 모드 전환과 대수 변경은 새 리비전을 만들지 않습니다. 2xx·3xx는 앱이 아직 답한다는 뜻이라 닫힌 것으로 보지 않습니다. 15초 안에 닫히지 않으면 502이고 프로젝트는 잠긴 채로 DELETE 재시도를 기다립니다.
 - 0대로 바꾸는 PATCH는 지금 서비스 모양에 따라 다릅니다. 서비스가 이미 수동 모드면(계획 없는 배포·small) 2026-10-09에 실측한 그대로 마스크 `scaling.manualInstanceCount`로 대수만 바꿉니다. 자동 확장(medium·large)이거나 모드를 알 수 없으면(API 기본값 AUTOMATIC) 마스크 `scaling.scalingMode,scaling.manualInstanceCount,scaling.minInstanceCount,scaling.maxInstanceCount`에 본문은 MANUAL·0만 보내 min/max도 지웁니다(API 문서가 MANUAL을 "min 대수로 정확히 맞춤"이라고도 설명해서). 넓은 마스크는 2026-10-10 medium 내리기로 실측했습니다(3초, min/max 지워짐, 503). 수동 서비스는 바뀌는 범위를 줄이려고 2026-10-09에 실측한 좁은 마스크를 그대로 씁니다.
-- 공개 권한(`allUsers`) 제거는 204를 기다리게 하지 않고 뒤에서 합니다. 엔진의 DELETE 대기(20초)가 IAM 반영(2~7분 이상)보다 짧아서입니다. 0대인 동안 공개 주소는 503(`Service is disabled`)을 주고, 권한을 뺀 뒤에도 403으로 바뀌지 않습니다(2026-10-09 실측, 10분 관찰). 권한 제거는 누가 대수를 다시 올려도 공개되지 않게 하는 두 번째 잠금입니다. 제거가 실패하면 그 배포의 로그에 남습니다.
+- 공개 권한(`allUsers`) 제거는 204를 기다리게 하지 않고 뒤에서 합니다. 엔진의 DELETE 대기(60초)가 IAM 반영(2~7분 이상)보다 짧아서입니다. 0대인 동안 공개 주소는 503(`Service is disabled`)을 주고, 권한을 뺀 뒤에도 403으로 바뀌지 않습니다(2026-10-09 실측, 10분 관찰). 권한 제거는 누가 대수를 다시 올려도 공개되지 않게 하는 두 번째 잠금입니다. 제거가 실패하면 그 배포의 로그에 남습니다.
 - 이전 배포면 기록만 삭제로 표시하고 현재 서비스는 건드리지 않습니다.
 - 이미 삭제된 ID도 204, 삭제 후 GET은 404, 같은 ID 재사용은 409. 로그는 계속 조회됩니다.
 - GCP 호출이 실패하면 502입니다. 실패했는데 204를 주지 않으니 DELETE를 다시 부릅니다. 0대로 바꾸는 PATCH가 실패하면 그 배포 로그에 손으로 내리는 방법(아래 "비용 멈추기" 1)을 한 줄 남깁니다.

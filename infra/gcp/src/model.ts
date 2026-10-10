@@ -43,7 +43,7 @@ export interface Provider {
   validate(request: DeployRequest): void;
   deploy(request: DeployRequest, signal: AbortSignal, log: Log): Promise<ReadyResult>;
   // 성공은 "서버 0대 + 공개 주소가 4xx·5xx를 줌(2xx·3xx는 앱이 아직 답한다는 뜻)"을 둘 다 확인했다는 뜻이다.
-  // allUsers 권한 회수는 반영에 보통 2분, 길면 7분 넘게 걸려 엔진의 DELETE 제한(20초)을 넘으므로 기다리지 않는다.
+  // allUsers 권한 회수는 반영에 보통 2분, 길면 7분 넘게 걸려 엔진의 DELETE 제한(60초)을 넘으므로 기다리지 않는다.
   stop(log: Log): Promise<void>;
   appLogs(deploymentId: string, since?: string): Promise<LogLine[]>;
 }

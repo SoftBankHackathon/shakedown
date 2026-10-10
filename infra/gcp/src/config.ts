@@ -29,7 +29,7 @@ const imageWithDigest = new RegExp(`^${part}(?:/${part})*@sha256:[a-f0-9]{64}$`)
 
 // egress를 PRIVATE_RANGES_ONLY로 두면 사설 주소로 가는 트래픽만 VPC로 가고 나머지는 인터넷으로 나간다.
 // Cloud Run 문서가 사설 대역으로 꼽는 것은 RFC 1918과 RFC 6598이다. DB 주소가 그 밖이면 앱이 DB를 못 찾아
-// 270초를 다 쓰고 실패하므로, 설정을 읽는 순간 막는다.
+// 420초를 다 쓰고 실패하므로, 설정을 읽는 순간 막는다.
 function isPrivateIpv4(host: string): boolean {
   const [a, b, c, d] = host.split('.').map(Number);
   if ([a, b, c, d].some(n => n > 255)) return false;

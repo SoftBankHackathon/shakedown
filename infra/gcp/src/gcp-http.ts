@@ -11,7 +11,7 @@ export function googleHttp(quotaProject: string): Http {
   return async ({ method, url, body, signal }) => {
     const response = await auth.request({
       url, method, data: body as object | undefined, signal,
-      // 호출 하나가 멈춰도 15초 뒤 끊어, 배포 전체 제한(270초) 안에서 다음 폴링으로 넘어가게 한다.
+      // 호출 하나가 멈춰도 15초 뒤 끊어, 배포 전체 제한(420초) 안에서 다음 폴링으로 넘어가게 한다.
       timeout: 15_000,
       // 재시도는 부르는 쪽 폴링 루프가 정한다. 라이브러리가 몰래 재시도하면 시간 예산이 어긋난다.
       retry: false,

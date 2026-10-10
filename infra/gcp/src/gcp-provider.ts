@@ -8,6 +8,16 @@ import type { CloudRun, RunEnv, RunJob, RunService, RunVpcAccess } from './cloud
 import { GcpError } from './gcp-http.js';
 import type { DeployRequest, Provider, ReadyResult, Log, LogLine } from './model.js';
 
+// 배포 전체 제한 420초(7분). Manager 기본값 270초는 AWS와 같은 코드라 그대로 두고 server.ts가 이 값을 넘긴다.
+// 2026-10-10 13:19 대시보드 배포에서 Cloud Run이 최소 인스턴스 2대를 확보하는 데 4분 15초가 걸려(평소 1분 안)
+// 270초를 12초 넘겨 실패했다. 한도를 넘으면 stop을 끝낸 뒤 failed로 바꾸므로, 엔진의 GCP 대기 450초
+// (apps/engine/engine/deployments.py)가 420초 + stop 예산보다 길어야 엔진이 시간 초과로 끊기 전에 이쪽의 failed를 받는다.
+// 엔진 시험(test_gcp_wait_outlasts_adapter_limit_and_stop)이 두 상수를 읽어 이 관계를 확인한다.
+export const READY_TIMEOUT_MS = 420_000;
+// 엔진(GcpRunner)은 DELETE를 60초 기다린다. 진행 중 배포를 지우면 Manager.remove가 그 배포의 stop을 기다린 뒤
+// stop을 한 번 더 부르므로, 두 번(최대 38초)이 그 안에 끝나거나 실패를 돌려주도록 stop 전체를 19초로 묶는다.
+export const STOP_TIMEOUT_MS = 19_000;
+
 async function phase<T>(name: string, log: Log, work: () => Promise<T>): Promise<T> {
   const started = Date.now();
   log(`phase=${name} started`);
@@ -98,9 +108,9 @@ export class GcpProvider implements Provider {
       : { name: 'schema-init', image: request.image, env: this.env(request, true), resources };
     return { template: { taskCount: 1, template: {
       containers: [container],
-      // 기본값은 재시도 3회다. 실패를 바로 알려야 270초 안에 원인이 로그에 남는다.
+      // 기본값은 재시도 3회다. 실패를 바로 알려야 420초 안에 원인이 로그에 남는다.
       maxRetries: 0,
-      // 기본 600초는 배포 전체 제한(270초)보다 길다. 멈춘 Job은 그 전에 끊는다.
+      // 기본 600초는 배포 전체 제한(420초)보다 길다. 멈춘 Job은 그 전에 끊는다.
       timeout: '180s',
       vpcAccess: this.vpcAccess(),
     } } };
@@ -224,8 +234,7 @@ export class GcpProvider implements Provider {
   }
 
   async stop(log: Log) {
-    // 엔진은 DELETE를 20초만 기다린다. 그 안에 끝내거나 실패를 돌려주려고 전체를 19초로 묶는다.
-    const signal = AbortSignal.timeout(19_000);
+    const signal = AbortSignal.timeout(STOP_TIMEOUT_MS);
     const current = await this.run.getService(signal);
     if (!current) { log('Cloud Run service not found; nothing to stop'); return; }
     try {
@@ -242,7 +251,7 @@ export class GcpProvider implements Provider {
       await this.waitClosed(signal);
       log('public URL closed: no success response');
     } finally {
-      // IAM 반영(2~7분)은 20초 안에 확인할 수 없다. 0대로 이미 닫았으니 allUsers 제거는 기다리지 않고 뒤에서 하고 결과만 로그로 남긴다.
+      // IAM 반영(2~7분)은 엔진의 DELETE 대기(60초) 안에 확인할 수 없다. 0대로 이미 닫았으니 allUsers 제거는 기다리지 않고 뒤에서 하고 결과만 로그로 남긴다.
       // 앞선 제거 뒤에 줄을 세워, 늦게 끝난 제거가 다음 배포의 권한 부여를 덮어쓰지 않게 한다.
       this.closing = this.closing
         .then(() => this.run.setPublic(false, AbortSignal.timeout(30_000)))
