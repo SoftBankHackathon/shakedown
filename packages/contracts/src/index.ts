@@ -9,7 +9,7 @@ import type { HttpRuntime } from '../runtime.mjs';
 //   Scenario / StepDiff / Report ← shakedown (AI shakedown)
 // Example payloads: ../fixtures/*.json
 
-/** Deploy targets. local and aws are implemented for the hackathon; the rest are planned. */
+/** Deploy targets. local, aws and gcp are implemented for the hackathon; the rest are planned. */
 export type TargetName = "local" | "aws" | "onprem" | "gcp" | "azure";
 
 export type Evidence = { field: string; value: string; file: string | null; source: "rule" | "ai" | "default" };
