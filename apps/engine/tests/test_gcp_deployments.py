@@ -7,13 +7,15 @@ import pytest
 from engine import deployments
 from engine.deployments import DeploymentStore, DeployRequest, DeploymentError
 from test_comparisons import Runner, Shakedown, wait, project
-from test_aws_deployments import Aws
+from test_aws_deployments import Aws, DIGEST as AWS_DIGEST
+from test_azure_deployments import Azure, PerCandidate, AZURE_IMAGE
 
 DIGEST = 'asia-northeast3-docker.pkg.dev/shakedown-511106/shakedown/kty-board@sha256:' + 'b' * 64
+AR = DIGEST.split('@')[0]
 URL = 'https://shakedown-board-700410260240.asia-northeast3.run.app'
 
 class Gcp:
-    def __init__(self, fail=None): self.calls = []; self.fail = fail; self.builds = 0; self.preflights = 0
+    def __init__(self, fail=None): self.calls = []; self.fail = fail; self.builds = 0; self.preflights = 0; self.published = []
     def preflight(self, project):
         self.preflights += 1
         if self.fail == 'config': raise DeploymentError('GCP not configured')
@@ -21,6 +23,11 @@ class Gcp:
         self.builds += 1
         if self.fail == 'build': raise RuntimeError('PRIVATE_TOKEN')
         return project.analysis, DIGEST
+    def publish(self, source, id):
+        # 실제 GcpRunner.publish처럼 출처의 digest를 그대로 Artifact Registry 주소에 붙여 돌려준다.
+        self.published.append(source)
+        if self.fail == 'publish': raise DeploymentError('Copying the image into Artifact Registry failed')
+        return AR + '@' + source.split('@')[1]
     def valid_url(self, url): return url == URL
     def call(self, method, path, body=None):
         self.calls.append((method, path, body))
@@ -42,12 +49,96 @@ def test_invalid_selection_rejected_before_build(project, tmp_path, body):
     finally: ds.close()
 
 @pytest.mark.parametrize('other', ['aws', 'azure'])
-def test_gcp_with_another_cloud_is_rejected_before_any_cloud_call(project, tmp_path, other):
-    # GCP는 다른 클라우드 저장소로 이미지를 복사하지 않으므로 다른 클라우드와 함께 받지 않는다.
-    gcp = Gcp(); aws = Aws(); azure = Aws(); ds = DeploymentStore(tmp_path/'d.db', Runner(), aws=aws, azure=azure, gcp=gcp)
+def test_gcp_with_another_cloud_copies_the_first_clouds_digest(project, tmp_path, other):
+    # TARGETS 순서상 GCP는 늘 마지막 클라우드라 빌드하지 않고, 첫 클라우드가 올린 digest를 복사(publish)한다.
+    gcp, aws, azure, local = Gcp(), Aws(), Azure(), Runner(); sd = PerCandidate({other: 'PASS', 'gcp': 'PASS'})
+    first, source = {'aws': (aws, AWS_DIGEST), 'azure': (azure, AZURE_IMAGE)}[other]
+    ds = DeploymentStore(tmp_path/'d.db', local, aws=aws, azure=azure, gcp=gcp, shakedown=sd, poll_seconds=.001)
     try:
-        with pytest.raises(DeploymentError, match='GCP cannot be combined'): ds.start(project, DeployRequest(targets=[other, 'gcp'], shakedown=True))
-        assert (gcp.preflights, gcp.builds, aws.builds, aws.calls, azure.builds, azure.calls, ds.list()) == (0, 0, 0, [], 0, [], [])
+        d = wait(ds, ds.start(project, DeployRequest(targets=['gcp', other, 'local'], shakedown=True))['id'])
+        assert d['status'] == 'promoted' and list(d['targets']) == ['local', other, 'gcp']
+        assert (first.builds, gcp.builds, gcp.published, gcp.preflights) == (1, 0, [source], 1)
+        assert local.calls[0][2]['image'] == first.calls[0][2]['image'] == source
+        assert gcp.calls[0][2]['image'] == AR + '@' + source.split('@')[1]
+        posts = [c[2] for c in sd.calls if c[0] == 'POST']
+        assert [p['candidates'][0]['name'] for p in posts] == [other, 'gcp'] and all(p['baseline']['name'] == 'local' for p in posts)
+        # 비교할 클라우드가 둘이면 수정 자동 적용 힌트를 주지 않는다(수정 적용은 Local + GCP 하나일 때만).
+        assert not any('can_apply_env' in p['hints'] for p in posts)
+    finally: ds.close()
+
+@pytest.mark.parametrize('blocked, kept', [('aws', 'gcp'), ('gcp', 'aws')])
+def test_only_the_blocked_cloud_is_closed_and_fix_stays_local_gcp_only(project, tmp_path, blocked, kept):
+    gcp, aws, local = Gcp(), Aws(), Runner(); sd = PerCandidate({blocked: 'BLOCKED', kept: 'PASS'})
+    ds = DeploymentStore(tmp_path/'d.db', local, aws=aws, gcp=gcp, shakedown=sd, poll_seconds=.001)
+    clouds = {'aws': aws, 'gcp': gcp}
+    try:
+        d = wait(ds, ds.start(project, DeployRequest(targets=['local', 'aws', 'gcp'], shakedown=True))['id'])
+        assert d['status'] == 'blocked' and d['traffic_blocked'] is True
+        assert clouds[blocked].calls[-2][1].endswith('/logs') and clouds[blocked].calls[-1][0] == 'DELETE'
+        assert not any(c[0] == 'DELETE' for c in clouds[kept].calls + local.calls)
+        assert (d['targets'][blocked]['status'], d['targets'][kept]['status']) == ('stopped', 'ready')
+        # 수정 적용은 Local + GCP 하나일 때만이다. 클라우드가 둘이면 GCP가 막혀도 거절하고 상태를 바꾸지 않는다.
+        with pytest.raises(DeploymentError, match='Local \\+ GCP'): ds.apply_fix(project, d['id'])
+        assert ds.get(d['id'])['status'] == 'blocked'
+    finally: ds.close()
+
+def test_failed_gcp_copy_fails_before_any_target_is_deployed(project, tmp_path):
+    # 첫 클라우드 빌드·push는 끝났지만 아직 어떤 대상에도 POST하지 않았다. 지울 배포가 없으니 DELETE도 없다.
+    gcp, aws, local = Gcp('publish'), Aws(), Runner()
+    ds = DeploymentStore(tmp_path/'d.db', local, aws=aws, gcp=gcp, shakedown=PerCandidate({}), poll_seconds=.001)
+    try:
+        d = wait(ds, ds.start(project, DeployRequest(targets=['local', 'aws', 'gcp'], shakedown=True))['id'])
+        assert d['status'] == 'failed' and d['error'] == 'Copying the image into Artifact Registry failed'
+        assert (aws.builds, gcp.published) == (1, [AWS_DIGEST]) and aws.calls == gcp.calls == local.calls == []
+    finally: ds.close()
+
+def test_fix_refuses_two_clouds_even_if_more_clouds_become_fixable(project, tmp_path, monkeypatch):
+    # 수정 재배포는 Local과 그 클라우드 하나만 다시 비교한다. 클라우드가 둘이면 다른 클라우드 결과가 덮이므로,
+    # 나중에 AWS가 자동 수정 대상에 들어가도 Local + 클라우드 하나가 아니면 거절해야 한다.
+    monkeypatch.setattr(deployments, 'ENV_FIX_TARGETS', {'aws', 'gcp'})
+    gcp, aws = Gcp(), Aws(); sd = PerCandidate({'aws': 'BLOCKED', 'gcp': 'PASS'})
+    ds = DeploymentStore(tmp_path/'d.db', Runner(), aws=aws, gcp=gcp, shakedown=sd, poll_seconds=.001)
+    try:
+        d = wait(ds, ds.start(project, DeployRequest(targets=['local', 'aws', 'gcp'], shakedown=True))['id'])
+        with pytest.raises(DeploymentError, match='Local \\+ GCP'): ds.apply_fix(project, d['id'])
+    finally: ds.close()
+
+def test_cloud_pair_without_local_never_offers_the_fix(project, tmp_path):
+    # 수정 적용은 엔진이 띄운 Local이 기준일 때만 된다. AWS가 기준인 AWS+GCP에 힌트를 주면 고칠 수 없는 배포에 버튼이 뜬다.
+    gcp, aws = Gcp(), Aws(); sd = PerCandidate({'gcp': 'BLOCKED'})
+    ds = DeploymentStore(tmp_path/'d.db', Runner(), aws=aws, gcp=gcp, shakedown=sd, poll_seconds=.001)
+    try:
+        d = wait(ds, ds.start(project, DeployRequest(targets=['aws', 'gcp'], shakedown=True))['id'])
+        assert d['status'] == 'blocked' and gcp.published == [AWS_DIGEST]
+        post = next(c[2] for c in sd.calls if c[0] == 'POST')
+        assert post['baseline']['name'] == 'aws' and 'can_apply_env' not in post['hints']
+    finally: ds.close()
+
+def test_architecture_plan_goes_only_to_aws_when_gcp_comes_along(project, tmp_path):
+    # GCP 어댑터는 모르는 필드를 400으로 거절한다(strict). 아키텍처 계획은 AWS 본문에만 실려야 한다.
+    from engine.architecture import CATALOG
+    class Planner:
+        def resolve(self, p, id): return dict(next(t for t in CATALOG if t['id'] == 'medium'))
+    gcp, aws, local = Gcp(), Aws(), Runner(); aws.validate_architecture = lambda spec, project=None: None
+    ds = DeploymentStore(tmp_path/'d.db', local, aws=aws, gcp=gcp, shakedown=PerCandidate({'aws': 'PASS', 'gcp': 'PASS'}), poll_seconds=.001)
+    ds.architecture = Planner()
+    try:
+        d = wait(ds, ds.start(project, DeployRequest(targets=['local', 'aws', 'gcp'], shakedown=True, architecture_plan_id='arch_' + 'a' * 32))['id'])
+        assert d['status'] == 'promoted' and gcp.published == [AWS_DIGEST]
+        aws_body, gcp_body = (next(c[2] for c in runner.calls if c[0] == 'POST') for runner in (aws, gcp))
+        assert aws_body['architecture']['template_id'] == 'medium'
+        assert 'architecture' not in gcp_body and 'env' not in gcp_body and gcp_body['options']['replicas'] == 2
+    finally: ds.close()
+
+def test_local_and_all_three_clouds_share_one_build(project, tmp_path):
+    gcp, aws, azure, local = Gcp(), Aws(), Azure(), Runner(); sd = PerCandidate({'aws': 'PASS', 'azure': 'PASS', 'gcp': 'PASS'})
+    ds = DeploymentStore(tmp_path/'d.db', local, aws=aws, azure=azure, gcp=gcp, shakedown=sd, poll_seconds=.001)
+    try:
+        d = wait(ds, ds.start(project, DeployRequest(targets=['local', 'aws', 'azure', 'gcp'], shakedown=True))['id'])
+        assert d['status'] == 'promoted' and list(d['targets']) == ['local', 'aws', 'azure', 'gcp']
+        assert (aws.builds, azure.builds, gcp.builds) == (1, 0, 0) and azure.published == gcp.published == [AWS_DIGEST]
+        posts = [c[2] for c in sd.calls if c[0] == 'POST']
+        assert [p['candidates'][0]['name'] for p in posts] == ['aws', 'azure', 'gcp']
     finally: ds.close()
 
 def test_gcp_allows_sticky_sessions_and_keeps_cloud_defaults(project, tmp_path):
