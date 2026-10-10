@@ -64,3 +64,52 @@ def test_missing_config_api_returns_actionable_error_without_job(store, project,
         response = client.post(f'/api/projects/{project.id}/deployments', json={'targets': ['local', 'gcp'], 'shakedown': True})
         assert response.status_code == 400 and 'GCP_ADAPTER_CONFIG' in response.json()['detail']
         assert ds.list() == []
+
+
+@pytest.mark.parametrize('targets', [['gcp'], ['local', 'gcp']])
+def test_selected_targets_use_digest_and_real_comparison(project, tmp_path, targets):
+    gcp = Gcp(); aws = Aws(); local = Runner(); sd = Shakedown()
+    ds = DeploymentStore(tmp_path/'d.db', local, aws=aws, gcp=gcp, shakedown=sd, poll_seconds=.001)
+    try:
+        d = wait(ds, ds.start(project, DeployRequest(targets=targets, shakedown=len(targets)==2))['id'])
+        assert d['status'] == ('promoted' if len(targets)==2 else 'deployed')
+        assert list(d['targets']) == targets and d['image'] == DIGEST and gcp.builds == 1
+        assert gcp.calls[0][2]['image'] == DIGEST and d['targets']['gcp']['url'] == URL
+        assert aws.calls == [] and aws.builds == 0
+        if len(targets)==2:
+            assert local.calls[0][2]['image'] == DIGEST
+            assert sd.calls[0][2]['baseline']['name'] == 'local'
+            assert sd.calls[0][2]['candidates'][0] == {'name':'gcp', 'url':URL}
+        else: assert local.calls == [] and sd.calls == []
+    finally: ds.close()
+
+@pytest.mark.parametrize('failure', ['post', 'url', 'build'])
+def test_failures_do_not_leak_secrets_and_cleanup_both(project, tmp_path, failure):
+    gcp = Gcp(failure); local = Runner()
+    ds = DeploymentStore(tmp_path/'d.db', local, gcp=gcp, poll_seconds=.001)
+    try:
+        d = wait(ds, ds.start(project, DeployRequest(targets=['local', 'gcp'], shakedown=True))['id'])
+        assert d['status'] == 'failed' and 'PRIVATE_TOKEN' not in str(d)
+        assert any(c[0]=='DELETE' for c in gcp.calls) == (failure != 'build')
+        assert any(c[0]=='DELETE' for c in local.calls) == (failure != 'build')
+    finally: ds.close()
+
+@pytest.mark.parametrize('cleanup_failure', [False, True])
+def test_blocked_stops_only_managed_gcp_after_logs(project, tmp_path, cleanup_failure):
+    gcp = Gcp('cleanup' if cleanup_failure else None); local = Runner()
+    ds = DeploymentStore(tmp_path/'d.db', local, gcp=gcp, shakedown=Shakedown('BLOCKED'), poll_seconds=.001)
+    try:
+        d = wait(ds, ds.start(project, DeployRequest(targets=['local', 'gcp'], shakedown=True))['id'])
+        assert d['status'] == 'blocked' and d['traffic_blocked'] is (not cleanup_failure)
+        assert gcp.calls[-2][1].endswith('/logs') and gcp.calls[-1][0] == 'DELETE'
+        assert d['targets']['gcp']['status'] == ('failed' if cleanup_failure else 'stopped')
+        assert not any(c[0]=='DELETE' for c in local.calls) and 'PRIVATE_TOKEN' not in str(d)
+    finally: ds.close()
+
+def test_gcp_timeout_attempts_delete(project, tmp_path):
+    gcp = Gcp(); ds = DeploymentStore(tmp_path/'d.db', Runner(), gcp=gcp, timeout=0)
+    try:
+        d = wait(ds, ds.start(project, DeployRequest(targets=['gcp']))['id'])
+        assert d['status'] == 'failed' and 'timed out' in d['error']
+        assert gcp.calls[-1][0] == 'DELETE' and d['targets']['gcp']['status'] == 'stopped'
+    finally: ds.close()
