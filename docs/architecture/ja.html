@@ -5001,7 +5001,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read"
          data-preset-badge-editorial-plate="ARCHIFY / プレート04">
-      <svg viewBox="0 0 1212 1008" role="img" lang="ja" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase" data-reader-fit="intrinsic-height" data-reader-min-text="7.5" data-reader-primary-text="14">
+      <svg viewBox="0 0 1212 938" role="img" lang="ja" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase" data-reader-fit="intrinsic-height" data-reader-min-text="7.5" data-reader-primary-text="14">
         <title id="archify-diagram-title">Shakedown Deploy 全体アーキテクチャ</title>
         <desc id="archify-diagram-description">Archifyで生成されたアーキテクチャ図です。</desc>
         <!-- Definitions -->
@@ -5027,371 +5027,437 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Boundaries (behind everything) -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="0" data-composition-frame-label="開発 PC · loopback(127.0.0.1)のみ公開" x="172" y="96" width="731" height="694" rx="8" class="c-security-group" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="0" data-composition-frame-label="開発 PC · loopback(127.0.0.1)のみ公開" x="142" y="76" width="826" height="708" rx="8" class="c-security-group" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="1" data-composition-frame-label="AWS ソウル" x="948" y="256" width="224" height="108" rx="12" class="c-region" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="1" data-composition-frame-label="AWS ソウル" x="998" y="226" width="174" height="108" rx="12" class="c-region" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="2" data-composition-frame-label="GCP ソウル" x="948" y="386" width="224" height="108" rx="12" class="c-region" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="2" data-composition-frame-label="GCP ソウル" x="998" y="376" width="174" height="108" rx="12" class="c-region" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="3" data-composition-frame-label="Azure Korea Central" x="948" y="516" width="224" height="108" rx="12" class="c-region" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="3" data-composition-frame-label="Azure Korea Central" x="998" y="526" width="174" height="108" rx="12" class="c-region" stroke-width="1"/>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="4" data-composition-frame-label="AWS ソウル · 隔離 VPC = オンプレ" x="998" y="676" width="174" height="108" rx="12" class="c-region" stroke-width="1"/>
 
         <!-- Connection paths (before components for correct z-order) -->
         <g data-graph-role="automatic-crossover" style="--step:0">
-          <path data-graph-role="automatic-crossover-underlay" d="M 150 312 L 200 312" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="user" data-edge-to="dashboard" data-edge-label="Action" data-edge-key="0" data-composition-points="150,312;200,312" data-composition-crossover="halo" data-composition-independent="true" d="M 150 312 L 200 312" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 130 322 L 180 322" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="user" data-edge-to="dashboard" data-edge-label="Action" data-edge-key="0" data-composition-points="130,322;180,322" data-composition-crossover="halo" data-composition-independent="true" d="M 130 322 L 180 322" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:1">
-          <path data-graph-role="automatic-crossover-underlay" d="M 350 312 L 420 312" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="dashboard" data-edge-to="engine" data-edge-label="REST・SSE" data-edge-key="1" data-composition-points="350,312;420,312" data-composition-crossover="halo" data-composition-independent="true" d="M 350 312 L 420 312" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 320 313.95 L 380 313.95" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="dashboard" data-edge-to="engine" data-edge-label="REST・SSE" data-edge-key="1" data-composition-points="320,313.95;380,313.95" data-composition-crossover="halo" data-composition-independent="true" d="M 320 313.95 L 380 313.95" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:2">
-          <path data-graph-role="automatic-crossover-underlay" d="M 508.05 242 L 508.05 221 Q 508.05 213 516.05 213 L 582 213 Q 590 213 590 205 L 590 184" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="engine" data-edge-to="build" data-edge-label="ビルド・push" data-edge-key="2" data-composition-points="508.05,242;508.05,213;590,213;590,184" data-composition-crossover="halo" data-composition-independent="true" d="M 508.05 242 L 508.05 221 Q 508.05 213 516.05 213 L 582 213 Q 590 213 590 205 L 590 184" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 540 322 L 562 322 Q 570 322 570 314 L 570 190 Q 570 182 578 182 L 600 182" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="engine" data-edge-to="gate" data-edge-label="検査" data-edge-key="2" data-composition-points="540,322;570,322;570,182;600,182" data-composition-crossover="halo" data-composition-independent="true" d="M 540 322 L 562 322 Q 570 322 570 314 L 570 190 Q 570 182 578 182 L 600 182" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:3">
-          <path data-graph-role="automatic-crossover-underlay" d="M 493 242 L 493 226 Q 493 218 485 218 L 392 218 Q 384 218 384 210 L 384 160 Q 384 152 376 152 L 360 152" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="engine" data-edge-to="gate" data-edge-label="配備前チェック" data-edge-key="3" data-composition-points="493,242;493,218;384,218;384,152;360,152" data-composition-crossover="halo" data-composition-independent="true" d="M 493 242 L 493 226 Q 493 218 485 218 L 392 218 Q 384 218 384 210 L 384 160 Q 384 152 376 152 L 360 152" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 665.9 214 L 665.9 322" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="gate" data-edge-to="build" data-edge-label="通過" data-edge-key="3" data-composition-points="665.9,214;665.9,322" data-composition-crossover="halo" data-composition-independent="true" d="M 665.9 214 L 665.9 322" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:4">
-          <path data-graph-role="automatic-crossover-underlay" d="M 580 291 L 703 291 Q 711 291 711 283 L 711 190 Q 711 182 719 182 L 735 182" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="engine" data-edge-to="a_local" data-edge-label="配備 202・ポーリング" data-edge-key="4" data-composition-points="580,291;711,291;711,182;735,182" data-composition-crossover="halo" data-composition-independent="true" d="M 580 291 L 703 291 Q 711 291 711 283 L 711 190 Q 711 182 719 182 L 735 182" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 682 322 L 682 251 Q 682 243 690 243 L 872 243 Q 880 243 880 235 L 880 164" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="build" data-edge-to="a_local" data-edge-label="ポーリング" data-edge-key="4" data-composition-points="682,322;682,243;880,243;880,164" data-composition-crossover="halo" data-composition-independent="true" d="M 682 322 L 682 251 Q 682 243 690 243 L 872 243 Q 880 243 880 235 L 880 164" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:5">
-          <path data-graph-role="automatic-crossover-underlay" d="M 580 274.9 L 649.5 274.9 Q 657.5 274.9 657.5 282.9 L 657.5 304 Q 657.5 312 665.5 312 L 735 312" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="engine" data-edge-to="a_aws" data-edge-key="5" data-composition-points="580,274.9;657.5,274.9;657.5,312;735,312" data-composition-crossover="halo" data-composition-independent="true" d="M 580 274.9 L 649.5 274.9 Q 657.5 274.9 657.5 282.9 L 657.5 304 Q 657.5 312 665.5 312 L 735 312" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 750 363 L 772 363 Q 780 363 780 355 L 780 290 Q 780 282 788 282 L 810 282" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="build" data-edge-to="a_aws" data-edge-key="5" data-composition-points="750,363;780,363;780,282;810,282" data-composition-crossover="halo" data-composition-independent="true" d="M 750 363 L 772 363 Q 780 363 780 355 L 780 290 Q 780 282 788 282 L 810 282" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:6">
-          <path data-graph-role="automatic-crossover-underlay" d="M 580 316.9 L 649.5 316.9 Q 657.5 316.9 657.5 324.9 L 657.5 434 Q 657.5 442 665.5 442 L 735 442" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="engine" data-edge-to="a_gcp" data-edge-key="6" data-composition-points="580,316.9;657.5,316.9;657.5,442;735,442" data-composition-crossover="halo" data-composition-independent="true" d="M 580 316.9 L 649.5 316.9 Q 657.5 316.9 657.5 324.9 L 657.5 434 Q 657.5 442 665.5 442 L 735 442" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 750 379.1 L 772 379.1 Q 780 379.1 780 387.1 L 780 424 Q 780 432 788 432 L 810 432" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="build" data-edge-to="a_gcp" data-edge-key="6" data-composition-points="750,379.1;780,379.1;780,432;810,432" data-composition-crossover="halo" data-composition-independent="true" d="M 750 379.1 L 772 379.1 Q 780 379.1 780 387.1 L 780 424 Q 780 432 788 432 L 810 432" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:7">
-          <path data-graph-role="automatic-crossover-underlay" d="M 580 333 L 596 333 Q 604 333 604 341 L 604 564 Q 604 572 612 572 L 735 572" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="engine" data-edge-to="a_azure" data-edge-label="遮断 DELETE" data-edge-key="7" data-composition-points="580,333;604,333;604,572;735,572" data-composition-crossover="halo" data-composition-independent="true" d="M 580 333 L 596 333 Q 604 333 604 341 L 604 564 Q 604 572 612 572 L 735 572" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 666.95 418 L 666.95 476 Q 666.95 484 674.95 484 L 872 484 Q 880 484 880 492 L 880 550" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="build" data-edge-to="a_azure" data-edge-label="DELETE" data-edge-key="7" data-composition-points="666.95,418;666.95,484;880,484;880,550" data-composition-crossover="halo" data-composition-independent="true" d="M 666.95 418 L 666.95 476 Q 666.95 484 674.95 484 L 872 484 Q 880 484 880 492 L 880 550" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
-        <path data-edge-from="a_local" data-edge-to="r_local" data-edge-label="compose" data-edge-key="8" data-composition-points="885,182;960,182" d="M 885 182 L 960 182" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="a_aws" data-edge-to="r_aws" data-edge-label="AWS SDK" data-edge-key="9" data-composition-points="885,312;960,312" d="M 885 312 L 960 312" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="a_gcp" data-edge-to="r_gcp" data-edge-label="GCP API" data-edge-key="10" data-composition-points="885,442;960,442" d="M 885 442 L 960 442" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="a_azure" data-edge-to="r_azure" data-edge-label="Azure SDK" data-edge-key="11" data-composition-points="885,572;960,572" d="M 885 572 L 960 572" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="a_local" data-edge-to="r_local" data-edge-label="docker" data-edge-key="8" data-composition-points="950,132;1010,132" d="M 950 132 L 1010 132" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="a_aws" data-edge-to="r_aws" data-edge-label="SDK" data-edge-key="9" data-composition-points="950,282;1010,282" d="M 950 282 L 1010 282" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="a_gcp" data-edge-to="r_gcp" data-edge-label="API" data-edge-key="10" data-composition-points="950,432;1010,432" d="M 950 432 L 1010 432" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="a_azure" data-edge-to="r_azure" data-edge-label="SDK" data-edge-key="11" data-composition-points="950,582;1010,582" d="M 950 582 L 1010 582" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <g data-graph-role="automatic-crossover" style="--step:12">
-          <path data-graph-role="automatic-crossover-underlay" d="M 508.05 382 L 508.05 533 Q 508.05 541 516.05 541 L 582 541 Q 590 541 590 549 L 590 700" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="engine" data-edge-to="shakedown" data-edge-label="試運転リクエスト" data-edge-key="12" data-composition-points="508.05,382;508.05,541;590,541;590,700" data-composition-crossover="halo" data-composition-independent="true" d="M 508.05 382 L 508.05 533 Q 508.05 541 516.05 541 L 582 541 Q 590 541 590 549 L 590 700" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 450.9 382 L 450.9 620" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="engine" data-edge-to="shakedown" data-edge-label="試運転リクエスト" data-edge-key="12" data-composition-points="450.9,382;450.9,620" data-composition-crossover="halo" data-composition-independent="true" d="M 450.9 382 L 450.9 620" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:13">
-          <path data-graph-role="automatic-crossover-underlay" d="M 493 382 L 493 398 Q 493 406 485 406 L 392 406 Q 384 406 384 414 L 384 724 Q 384 732 376 732 L 360 732" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="engine" data-edge-to="planner" data-edge-label="設計案の選択" data-edge-key="13" data-composition-points="493,382;493,406;384,406;384,732;360,732" data-composition-crossover="halo" data-composition-independent="true" d="M 493 382 L 493 398 Q 493 406 485 406 L 392 406 Q 384 406 384 414 L 384 724 Q 384 732 376 732 L 360 732" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 467 620 L 467 382" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="shakedown" data-edge-to="engine" data-edge-label="判定・レポート" data-edge-key="13" data-composition-points="467,620;467,382" data-composition-crossover="halo" data-composition-independent="true" d="M 467 620 L 467 382" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:14">
-          <path data-graph-role="automatic-crossover-underlay" d="M 680 735 L 790 735" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="shakedown" data-edge-to="urls" data-edge-label="HTTP シナリオ" data-edge-key="14" data-composition-points="680,735;790,735" data-composition-crossover="halo" data-composition-independent="true" d="M 680 735 L 790 735" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 540 655 L 577 655 Q 585 655 585 663 L 585 784 Q 585 792 593 792 L 630 792" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="shakedown" data-edge-to="urls" data-edge-label="シナリオ" data-edge-key="14" data-composition-points="540,655;585,655;585,792;630,792" data-composition-crossover="halo" data-composition-independent="true" d="M 540 655 L 577 655 Q 585 655 585 663 L 585 784 Q 585 792 593 792 L 630 792" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
-        <path data-edge-from="planner" data-edge-to="claude" data-edge-label="推薦" data-edge-key="15" data-composition-points="275,764;275,880" d="M 275 764 L 275 880" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <g data-graph-role="automatic-crossover" style="--step:15">
+          <path data-graph-role="automatic-crossover-underlay" d="M 467 690 L 467 810" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="shakedown" data-edge-to="claude" data-edge-label="要求" data-edge-key="15" data-composition-points="467,690;467,810" data-composition-crossover="halo" data-composition-independent="true" d="M 467 690 L 467 810" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        </g>
         <g data-graph-role="automatic-crossover" style="--step:16">
-          <path data-graph-role="automatic-crossover-underlay" d="M 590 770 L 590 786 Q 590 794 582 794 L 392 794 Q 384 794 384 802 L 384 902 Q 384 910 376 910 L 360 910" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="shakedown" data-edge-to="claude" data-edge-label="レポート" data-edge-key="16" data-composition-points="590,770;590,794;384,794;384,910;360,910" data-composition-crossover="halo" data-composition-independent="true" d="M 590 770 L 590 786 Q 590 794 582 794 L 392 794 Q 384 794 384 802 L 384 902 Q 384 910 376 910 L 360 910" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 453 810 L 453 794 Q 453 786 461 786 L 461 786 Q 469 786 469 778 L 469 722 Q 469 714 461 714 L 461 714 Q 453 714 453 706 L 453 690" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="claude" data-edge-to="shakedown" data-edge-label="シナリオ・レポート" data-edge-key="16" data-composition-points="453,810;453,786;469,786;469,714;453,714;453,690" data-composition-crossover="halo" data-composition-independent="true" d="M 453 810 L 453 794 Q 453 786 461 786 L 461 786 Q 469 786 469 778 L 469 722 Q 469 714 461 714 L 461 714 Q 453 714 453 706 L 453 690" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         </g>
+        <g data-graph-role="automatic-crossover" style="--step:17">
+          <path data-graph-role="automatic-crossover-underlay" d="M 250 352 L 250 620" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="dashboard" data-edge-to="planner" data-edge-label="設計要求" data-edge-key="17" data-composition-points="250,352;250,620" data-composition-crossover="halo" data-composition-independent="true" d="M 250 352 L 250 620" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:18">
+          <path data-graph-role="automatic-crossover-underlay" d="M 340 652 L 356 652 Q 364 652 364 644 L 364 544 Q 364 536 356 536 L 326.4 536 Q 318.4 536 318.4 528 L 318.4 467 Q 318.4 459 326.4 459 L 348 459 Q 356 459 356 451 L 356 337 Q 356 329 364 329 L 380 329" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="planner" data-edge-to="engine" data-edge-label="設計案" data-edge-key="18" data-composition-points="340,652;364,652;364,536;318.4,536;318.4,459;356,459;356,329;380,329" data-composition-crossover="halo" data-composition-independent="true" d="M 340 652 L 356 652 Q 364 652 364 644 L 364 544 Q 364 536 356 536 L 326.4 536 Q 318.4 536 318.4 528 L 318.4 467 Q 318.4 459 326.4 459 L 348 459 Q 356 459 356 451 L 356 337 Q 356 329 364 329 L 380 329" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:19">
+          <path data-graph-role="automatic-crossover-underlay" d="M 380 840 L 258 840 Q 250 840 250 832 L 250 684" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="claude" data-edge-to="planner" data-edge-label="推薦" data-edge-key="19" data-composition-points="380,840;250,840;250,684" data-composition-crossover="halo" data-composition-independent="true" d="M 380 840 L 258 840 Q 250 840 250 832 L 250 684" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:20">
+          <path data-graph-role="automatic-crossover-underlay" d="M 682 418 L 682 724 Q 682 732 690 732 L 810 732" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="build" data-edge-to="a_onprem" data-edge-key="20" data-composition-points="682,418;682,732;810,732" data-composition-crossover="halo" data-composition-independent="true" d="M 682 418 L 682 724 Q 682 732 690 732 L 810 732" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        </g>
+        <path data-edge-from="a_onprem" data-edge-to="r_onprem" data-edge-label="予定" data-edge-key="21" data-composition-points="950,732;1010,732" d="M 950 732 L 1010 732" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
         <g id="node-user" data-node-id="user" data-node-label="ユーザー" tabindex="0" role="button" aria-label="ユーザー にフォーカス、レポ + Action 1回, アーキテクチャコンポーネント" aria-pressed="false" data-node-kind="external" data-node-sublabel="レポ + Action 1回" data-node-context="アーキテクチャコンポーネント">
           <title>ユーザー · レポ + Action 1回 · アーキテクチャコンポーネント</title>
-          <rect x="30" y="282" width="120" height="60" rx="6" class="c-mask"/>
-          <rect x="30" y="282" width="120" height="60" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(36 288) scale(0.6875)">
+          <rect x="10" y="292" width="120" height="60" rx="6" class="c-mask"/>
+          <rect x="10" y="292" width="120" height="60" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(16 298) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="90" y="310" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ユーザー</text>
-        <text data-detail="context" x="90" y="326" class="t-muted" font-size="9" text-anchor="middle">レポ + Action 1回</text>
+          <text data-node-label="" data-detail-anchor="" x="70" y="320" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ユーザー</text>
+        <text data-detail="context" x="70" y="336" class="t-muted" font-size="9" text-anchor="middle">レポ + Action 1回</text>
         </g>
 
         <g id="node-dashboard" data-node-id="dashboard" data-node-label="ダッシュボード" tabindex="0" role="button" aria-label="ダッシュボード にフォーカス、Next.js :3700, 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="Next.js :3700" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
           <title>ダッシュボード · Next.js :3700 · 開発 PC · loopback(127.0.0.1)のみ公開</title>
-          <rect x="200" y="282" width="150" height="60" rx="6" class="c-mask"/>
-          <rect x="200" y="282" width="150" height="60" rx="6" class="c-frontend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(206 288) scale(0.6875)">
+          <rect x="180" y="292" width="140" height="60" rx="6" class="c-mask"/>
+          <rect x="180" y="292" width="140" height="60" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(186 298) scale(0.6875)">
             <rect x="2" y="3" width="12" height="10" rx="2"/>
             <path d="M2 6.5h12"/>
             <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
             <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="275" y="310" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ダッシュボード</text>
-        <text data-detail="context" x="275" y="326" class="t-muted" font-size="9" text-anchor="middle">Next.js :3700</text>
+          <text data-node-label="" data-detail-anchor="" x="250" y="320" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ダッシュボード</text>
+        <text data-detail="context" x="250" y="336" class="t-muted" font-size="9" text-anchor="middle">Next.js :3700</text>
         </g>
 
         <g id="node-engine" data-node-id="engine" data-node-label="エンジン" tabindex="0" role="button" aria-label="エンジン にフォーカス、FastAPI :8700 · 解析・配備・判定, 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="backend" data-node-sublabel="FastAPI :8700 · 解析・配備・判定" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
           <title>エンジン · FastAPI :8700 · 解析・配備・判定 · 開発 PC · loopback(127.0.0.1)のみ公開</title>
-          <rect x="420" y="242" width="160" height="140" rx="6" class="c-mask"/>
-          <rect x="420" y="242" width="160" height="140" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(426 248) scale(0.6875)">
+          <rect x="380" y="262" width="160" height="120" rx="6" class="c-mask"/>
+          <rect x="380" y="262" width="160" height="120" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(386 268) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="500" y="310" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">エンジン</text>
-        <text data-detail="context" x="500" y="326" class="t-muted" font-size="7.9" text-anchor="middle">FastAPI :8700 · 解析・配備・判定</text>
+          <text data-node-label="" data-detail-anchor="" x="460" y="320" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">エンジン</text>
+        <text data-detail="context" x="460" y="336" class="t-muted" font-size="7.9" text-anchor="middle">FastAPI :8700 · 解析・配備・判定</text>
         </g>
 
-        <g id="node-gate" data-node-id="gate" data-node-label="セキュリティゲート" tabindex="0" role="button" aria-label="セキュリティゲート にフォーカス、Semgrep・Gitleaks (接続予定), 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="security" data-node-sublabel="Semgrep・Gitleaks (接続予定)" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
-          <title>セキュリティゲート · Semgrep・Gitleaks (接続予定) · 開発 PC · loopback(127.0.0.1)のみ公開</title>
-          <rect x="190" y="120" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="190" y="120" width="170" height="64" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(196 126) scale(0.6875)">
+        <g id="node-gate" data-node-id="gate" data-node-label="AI セキュリティゲート" tabindex="0" role="button" aria-label="AI セキュリティゲート にフォーカス、Semgrep・Gitleaks, 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="security" data-node-sublabel="Semgrep・Gitleaks" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
+          <title>AI セキュリティゲート · Semgrep・Gitleaks · 開発 PC · loopback(127.0.0.1)のみ公開</title>
+          <rect x="600" y="150" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="600" y="150" width="150" height="64" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(606 156) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="275" y="150" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">セキュリティゲート</text>
-        <text data-detail="context" x="275" y="166" class="t-muted" font-size="9" text-anchor="middle">Semgrep・Gitleaks (接続予定)</text>
+          <text data-node-label="" data-detail-anchor="" x="675" y="180" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AI セキュリティゲート</text>
+        <text data-detail="context" x="675" y="196" class="t-muted" font-size="9" text-anchor="middle">Semgrep・Gitleaks</text>
         </g>
 
-        <g id="node-build" data-node-id="build" data-node-label="イメージを1回ビルド" tabindex="0" role="button" aria-label="イメージを1回ビルド にフォーカス、linux/amd64 · 同じ digest, 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="backend" data-node-sublabel="linux/amd64 · 同じ digest" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
-          <title>イメージを1回ビルド · linux/amd64 · 同じ digest · 開発 PC · loopback(127.0.0.1)のみ公開</title>
-          <rect x="500" y="120" width="180" height="64" rx="6" class="c-mask"/>
-          <rect x="500" y="120" width="180" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(506 126) scale(0.6875)">
+        <g id="node-build" data-node-id="build" data-node-label="イメージを1回ビルド" tabindex="0" role="button" aria-label="イメージを1回ビルド にフォーカス、amd64 · 同じ digest, 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="backend" data-node-sublabel="amd64 · 同じ digest" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
+          <title>イメージを1回ビルド · amd64 · 同じ digest · 開発 PC · loopback(127.0.0.1)のみ公開</title>
+          <rect x="600" y="322" width="150" height="96" rx="6" class="c-mask"/>
+          <rect x="600" y="322" width="150" height="96" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(606 328) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="590" y="150" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">イメージを1回ビルド</text>
-        <text data-detail="context" x="590" y="166" class="t-muted" font-size="9" text-anchor="middle">linux/amd64 · 同じ digest</text>
+          <text data-node-label="" data-detail-anchor="" x="675" y="368" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">イメージを1回ビルド</text>
+        <text data-detail="context" x="675" y="384" class="t-muted" font-size="9" text-anchor="middle">amd64 · 同じ digest</text>
         </g>
 
-        <g id="node-planner" data-node-id="planner" data-node-label="アーキテクチャ設計" tabindex="0" role="button" aria-label="アーキテクチャ設計 にフォーカス、small・medium・large (PR #12), 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="backend" data-node-sublabel="small・medium・large (PR #12)" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
-          <title>アーキテクチャ設計 · small・medium・large (PR #12) · 開発 PC · loopback(127.0.0.1)のみ公開</title>
-          <rect x="190" y="700" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="190" y="700" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(196 706) scale(0.6875)">
+        <g id="node-planner" data-node-id="planner" data-node-label="アーキテクチャ設計" tabindex="0" role="button" aria-label="アーキテクチャ設計 にフォーカス、small・medium・large, 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="backend" data-node-sublabel="small・medium・large" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
+          <title>アーキテクチャ設計 · small・medium・large · 開発 PC · loopback(127.0.0.1)のみ公開</title>
+          <rect x="160" y="620" width="180" height="64" rx="6" class="c-mask"/>
+          <rect x="160" y="620" width="180" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(166 626) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="275" y="730" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">アーキテクチャ設計</text>
-        <text data-detail="context" x="275" y="746" class="t-muted" font-size="9" text-anchor="middle">small・medium・large (PR #12)</text>
+          <text data-node-label="" data-detail-anchor="" x="250" y="650" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">アーキテクチャ設計</text>
+        <text data-detail="context" x="250" y="666" class="t-muted" font-size="9" text-anchor="middle">small・medium・large</text>
         </g>
 
         <g id="node-shakedown" data-node-id="shakedown" data-node-label="AI 試運転" tabindex="0" role="button" aria-label="AI 試運転 にフォーカス、Node :9201 · 環境比較・判定, 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Node :9201 · 環境比較・判定" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
           <title>AI 試運転 · Node :9201 · 環境比較・判定 · 開発 PC · loopback(127.0.0.1)のみ公開</title>
-          <rect x="500" y="700" width="180" height="70" rx="6" class="c-mask"/>
-          <rect x="500" y="700" width="180" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(506 706) scale(0.6875)">
+          <rect x="380" y="620" width="160" height="70" rx="6" class="c-mask"/>
+          <rect x="380" y="620" width="160" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(386 626) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="590" y="733" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AI 試運転</text>
-        <text data-detail="context" x="590" y="749" class="t-muted" font-size="9" text-anchor="middle">Node :9201 · 環境比較・判定</text>
+          <text data-node-label="" data-detail-anchor="" x="460" y="653" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AI 試運転</text>
+        <text data-detail="context" x="460" y="669" class="t-muted" font-size="9" text-anchor="middle">Node :9201 · 環境比較・判定</text>
         </g>
 
-        <g id="node-claude" data-node-id="claude" data-node-label="Claude API" tabindex="0" role="button" aria-label="Claude API にフォーカス、シナリオ・原因レポート, アーキテクチャコンポーネント" aria-pressed="false" data-node-kind="external" data-node-sublabel="シナリオ・原因レポート" data-node-context="アーキテクチャコンポーネント">
-          <title>Claude API · シナリオ・原因レポート · アーキテクチャコンポーネント</title>
-          <rect x="190" y="880" width="170" height="60" rx="6" class="c-mask"/>
-          <rect x="190" y="880" width="170" height="60" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(196 886) scale(0.6875)">
+        <g id="node-urls" data-node-id="urls" data-node-label="各環境の公開 URL" tabindex="0" role="button" aria-label="各環境の公開 URL にフォーカス、Tunnel・ALB・run.app・ACA, アーキテクチャコンポーネント" aria-pressed="false" data-node-kind="external" data-node-sublabel="Tunnel・ALB・run.app・ACA" data-node-context="アーキテクチャコンポーネント">
+          <title>各環境の公開 URL · Tunnel・ALB・run.app・ACA · アーキテクチャコンポーネント</title>
+          <rect x="630" y="760" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="630" y="760" width="170" height="64" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(636 766) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="275" y="908" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Claude API</text>
-        <text data-detail="context" x="275" y="924" class="t-muted" font-size="9" text-anchor="middle">シナリオ・原因レポート</text>
+          <text data-node-label="" data-detail-anchor="" x="715" y="790" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">各環境の公開 URL</text>
+        <text data-detail="context" x="715" y="806" class="t-muted" font-size="9" text-anchor="middle">Tunnel・ALB・run.app・ACA</text>
         </g>
 
-        <g id="node-urls" data-node-id="urls" data-node-label="各環境の公開 URL" tabindex="0" role="button" aria-label="各環境の公開 URL にフォーカス、Tunnel・ALB・run.app・Azure, アーキテクチャコンポーネント" aria-pressed="false" data-node-kind="external" data-node-sublabel="Tunnel・ALB・run.app・Azure" data-node-context="アーキテクチャコンポーネント">
-          <title>各環境の公開 URL · Tunnel・ALB・run.app・Azure · アーキテクチャコンポーネント</title>
-          <rect x="790" y="703" width="190" height="64" rx="6" class="c-mask"/>
-          <rect x="790" y="703" width="190" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(796 709) scale(0.6875)">
+        <g id="node-claude" data-node-id="claude" data-node-label="Claude API" tabindex="0" role="button" aria-label="Claude API にフォーカス、シナリオ・原因レポート・推薦, アーキテクチャコンポーネント" aria-pressed="false" data-node-kind="external" data-node-sublabel="シナリオ・原因レポート・推薦" data-node-context="アーキテクチャコンポーネント">
+          <title>Claude API · シナリオ・原因レポート・推薦 · アーキテクチャコンポーネント</title>
+          <rect x="380" y="810" width="160" height="60" rx="6" class="c-mask"/>
+          <rect x="380" y="810" width="160" height="60" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(386 816) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="885" y="733" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">各環境の公開 URL</text>
-        <text data-detail="context" x="885" y="749" class="t-muted" font-size="9" text-anchor="middle">Tunnel・ALB・run.app・Azure</text>
+          <text data-node-label="" data-detail-anchor="" x="460" y="838" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Claude API</text>
+        <text data-detail="context" x="460" y="854" class="t-muted" font-size="9" text-anchor="middle">シナリオ・原因レポート・推薦</text>
         </g>
 
         <g id="node-a_local" data-node-id="a_local" data-node-label="Local アダプター" tabindex="0" role="button" aria-label="Local アダプター にフォーカス、infra/local :9101, 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="backend" data-node-sublabel="infra/local :9101" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
           <title>Local アダプター · infra/local :9101 · 開発 PC · loopback(127.0.0.1)のみ公開</title>
-          <rect x="735" y="150" width="150" height="64" rx="6" class="c-mask"/>
-          <rect x="735" y="150" width="150" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(741 156) scale(0.6875)">
+          <rect x="810" y="100" width="140" height="64" rx="6" class="c-mask"/>
+          <rect x="810" y="100" width="140" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(816 106) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="810" y="180" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Local アダプター</text>
-        <text data-detail="context" x="810" y="196" class="t-muted" font-size="9" text-anchor="middle">infra/local :9101</text>
+          <text data-node-label="" data-detail-anchor="" x="880" y="130" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Local アダプター</text>
+        <text data-detail="context" x="880" y="146" class="t-muted" font-size="9" text-anchor="middle">infra/local :9101</text>
         </g>
 
         <g id="node-a_aws" data-node-id="a_aws" data-node-label="AWS アダプター" tabindex="0" role="button" aria-label="AWS アダプター にフォーカス、infra/aws :9102, 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="backend" data-node-sublabel="infra/aws :9102" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
           <title>AWS アダプター · infra/aws :9102 · 開発 PC · loopback(127.0.0.1)のみ公開</title>
-          <rect x="735" y="280" width="150" height="64" rx="6" class="c-mask"/>
-          <rect x="735" y="280" width="150" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(741 286) scale(0.6875)">
+          <rect x="810" y="250" width="140" height="64" rx="6" class="c-mask"/>
+          <rect x="810" y="250" width="140" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(816 256) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="810" y="310" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AWS アダプター</text>
-        <text data-detail="context" x="810" y="326" class="t-muted" font-size="9" text-anchor="middle">infra/aws :9102</text>
+          <text data-node-label="" data-detail-anchor="" x="880" y="280" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AWS アダプター</text>
+        <text data-detail="context" x="880" y="296" class="t-muted" font-size="9" text-anchor="middle">infra/aws :9102</text>
         </g>
 
         <g id="node-a_gcp" data-node-id="a_gcp" data-node-label="GCP アダプター" tabindex="0" role="button" aria-label="GCP アダプター にフォーカス、infra/gcp :9103, 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="backend" data-node-sublabel="infra/gcp :9103" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
           <title>GCP アダプター · infra/gcp :9103 · 開発 PC · loopback(127.0.0.1)のみ公開</title>
-          <rect x="735" y="410" width="150" height="64" rx="6" class="c-mask"/>
-          <rect x="735" y="410" width="150" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(741 416) scale(0.6875)">
+          <rect x="810" y="400" width="140" height="64" rx="6" class="c-mask"/>
+          <rect x="810" y="400" width="140" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(816 406) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="810" y="440" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">GCP アダプター</text>
-        <text data-detail="context" x="810" y="456" class="t-muted" font-size="9" text-anchor="middle">infra/gcp :9103</text>
+          <text data-node-label="" data-detail-anchor="" x="880" y="430" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">GCP アダプター</text>
+        <text data-detail="context" x="880" y="446" class="t-muted" font-size="9" text-anchor="middle">infra/gcp :9103</text>
         </g>
 
         <g id="node-a_azure" data-node-id="a_azure" data-node-label="Azure アダプター" tabindex="0" role="button" aria-label="Azure アダプター にフォーカス、infra/azure :9104, 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="backend" data-node-sublabel="infra/azure :9104" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
           <title>Azure アダプター · infra/azure :9104 · 開発 PC · loopback(127.0.0.1)のみ公開</title>
-          <rect x="735" y="540" width="150" height="64" rx="6" class="c-mask"/>
-          <rect x="735" y="540" width="150" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(741 546) scale(0.6875)">
+          <rect x="810" y="550" width="140" height="64" rx="6" class="c-mask"/>
+          <rect x="810" y="550" width="140" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(816 556) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="810" y="570" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Azure アダプター</text>
-        <text data-detail="context" x="810" y="586" class="t-muted" font-size="9" text-anchor="middle">infra/azure :9104</text>
+          <text data-node-label="" data-detail-anchor="" x="880" y="580" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Azure アダプター</text>
+        <text data-detail="context" x="880" y="596" class="t-muted" font-size="9" text-anchor="middle">infra/azure :9104</text>
         </g>
 
-        <g id="node-r_local" data-node-id="r_local" data-node-label="手元の PC Docker" tabindex="0" role="button" aria-label="手元の PC Docker にフォーカス、Compose + Cloudflare Tunnel, アーキテクチャコンポーネント" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="Compose + Cloudflare Tunnel" data-node-context="アーキテクチャコンポーネント">
-          <title>手元の PC Docker · Compose + Cloudflare Tunnel · アーキテクチャコンポーネント</title>
-          <rect x="960" y="150" width="200" height="64" rx="6" class="c-mask"/>
-          <rect x="960" y="150" width="200" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(966 156) scale(0.6875)">
+        <g id="node-r_local" data-node-id="r_local" data-node-label="手元の PC Docker" tabindex="0" role="button" aria-label="手元の PC Docker にフォーカス、macOS・Windows · Compose, アーキテクチャコンポーネント" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="macOS・Windows · Compose" data-node-context="アーキテクチャコンポーネント">
+          <title>手元の PC Docker · macOS・Windows · Compose · アーキテクチャコンポーネント</title>
+          <rect x="1010" y="100" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="1010" y="100" width="150" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(1016 106) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="1060" y="180" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">手元の PC Docker</text>
-        <text data-detail="context" x="1060" y="196" class="t-muted" font-size="9" text-anchor="middle">Compose + Cloudflare Tunnel</text>
+          <text data-node-label="" data-detail-anchor="" x="1085" y="130" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">手元の PC Docker</text>
+        <text data-detail="context" x="1085" y="146" class="t-muted" font-size="9" text-anchor="middle">macOS・Windows · Compose</text>
         </g>
 
         <g id="node-r_aws" data-node-id="r_aws" data-node-label="ECS Fargate" tabindex="0" role="button" aria-label="ECS Fargate にフォーカス、ALB + RDS PostgreSQL 17, AWS ソウル" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="ALB + RDS PostgreSQL 17" data-node-context="AWS ソウル">
           <title>ECS Fargate · ALB + RDS PostgreSQL 17 · AWS ソウル</title>
-          <rect x="960" y="280" width="200" height="64" rx="6" class="c-mask"/>
-          <rect x="960" y="280" width="200" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(966 286) scale(0.6875)">
+          <rect x="1010" y="250" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="1010" y="250" width="150" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(1016 256) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="1060" y="310" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ECS Fargate</text>
-        <text data-detail="context" x="1060" y="326" class="t-muted" font-size="9" text-anchor="middle">ALB + RDS PostgreSQL 17</text>
+          <text data-node-label="" data-detail-anchor="" x="1085" y="280" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ECS Fargate</text>
+        <text data-detail="context" x="1085" y="296" class="t-muted" font-size="9" text-anchor="middle">ALB + RDS PostgreSQL 17</text>
         </g>
 
         <g id="node-r_gcp" data-node-id="r_gcp" data-node-label="Cloud Run" tabindex="0" role="button" aria-label="Cloud Run にフォーカス、Cloud SQL PostgreSQL, GCP ソウル" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="Cloud SQL PostgreSQL" data-node-context="GCP ソウル">
           <title>Cloud Run · Cloud SQL PostgreSQL · GCP ソウル</title>
-          <rect x="960" y="410" width="200" height="64" rx="6" class="c-mask"/>
-          <rect x="960" y="410" width="200" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(966 416) scale(0.6875)">
+          <rect x="1010" y="400" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="1010" y="400" width="150" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(1016 406) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="1060" y="440" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Cloud Run</text>
-        <text data-detail="context" x="1060" y="456" class="t-muted" font-size="9" text-anchor="middle">Cloud SQL PostgreSQL</text>
+          <text data-node-label="" data-detail-anchor="" x="1085" y="430" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Cloud Run</text>
+        <text data-detail="context" x="1085" y="446" class="t-muted" font-size="9" text-anchor="middle">Cloud SQL PostgreSQL</text>
         </g>
 
-        <g id="node-r_azure" data-node-id="r_azure" data-node-label="Container Apps" tabindex="0" role="button" aria-label="Container Apps にフォーカス、PostgreSQL Flexible + Key Vault, Azure Korea Central" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="PostgreSQL Flexible + Key Vault" data-node-context="Azure Korea Central">
-          <title>Container Apps · PostgreSQL Flexible + Key Vault · Azure Korea Central</title>
-          <rect x="960" y="540" width="200" height="64" rx="6" class="c-mask"/>
-          <rect x="960" y="540" width="200" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(966 546) scale(0.6875)">
+        <g id="node-r_azure" data-node-id="r_azure" data-node-label="Container Apps" tabindex="0" role="button" aria-label="Container Apps にフォーカス、PostgreSQL + Key Vault, Azure Korea Central" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="PostgreSQL + Key Vault" data-node-context="Azure Korea Central">
+          <title>Container Apps · PostgreSQL + Key Vault · Azure Korea Central</title>
+          <rect x="1010" y="550" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="1010" y="550" width="150" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(1016 556) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="1060" y="570" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Container Apps</text>
-        <text data-detail="context" x="1060" y="586" class="t-muted" font-size="9" text-anchor="middle">PostgreSQL Flexible + Key Vault</text>
+          <text data-node-label="" data-detail-anchor="" x="1085" y="580" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Container Apps</text>
+        <text data-detail="context" x="1085" y="596" class="t-muted" font-size="9" text-anchor="middle">PostgreSQL + Key Vault</text>
+        </g>
+
+        <g id="node-a_onprem" data-node-id="a_onprem" data-node-label="On-prem アダプター" tabindex="0" role="button" aria-label="On-prem アダプター にフォーカス、onprem :9105 · 予定, 開発 PC · loopback(127.0.0.1)のみ公開" aria-pressed="false" data-node-kind="backend" data-node-sublabel="onprem :9105 · 予定" data-node-context="開発 PC · loopback(127.0.0.1)のみ公開">
+          <title>On-prem アダプター · onprem :9105 · 予定 · 開発 PC · loopback(127.0.0.1)のみ公開</title>
+          <rect x="810" y="700" width="140" height="64" rx="6" class="c-mask"/>
+          <rect x="810" y="700" width="140" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(816 706) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="880" y="730" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">On-prem アダプター</text>
+        <text data-detail="context" x="880" y="746" class="t-muted" font-size="9" text-anchor="middle">onprem :9105 · 予定</text>
+        </g>
+
+        <g id="node-r_onprem" data-node-id="r_onprem" data-node-label="オンプレミス役" tabindex="0" role="button" aria-label="オンプレミス役 にフォーカス、EC2 · 隔離 VPC, AWS ソウル · 隔離 VPC = オンプレ" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="EC2 · 隔離 VPC" data-node-context="AWS ソウル · 隔離 VPC = オンプレ">
+          <title>オンプレミス役 · EC2 · 隔離 VPC · AWS ソウル · 隔離 VPC = オンプレ</title>
+          <rect x="1010" y="700" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="1010" y="700" width="150" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(1016 706) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1085" y="730" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">オンプレミス役</text>
+        <text data-detail="context" x="1085" y="746" class="t-muted" font-size="9" text-anchor="middle">EC2 · 隔離 VPC</text>
         </g>
 
         <!-- Connection labels -->
         <g data-detail="context" data-edge-from="user" data-edge-to="dashboard" data-edge-label="Action" data-edge-key="0">
-          <rect x="155.6" y="292" width="38.8" height="14" rx="3" class="c-mask"/>
-          <text x="175" y="302" class="t-edge-emphasis" font-size="8" text-anchor="middle">Action</text>
+          <rect x="135.6" y="302" width="38.8" height="14" rx="3" class="c-mask"/>
+          <text x="155" y="312" class="t-edge-emphasis" font-size="8" text-anchor="middle">Action</text>
         </g>
         <g data-detail="context" data-edge-from="dashboard" data-edge-to="engine" data-edge-label="REST・SSE" data-edge-key="1">
-          <rect x="358.4" y="292" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
-          <text x="385" y="302" class="t-edge-emphasis" font-size="8" text-anchor="middle">REST・SSE</text>
+          <rect x="323.4" y="293.95" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
+          <text x="350" y="303.95" class="t-edge-emphasis" font-size="8" text-anchor="middle">REST・SSE</text>
         </g>
-        <g data-detail="context" data-edge-from="engine" data-edge-to="build" data-edge-label="ビルド・push" data-edge-key="2">
-          <rect x="515.225" y="193" width="67.6" height="14" rx="3" class="c-mask"/>
-          <text x="549.025" y="203" class="t-edge-emphasis" font-size="8" text-anchor="middle">ビルド・push</text>
+        <g data-detail="context" data-edge-from="engine" data-edge-to="gate" data-edge-label="検査" data-edge-key="2">
+          <rect x="555" y="232" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="570" y="242" class="t-edge-emphasis" font-size="8" text-anchor="middle">検査</text>
         </g>
-        <g data-detail="context" data-edge-from="engine" data-edge-to="gate" data-edge-label="配備前チェック" data-edge-key="3">
-          <rect x="399.9" y="198" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="438.5" y="208" class="t-edge-dashed" font-size="8" text-anchor="middle">配備前チェック</text>
+        <g data-detail="context" data-edge-from="gate" data-edge-to="build" data-edge-label="通過" data-edge-key="3">
+          <rect x="629.9" y="261" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="644.9" y="271" class="t-edge-emphasis" font-size="8" text-anchor="middle">通過</text>
         </g>
-        <g data-detail="context" data-edge-from="engine" data-edge-to="a_local" data-edge-label="配備 202・ポーリング" data-edge-key="4">
-          <rect x="658" y="216.5" width="106" height="14" rx="3" class="c-mask"/>
-          <text x="711" y="226.5" class="t-edge-emphasis" font-size="8" text-anchor="middle">配備 202・ポーリング</text>
+        <g data-detail="context" data-edge-from="build" data-edge-to="a_local" data-edge-label="ポーリング" data-edge-key="4">
+          <rect x="752" y="223" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="781" y="233" class="t-edge-emphasis" font-size="8" text-anchor="middle">ポーリング</text>
         </g>
 
 
-        <g data-detail="context" data-edge-from="engine" data-edge-to="a_azure" data-edge-label="遮断 DELETE" data-edge-key="7">
-          <rect x="572.6" y="432.5" width="62.8" height="14" rx="3" class="c-mask"/>
-          <text x="604" y="442.5" class="t-edge-emphasis" font-size="8" text-anchor="middle">遮断 DELETE</text>
+        <g data-detail="context" data-edge-from="build" data-edge-to="a_azure" data-edge-label="DELETE" data-edge-key="7">
+          <rect x="754.075" y="464" width="38.8" height="14" rx="3" class="c-mask"/>
+          <text x="773.475" y="474" class="t-edge-emphasis" font-size="8" text-anchor="middle">DELETE</text>
         </g>
-        <g data-detail="context" data-edge-from="a_local" data-edge-to="r_local" data-edge-label="compose" data-edge-key="8">
-          <rect x="900.7" y="162" width="43.6" height="14" rx="3" class="c-mask"/>
-          <text x="922.5" y="172" class="t-edge-default" font-size="8" text-anchor="middle">compose</text>
+        <g data-detail="context" data-edge-from="a_local" data-edge-to="r_local" data-edge-label="docker" data-edge-key="8">
+          <rect x="960.6" y="112" width="38.8" height="14" rx="3" class="c-mask"/>
+          <text x="980" y="122" class="t-edge-default" font-size="8" text-anchor="middle">docker</text>
         </g>
-        <g data-detail="context" data-edge-from="a_aws" data-edge-to="r_aws" data-edge-label="AWS SDK" data-edge-key="9">
-          <rect x="900.7" y="292" width="43.6" height="14" rx="3" class="c-mask"/>
-          <text x="922.5" y="302" class="t-edge-default" font-size="8" text-anchor="middle">AWS SDK</text>
+        <g data-detail="context" data-edge-from="a_aws" data-edge-to="r_aws" data-edge-label="SDK" data-edge-key="9">
+          <rect x="965" y="262" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="980" y="272" class="t-edge-default" font-size="8" text-anchor="middle">SDK</text>
         </g>
-        <g data-detail="context" data-edge-from="a_gcp" data-edge-to="r_gcp" data-edge-label="GCP API" data-edge-key="10">
-          <rect x="900.7" y="422" width="43.6" height="14" rx="3" class="c-mask"/>
-          <text x="922.5" y="432" class="t-edge-default" font-size="8" text-anchor="middle">GCP API</text>
+        <g data-detail="context" data-edge-from="a_gcp" data-edge-to="r_gcp" data-edge-label="API" data-edge-key="10">
+          <rect x="965" y="412" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="980" y="422" class="t-edge-default" font-size="8" text-anchor="middle">API</text>
         </g>
-        <g data-detail="context" data-edge-from="a_azure" data-edge-to="r_azure" data-edge-label="Azure SDK" data-edge-key="11">
-          <rect x="895.9" y="552" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
-          <text x="922.5" y="562" class="t-edge-default" font-size="8" text-anchor="middle">Azure SDK</text>
+        <g data-detail="context" data-edge-from="a_azure" data-edge-to="r_azure" data-edge-label="SDK" data-edge-key="11">
+          <rect x="965" y="562" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="980" y="572" class="t-edge-default" font-size="8" text-anchor="middle">SDK</text>
         </g>
         <g data-detail="context" data-edge-from="engine" data-edge-to="shakedown" data-edge-label="試運転リクエスト" data-edge-key="12">
-          <rect x="505.625" y="521" width="86.8" height="14" rx="3" class="c-mask"/>
-          <text x="549.025" y="531" class="t-edge-emphasis" font-size="8" text-anchor="middle">試運転リクエスト</text>
+          <rect x="358.1" y="494" width="86.8" height="14" rx="3" class="c-mask"/>
+          <text x="401.5" y="504" class="t-edge-emphasis" font-size="8" text-anchor="middle">試運転リクエスト</text>
         </g>
-        <g data-detail="context" data-edge-from="engine" data-edge-to="planner" data-edge-label="設計案の選択" data-edge-key="13">
-          <rect x="404.7" y="386" width="67.6" height="14" rx="3" class="c-mask"/>
-          <text x="438.5" y="396" class="t-edge-dashed" font-size="8" text-anchor="middle">設計案の選択</text>
+        <g data-detail="context" data-edge-from="shakedown" data-edge-to="engine" data-edge-label="判定・レポート" data-edge-key="13">
+          <rect x="473" y="494" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="511.6" y="504" class="t-edge-emphasis" font-size="8" text-anchor="middle">判定・レポート</text>
         </g>
-        <g data-detail="context" data-edge-from="shakedown" data-edge-to="urls" data-edge-label="HTTP シナリオ" data-edge-key="14">
-          <rect x="698.8" y="715" width="72.4" height="14" rx="3" class="c-mask"/>
-          <text x="735" y="725" class="t-edge-emphasis" font-size="8" text-anchor="middle">HTTP シナリオ</text>
+        <g data-detail="context" data-edge-from="shakedown" data-edge-to="urls" data-edge-label="シナリオ" data-edge-key="14">
+          <rect x="560.8" y="703.5" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="585" y="713.5" class="t-edge-emphasis" font-size="8" text-anchor="middle">シナリオ</text>
         </g>
-        <g data-detail="context" data-edge-from="planner" data-edge-to="claude" data-edge-label="推薦" data-edge-key="15">
-          <rect x="239" y="815" width="30" height="14" rx="3" class="c-mask"/>
-          <text x="254" y="825" class="t-edge-dashed" font-size="8" text-anchor="middle">推薦</text>
+        <g data-detail="context" data-edge-from="shakedown" data-edge-to="claude" data-edge-label="要求" data-edge-key="15">
+          <rect x="431" y="743" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="446" y="753" class="t-edge-dashed" font-size="8" text-anchor="middle">要求</text>
         </g>
-        <g data-detail="context" data-edge-from="shakedown" data-edge-to="claude" data-edge-label="レポート" data-edge-key="16">
-          <rect x="462.8" y="774" width="48.4" height="14" rx="3" class="c-mask"/>
-          <text x="487" y="784" class="t-edge-dashed" font-size="8" text-anchor="middle">レポート</text>
+        <g data-detail="context" data-edge-from="claude" data-edge-to="shakedown" data-edge-label="シナリオ・レポート" data-edge-key="16">
+          <rect x="475.00000000000006" y="743" width="96.39999999999999" height="14" rx="3" class="c-mask"/>
+          <text x="523.2" y="753" class="t-edge-dashed" font-size="8" text-anchor="middle">シナリオ・レポート</text>
+        </g>
+        <g data-detail="context" data-edge-from="dashboard" data-edge-to="planner" data-edge-label="設計要求" data-edge-key="17">
+          <rect x="195.60000000000002" y="479" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="219.8" y="489" class="t-edge-dashed" font-size="8" text-anchor="middle">設計要求</text>
+        </g>
+        <g data-detail="context" data-edge-from="planner" data-edge-to="engine" data-edge-label="設計案" data-edge-key="18">
+          <rect x="344.6" y="574" width="38.8" height="14" rx="3" class="c-mask"/>
+          <text x="364" y="584" class="t-edge-dashed" font-size="8" text-anchor="middle">設計案</text>
+        </g>
+        <g data-detail="context" data-edge-from="claude" data-edge-to="planner" data-edge-label="推薦" data-edge-key="19">
+          <rect x="235" y="742" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="250" y="752" class="t-edge-dashed" font-size="8" text-anchor="middle">推薦</text>
+        </g>
+
+        <g data-detail="context" data-edge-from="a_onprem" data-edge-to="r_onprem" data-edge-label="予定" data-edge-key="21">
+          <rect x="965" y="712" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="980" y="722" class="t-edge-dashed" font-size="8" text-anchor="middle">予定</text>
         </g>
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
         <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="security-group" data-composition-frame-label="開発 PC · loopback(127.0.0.1)のみ公開">
-          <rect data-graph-role="structural-frame-label-mask" x="176" y="100" width="209.79999999999998" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="180" y="113" class="t-security" font-size="9" font-weight="600">開発 PC · loopback(127.0.0.1)のみ公開</text>
+          <rect data-graph-role="structural-frame-label-mask" x="146" y="80" width="209.79999999999998" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="150" y="93" class="t-security" font-size="9" font-weight="600">開発 PC · loopback(127.0.0.1)のみ公開</text>
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="region" data-composition-frame-label="AWS ソウル">
-          <rect data-graph-role="structural-frame-label-mask" x="952" y="260" width="64" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="956" y="273" class="t-cloud" font-size="9" font-weight="600">AWS ソウル</text>
+          <rect data-graph-role="structural-frame-label-mask" x="1002" y="230" width="64" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="1006" y="243" class="t-cloud" font-size="9" font-weight="600">AWS ソウル</text>
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="2" data-composition-frame-kind="region" data-composition-frame-label="GCP ソウル">
-          <rect data-graph-role="structural-frame-label-mask" x="952" y="390" width="64" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="956" y="403" class="t-cloud" font-size="9" font-weight="600">GCP ソウル</text>
+          <rect data-graph-role="structural-frame-label-mask" x="1002" y="380" width="64" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="1006" y="393" class="t-cloud" font-size="9" font-weight="600">GCP ソウル</text>
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="3" data-composition-frame-kind="region" data-composition-frame-label="Azure Korea Central">
-          <rect data-graph-role="structural-frame-label-mask" x="952" y="520" width="112.6" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="956" y="533" class="t-cloud" font-size="9" font-weight="600">Azure Korea Central</text>
+          <rect data-graph-role="structural-frame-label-mask" x="1002" y="530" width="112.6" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="1006" y="543" class="t-cloud" font-size="9" font-weight="600">Azure Korea Central</text>
+        </g>
+
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="4" data-composition-frame-kind="region" data-composition-frame-label="AWS ソウル · 隔離 VPC = オンプレ">
+          <rect data-graph-role="structural-frame-label-mask" x="1002" y="680" width="166" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="1006" y="692.125" class="t-cloud" font-size="8.125" font-weight="600">AWS ソウル · 隔離 VPC = オンプレ</text>
         </g>
 
         <!-- Legend -->
         <g data-legend="" data-legend-bridge="">
-          <text x="40" y="972" class="t-primary" font-size="12" font-weight="650">凡例</text>
-          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="フロントエンド" data-legend-x="40" data-legend-baseline="992" data-legend-width="113">
-            <rect x="40" y="983" width="16" height="10" rx="2.5" class="c-frontend" stroke-width="1"/>
-            <text x="62" y="992" class="t-muted" font-size="10" font-weight="500">フロントエンド</text>
+          <text x="40" y="902" class="t-primary" font-size="12" font-weight="650">凡例</text>
+          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="フロントエンド" data-legend-x="40" data-legend-baseline="922" data-legend-width="113">
+            <rect x="40" y="913" width="16" height="10" rx="2.5" class="c-frontend" stroke-width="1"/>
+            <text x="62" y="922" class="t-muted" font-size="10" font-weight="500">フロントエンド</text>
           </g>
-          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="バックエンド" data-legend-x="175" data-legend-baseline="992" data-legend-width="103">
-            <rect x="175" y="983" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
-            <text x="197" y="992" class="t-muted" font-size="10" font-weight="500">バックエンド</text>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="バックエンド" data-legend-x="175" data-legend-baseline="922" data-legend-width="103">
+            <rect x="175" y="913" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
+            <text x="197" y="922" class="t-muted" font-size="10" font-weight="500">バックエンド</text>
           </g>
-          <g data-legend-semantic-kind="cloud" data-legend-kind="cloud" data-legend-label="クラウド" data-legend-x="300" data-legend-baseline="992" data-legend-width="83">
-            <rect x="300" y="983" width="16" height="10" rx="2.5" class="c-cloud" stroke-width="1"/>
-            <text x="322" y="992" class="t-muted" font-size="10" font-weight="500">クラウド</text>
+          <g data-legend-semantic-kind="cloud" data-legend-kind="cloud" data-legend-label="クラウド" data-legend-x="300" data-legend-baseline="922" data-legend-width="83">
+            <rect x="300" y="913" width="16" height="10" rx="2.5" class="c-cloud" stroke-width="1"/>
+            <text x="322" y="922" class="t-muted" font-size="10" font-weight="500">クラウド</text>
           </g>
-          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="セキュリティ" data-legend-x="405" data-legend-baseline="992" data-legend-width="103">
-            <rect x="405" y="983" width="16" height="10" rx="2.5" class="c-security" stroke-width="1"/>
-            <text x="427" y="992" class="t-muted" font-size="10" font-weight="500">セキュリティ</text>
+          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="セキュリティ" data-legend-x="405" data-legend-baseline="922" data-legend-width="103">
+            <rect x="405" y="913" width="16" height="10" rx="2.5" class="c-security" stroke-width="1"/>
+            <text x="427" y="922" class="t-muted" font-size="10" font-weight="500">セキュリティ</text>
           </g>
-          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="外部" data-legend-x="530" data-legend-baseline="992" data-legend-width="63">
-            <rect x="530" y="983" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
-            <text x="552" y="992" class="t-muted" font-size="10" font-weight="500">外部</text>
+          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="外部" data-legend-x="530" data-legend-baseline="922" data-legend-width="63">
+            <rect x="530" y="913" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
+            <text x="552" y="922" class="t-muted" font-size="10" font-weight="500">外部</text>
           </g>
         </g>
       </svg>
@@ -5570,7 +5636,17 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     </div>
     <!-- Info Cards -->
     <div class="cards">
-
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>手元の PC(Local) ターゲット</h3>
+        </div>
+        <ul>
+          <li>macOS と Windows の両方に対応: Docker Desktop + Compose でクラウドと同じイメージを実行</li>
+          <li>公開 URL は Cloudflare Tunnel の一時 URL(trycloudflare.com)。AI 試運転が外部からアクセス</li>
+          <li>DB は PostgreSQL コンテナ。配備ごとに新しいスタックを作り、終了後に片付け</li>
+        </ul>
+      </div>
     </div>
     <nav class="node-outline no-print" id="node-outline" hidden aria-labelledby="node-outline-title">
       <div class="node-outline-head">
