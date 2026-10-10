@@ -324,7 +324,7 @@ PR #20 첫 버전은 medium·large에서 미리 고가용성으로 바꿔 둔 Cl
 
 ## 상태와 오류 규칙
 
-계약은 `packages/contracts/openapi/target.yaml`(v0.1.4, "GCP 구현 제약" 절)입니다. 여기에는 GCP에서 실제로 무엇을 하는지 적습니다.
+계약은 `packages/contracts/openapi/target.yaml`(v0.1.5, "GCP 구현 제약" 절)입니다. 여기에는 GCP에서 실제로 무엇을 하는지 적습니다.
 
 **받기 (POST)**
 - 202와 `pending`을 바로 주고 배포는 뒤에서 합니다. 상태는 `pending → deploying → ready | failed`.

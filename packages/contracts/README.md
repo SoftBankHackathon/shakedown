@@ -23,7 +23,7 @@
 
 ## 상태: 초안
 
-Target API는 **v0.1.4 제안**, Engine API는 **v0.1.5 통합 제안**, Shakedown API는 **v0.1.1 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
+Target API는 **v0.1.5 제안**, Engine API는 **v0.1.5 통합 제안**, Shakedown API는 **v0.1.1 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
 
 바뀔 가능성이 있는 것
 - 상태 확인 방식: 지금은 GET 폴링(2~3초 간격). 콜백(`callback_url`) 방식이 추가될 수 있음
@@ -39,6 +39,7 @@ Target API는 **v0.1.4 제안**, Engine API는 **v0.1.5 통합 제안**, Shakedo
 
 ## 변경 이력
 
+- **Target v0.1.5 (2026-10-10, 제안. 팀 채널 공유 TBD)**: GCP 준비 한도 예외. GCP 어댑터는 420초(7분)를 넘기면 0대로 내린 뒤(최대 19초) failed로 바꾸고, 엔진은 GCP를 450초(7분 30초) 기다림. 다른 대상의 대기는 그대로. 2026-10-10 13:19 Cloud Run이 최소 인스턴스 2대를 확보하는 데 4분 15초가 걸려 옛 한도 270초를 넘긴 일 때문. 요청·응답 형식은 그대로라 타입·fixture는 바꾸지 않음.
 - **Target v0.1.4 (2026-10-10, 제안. 팀 채널 공유 TBD)**: GCP 구현 제약에 범용 런타임(`runtime`, http-runtime.v1) 줄 추가. GCP는 DB 모드 none·postgres만, init_command는 Cloud Run Job, postgres_url 바인딩 미지원, secret_refs는 db_password만, 포트 자유, Cloud Run 예약 환경변수 이름 400. 요청·응답 형식과 타입은 그대로. `infra/gcp/README.md` "범용 런타임" 절 참고.
 - **Target v0.1.3 (2026-10-10, 제안. 팀 채널 공유 TBD)**: `DeployRequest.architecture`를 AWS 전용에서 클라우드별 실행 카탈로그로. `version` enum에 `gcp-architecture.v1`·`azure-architecture.v1` 추가(각 어댑터는 자기 버전만 받고 다른 버전은 400, Local에는 보내지 않음). GCP 구현 제약에 계획 배포 줄 추가: CPU·메모리·대수·자동 확장만 적용, DB 고가용성은 계획만, session-jdbc 필수, sticky 금지, 등급별 DB 연결 풀. 타입은 `TargetDeployRequest.architecture.version`만 넓힘. `infra/gcp/README.md` "계획 배포" 절 참고.
 - **Engine v0.1.5 (2026-10-10, 제안. 팀 채널 공유·담당자 확인 TBD)**: `POST /api/deployments/{id}/fix`(operationId applyFix, 본문 없음) 추가. blocked 배포의 자동 적용 가능 env 수정안을 한 번 적용해 클라우드만 같은 digest·같은 본문에 env를 더해 새 배포 ID로 다시 배포하고 2회차 시운전(blocked → fixing → 결과). 지금은 엔진이 배포한 Local+GCP만, AWS는 실계정 검증 전이라 400. 최신 배포가 아니거나 blocked가 아니면 409. `TargetState`에 `deployment_id`(Target API에 실제로 쓴 ID)와 `request`(받아들여진 Target API 본문) 추가, 1회차의 `applied_fix` 기록, `ai_cost`는 회차 합. fixture에 `targets.*.deployment_id`·`request` 예시 추가. blocked는 더 이상 완전한 종료 상태가 아님(`TERMINAL_STATUSES` 주석).
