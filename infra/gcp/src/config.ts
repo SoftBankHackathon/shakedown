@@ -50,6 +50,13 @@ export function loadConfig(path: string): Config {
 
 export function validateRequest(config: Config, request: DeployRequest) {
   const reject = (message: string): never => { throw new ApiError(400, message); };
+  // 계획 배포 조건(infra/aws/src/config.ts와 같은 자리). replicas = 등급 최소값은 요청 스키마(model.ts)가 이미 막는다.
+  if (request.architecture) {
+    // 자동 확장으로 대수가 바뀌면 메모리 세션은 인스턴스마다 따로라 로그인이 풀린다. 세션은 DB(JDBC)에 둔다.
+    if (request.env.SPRING_PROFILES_ACTIVE !== 'demo,session-jdbc') reject('계획 배포는 demo,session-jdbc 프로필이 필요합니다.');
+    // Cloud Run 세션 어피니티는 best-effort라 자동 확장 중에 끊길 수 있다. AWS 계획 배포와 같은 규칙으로 막는다.
+    if (request.options.sticky_sessions) reject('계획 배포는 sticky_sessions=false만 받습니다. 세션은 JDBC로 공유합니다.');
+  }
   if (request.project_id !== config.projectId) reject('이 서비스에 등록된 project_id만 지원합니다.');
   if (request.port !== config.port) reject('설정한 앱 포트와 일치해야 합니다.');
   // 태그(:latest)는 push할 때마다 가리키는 이미지가 바뀐다. Local과 GCP가 같은 이미지를 돌린다고 말하려면 digest만 받아야 한다.
