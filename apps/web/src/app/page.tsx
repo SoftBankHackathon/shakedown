@@ -87,7 +87,7 @@ export default function Home() {
     try {
       const project = await api.createProject({ repo: repo.trim(), targets });
       name = project.name;
-      const deployment = await api.deploy(project.id, { shakedown: MOCK || targets.length === 2 || !!comparisonUrl.trim(), autofix: MOCK, options: {}, targets, comparison: !MOCK && targets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
+      const deployment = await api.deploy(project.id, { shakedown: MOCK || targets.length >= 2 || !!comparisonUrl.trim(), autofix: MOCK, options: {}, targets, comparison: !MOCK && targets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
       setActions((cur) => [{ deployment, projectName: project.name }, ...cur]);
     } catch (err) {
       // The engine owns the "one running deployment per project" rule and answers 409.

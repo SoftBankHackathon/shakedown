@@ -1,0 +1,15 @@
+{
+  "date": "2026-10-09",
+  "target": "Azure Container Apps (koreacentral), PostgreSQL Flexible 17, replicas 2",
+  "image": "<acr>.azurecr.io/shakedown-board@sha256:283db364395f862b5cdc8fac422b6f873367b5cccfdf3d6eed19571ace44a247",
+  "tool": "infra/azure/scripts/session-check.py, 20 requests to /board after login",
+  "runs": [
+    { "deployment_id": "dep_az03", "profile": "demo,session-memory", "sticky_sessions": false, "ready_s": 59, "logged_in": 1, "lost": 19 },
+    { "deployment_id": "dep_az04", "profile": "demo,session-memory", "sticky_sessions": true, "ready_s": 49, "logged_in": 20, "lost": 0 },
+    { "deployment_id": "dep_az05", "profile": "demo,session-jdbc", "sticky_sessions": false, "ready_s": 49, "logged_in": 20, "lost": 0 }
+  ],
+  "notes": [
+    "X-Instance-Id was 'local' on every replica: the app reads HOSTNAME, which Container Apps does not set for the JVM, so instance changes are not visible in headers",
+    "dep_az01, dep_az02 failed before the RunningAtMaxScale fix; failure path closed the public route (404) and deactivated the revision"
+  ]
+}

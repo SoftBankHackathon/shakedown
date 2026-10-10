@@ -26,6 +26,7 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
             api.state.deployments = DeploymentStore(api.state.store.path.parent / "deployments.sqlite3")
         api.state.deployments.runner.llm = api.state.llm
         api.state.deployments.aws.llm = api.state.llm
+        api.state.deployments.azure.llm = api.state.llm
         api.state.architecture = ArchitecturePlanner(api.state.store.path.parent / 'architecture.sqlite3', api.state.deployments.runner, api.state.llm)
         api.state.deployments.architecture = api.state.architecture
         api.state.images = ImageBuilder(api.state.store.path.parent / 'image-plans', api.state.llm, api.state.deployments.runner)
