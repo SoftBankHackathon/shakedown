@@ -7,7 +7,8 @@ import { runShakedown } from "../src/shakedown.ts";
 import type { Verdict } from "../src/verdict.ts";
 import { startFakeBoard, type FakeBoardOptions } from "./fake-board.ts";
 
-const withNames = (steps: unknown[]) => (steps as StepDiff[]).map((d) => ({ ...d, baseline: "local", candidate: "aws" }));
+// 비교 대상 이름을 바꿔 가며 쓴다. 정답 fixture는 엔진이 실제로 env 수정을 적용하는 gcp 기록이다.
+const withNames = (steps: unknown[], candidate = "aws") => (steps as StepDiff[]).map((d) => ({ ...d, baseline: "local", candidate }));
 
 // fixture 시도 1과 같은 상황(서버 2대, 세션 공유 없음)에서 나와야 하는 보고서. instance 근거만 빠졌다.
 const loginLost = {
@@ -36,18 +37,19 @@ test("fixture 시도 1(로그인 풀림)에서 fixture와 같은 원인·수정�
   const report = ruleReport(withNames(fixture.attempts[0].steps), fixture.attempts[0].verdict as Verdict);
   assert.deepEqual(report, loginLost);
 
-  // fixture와 다른 곳은 auto_applicable 하나뿐이다.
+  // 같은 기록을 fixture처럼 gcp 이름으로 돌리면 fixture와 다른 곳은 auto_applicable 하나뿐이다.
   // 엔진이 env를 바꿔 다시 배포할 수 있다는 힌트(can_apply_env)가 없으면 제안만 하므로 false다.
   const expected = fixture.attempts[0].report!;
+  const onGcp = ruleReport(withNames(fixture.attempts[0].steps, "gcp"), fixture.attempts[0].verdict as Verdict);
   const { auto_applicable: _auto, ...expectedFix } = expected.fix;
-  const { auto_applicable, ...fix } = report!.fix!;
+  const { auto_applicable, ...fix } = onGcp!.fix!;
   assert.deepEqual(fix, expectedFix);
   assert.equal(auto_applicable, false);
   assert.deepEqual([report!.confidence, report!.by], [expected.confidence, expected.by]);
 });
 
 test("env를 바꿀 수 있는 대상이면 로그인 풀림 수정안은 fixture와 같은 session-jdbc env 변경이고 자동 적용 가능", () => {
-  const report = ruleReport(withNames(fixture.attempts[0].steps), fixture.attempts[0].verdict as Verdict, { canApplyEnv: true });
+  const report = ruleReport(withNames(fixture.attempts[0].steps, "gcp"), fixture.attempts[0].verdict as Verdict, { canApplyEnv: true });
   assert.deepEqual(report!.fix, fixture.attempts[0].report!.fix);
   assert.deepEqual(report!.fix, fixture.attempts[0].applied_fix);
 });

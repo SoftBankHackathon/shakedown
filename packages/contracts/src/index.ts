@@ -151,7 +151,7 @@ export type Attempt = {
 
 export type DeployEvent = { ts: number; kind: string; [k: string]: unknown };
 
-/** Statuses after which a deployment never changes again. */
+/** 엔진이 스스로는 더 진행하지 않는 상태. blocked는 POST /api/deployments/{id}/fix로 한 번 fixing으로 재개될 수 있다. */
 export const TERMINAL_STATUSES: ReadonlySet<Deployment["status"]> = new Set(["warned", "deployed", "promoted", "blocked", "failed"]);
 
 /** Body of POST /api/projects (engine.yaml). */

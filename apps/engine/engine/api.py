@@ -188,6 +188,20 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
             raise HTTPException(status_code=404, detail='Deployment not found.')
         return found
 
+    @api.post('/api/deployments/{deployment_id}/fix', status_code=202)
+    def apply_fix(deployment_id: str):
+        # 차단된 배포에 원인 보고서의 수정안을 적용하고 다시 시운전한다. 진행 상황은 events를 다시 구독해 받는다.
+        found = deployment(deployment_id)
+        project = api.state.store.get(found['project_id'])
+        if project is None:
+            raise HTTPException(status_code=404, detail='Project not found.')
+        try:
+            return api.state.deployments.apply_fix(project, deployment_id)
+        except Busy as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except DeploymentError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
     @api.get('/api/deployments/{deployment_id}/events')
     def events(deployment_id: str):
         deployment(deployment_id)

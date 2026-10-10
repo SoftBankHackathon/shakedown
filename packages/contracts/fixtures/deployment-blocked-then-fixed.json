@@ -11,7 +11,7 @@
       "sticky_sessions": false,
       "tz": "Asia/Seoul"
     },
-    "aws": {
+    "gcp": {
       "replicas": 2,
       "sticky_sessions": false,
       "tz": "UTC"
@@ -23,6 +23,7 @@
       "label": "Docker + Cloudflare Tunnel",
       "error": null,
       "url": "http://localhost:18081",
+      "deployment_id": "dep_da9629d2cf",
       "instances": 1,
       "info": {
         "runtime": "My PC (Docker)",
@@ -37,13 +38,32 @@
         "replicas": 1,
         "sticky_sessions": false,
         "tz": "Asia/Seoul"
+      },
+      "request": {
+        "project_id": "prj_59c0ee1d86",
+        "image": "shakedown/prj-59c0ee1d86:da9629d2cf",
+        "port": 8080,
+        "health_path": "/",
+        "database": {
+          "engine": "postgres",
+          "name": "board_db"
+        },
+        "secret_refs": {
+          "SPRING_DATASOURCE_PASSWORD": "db_password"
+        },
+        "options": {
+          "replicas": 1,
+          "sticky_sessions": false,
+          "tz": "Asia/Seoul"
+        }
       }
     },
-    "aws": {
+    "gcp": {
       "status": "ready",
-      "label": "App Runner + RDS",
+      "label": "GCP Cloud Run",
       "error": null,
       "url": "http://localhost:18082",
+      "deployment_id": "dep_3f9a2c71d4e84b0f9c6a5e1b7d2f8a04",
       "instances": 2,
       "info": {
         "runtime": "Cloud (simulated: LB + multiple instances, UTC)",
@@ -62,6 +82,27 @@
         "replicas": 2,
         "sticky_sessions": false,
         "tz": "UTC"
+      },
+      "request": {
+        "project_id": "prj_59c0ee1d86",
+        "image": "shakedown/prj-59c0ee1d86:da9629d2cf",
+        "port": 8080,
+        "health_path": "/",
+        "database": {
+          "engine": "postgres",
+          "name": "board_db"
+        },
+        "secret_refs": {
+          "SPRING_DATASOURCE_PASSWORD": "db_password"
+        },
+        "options": {
+          "replicas": 2,
+          "sticky_sessions": false,
+          "tz": "UTC"
+        },
+        "env": {
+          "SPRING_PROFILES_ACTIVE": "demo,session-jdbc"
+        }
       }
     }
   },
@@ -74,7 +115,7 @@
           "sticky_sessions": false,
           "tz": "Asia/Seoul"
         },
-        "aws": {
+        "gcp": {
           "replicas": 2,
           "sticky_sessions": false,
           "tz": "UTC"
@@ -622,7 +663,7 @@
           "2 different instances served one user's requests."
         ],
         "fix": {
-          "target": "aws",
+          "target": "gcp",
           "option": "env",
           "value": "SPRING_PROFILES_ACTIVE=demo,session-jdbc",
           "description": "Keep the login in the shared database (Spring Session JDBC) so every instance sees it.",
@@ -634,7 +675,7 @@
       },
       "duration_s": 1.3,
       "applied_fix": {
-        "target": "aws",
+        "target": "gcp",
         "option": "env",
         "value": "SPRING_PROFILES_ACTIVE=demo,session-jdbc",
         "description": "Keep the login in the shared database (Spring Session JDBC) so every instance sees it.",
@@ -650,7 +691,7 @@
           "sticky_sessions": false,
           "tz": "Asia/Seoul"
         },
-        "aws": {
+        "gcp": {
           "replicas": 2,
           "sticky_sessions": false,
           "tz": "UTC"

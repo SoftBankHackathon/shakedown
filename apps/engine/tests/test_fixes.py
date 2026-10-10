@@ -451,3 +451,46 @@ def test_fix_redeploy_failure_fails_and_cleans_up_both(project, tmp_path):
         assert gcp.calls[-1] == ('DELETE', f'/deployments/{gcp.fixed}', None) and local.calls[-1][0] == 'DELETE'
         assert (d['targets']['gcp']['status'], d['targets']['gcp']['cleanup'], d['traffic_blocked']) == ('stopped', 'confirmed', True)
     finally: ds.close()
+
+
+def test_fix_api_returns_202_then_promotes_and_rejects_unknown_or_repeat(store, project, tmp_path):
+    from fastapi.testclient import TestClient
+    from engine.api import create_app
+    ds = DeploymentStore(tmp_path/'d.db', Runner(), gcp=Gcp(), shakedown=Runs('BLOCKED', 'PASS'), poll_seconds=.001)
+    with TestClient(create_app(store, ds)) as client:
+        r = client.post(f'/api/projects/{project.id}/deployments', json={'targets': ['local', 'gcp'], 'shakedown': True})
+        id = r.json()['id']
+        assert wait(ds, id)['status'] == 'blocked'
+        r = client.post(f'/api/deployments/{id}/fix')
+        assert r.status_code == 202 and r.json()['status'] == 'fixing'
+        assert r.json()['attempts'][0]['applied_fix'] == ENV_FIX
+        repeat = client.post(f'/api/deployments/{id}/fix')
+        assert repeat.status_code == 409 and repeat.json()['detail']
+        assert wait(ds, id)['status'] == 'promoted'
+        assert client.post('/api/deployments/dep_missing/fix').status_code == 404
+        assert '"status": "promoted"' in client.get(f'/api/deployments/{id}/events').text
+
+
+def test_fix_api_returns_400_for_a_fix_that_is_not_auto_applicable(store, project, tmp_path):
+    from fastapi.testclient import TestClient
+    from engine.api import create_app
+    ds = DeploymentStore(tmp_path/'d.db', Runner(), gcp=Gcp(), shakedown=Runs('BLOCKED', fix=dict(ENV_FIX, auto_applicable=False)), poll_seconds=.001)
+    with TestClient(create_app(store, ds)) as client:
+        id = client.post(f'/api/projects/{project.id}/deployments', json={'targets': ['local', 'gcp'], 'shakedown': True}).json()['id']
+        assert wait(ds, id)['status'] == 'blocked'
+        r = client.post(f'/api/deployments/{id}/fix')
+        assert r.status_code == 400 and 'manually' in r.json()['detail']
+
+
+def test_contract_fixture_fix_is_the_one_the_engine_applies():
+    # 시운전 규칙 보고서는 이 fixture와 글자까지 같은 수정안을 낸다(apps/shakedown/test/report.test.ts).
+    # 엔진 허용 목록·가짜 시운전 값이 그 수정안과 어긋나면 실제 연결에서 버튼이 400으로 끝나므로 여기서 묶어 둔다.
+    import json
+    from pathlib import Path
+    from engine.deployments import ENV_FIXES, ENV_FIX_TARGETS
+    fixture = json.loads((Path(__file__).resolve().parents[3] / 'packages/contracts/fixtures/deployment-blocked-then-fixed.json').read_text())
+    fix = fixture['attempts'][0]['applied_fix']
+    assert fixture['attempts'][0]['report']['fix'] == fix
+    assert (fix['option'], fix['auto_applicable'], fix['value'] in ENV_FIXES) == ('env', True, True)
+    # 정답 기록의 대상도 엔진이 실제로 env 수정을 적용하는 대상이어야 한다(지금은 gcp만).
+    assert fix == ENV_FIX and fix['target'] in ENV_FIX_TARGETS

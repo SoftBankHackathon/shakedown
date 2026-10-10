@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Engine API
-  version: 0.1.4
+  version: 0.1.5
   description: |
-    > **상태: 통합 제안 (v0.1.4, 2026-10-10)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 통합 제안 (v0.1.5, 2026-10-10)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     엔진(apps/engine, 김도경)이 구현하고 대시보드(apps/web, 서동옥)가 호출하는 API.
@@ -115,7 +115,7 @@ paths:
     post:
       operationId: deploy
       summary: Action 버튼 (One Action)
-      description: Local 및 사전 구성된 AWS ECS 배포 지원. 두 대상이면 shakedown=true 필수. 한 대상의 shakedown=true는 comparison URL 필수. AWS BLOCKED 시 관리 대상 AWS 배포만 DELETE하며 traffic_blocked는 차단 확인 결과. autofix는 false만 지원. comparison은 기존 외부 환경이며 배포·삭제하지 않음. deployed는 시운전 미실행, promoted는 검사 통과이며 실제 트래픽 승격을 의미하지 않음.
+      description: Local 및 사전 구성된 AWS ECS·GCP Cloud Run 배포 지원(클라우드는 한 번에 하나). 두 대상이면 shakedown=true 필수. 한 대상의 shakedown=true는 comparison URL 필수. 클라우드 BLOCKED 시 관리 대상 클라우드 배포만 DELETE하며 traffic_blocked는 차단 확인 결과. autofix는 false만 지원. 차단 뒤 수정 적용(POST /api/deployments/{deployment_id}/fix)은 엔진이 배포한 Local+GCP만 가능하고 AWS·외부 URL은 400. comparison은 기존 외부 환경이며 배포·삭제하지 않음. deployed는 시운전 미실행, promoted는 검사 통과이며 실제 트래픽 승격을 의미하지 않음.
       parameters:
         - { name: project_id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -211,6 +211,45 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Deployment" }
+  /api/deployments/{deployment_id}/fix:
+    post:
+      operationId: applyFix
+      summary: 차단된 배포에 원인 보고서의 수정안을 적용하고 다시 시운전 (본문 없음)
+      description: |
+        blocked 배포의 1회차 보고서 `fix`가 엔진이 적용할 수 있는 env 수정안일 때만 동작한다
+        (`auto_applicable: true`, 대상이 이 배포의 클라우드, 엔진 허용 목록의 값. 지금은 `SPRING_PROFILES_ACTIVE=demo,session-jdbc`).
+        - 상태 흐름: blocked → fixing → shakedown → promoted | warned | blocked | failed
+        - 배포당 1번. Local+GCP처럼 엔진이 배포한 Local과 클라우드가 있는 배포만. AWS는 실계정 검증 전이라 지금은 400
+        - Local은 그대로 두고 클라우드만 1회차와 같은 이미지 digest·같은 본문에 `env`만 더해 새 배포 ID(`dep_` + 32자리 hex)로 다시 배포
+        - 새 ID는 `targets[cloud].deployment_id`에 기록하고, 그 뒤 조회·로그·DELETE는 이 ID로 함
+        - 적용한 수정안은 차단된 회차(`attempts[0].applied_fix`)에 기록하고, 2회차 시운전은 `attempts[1]`로 덧붙임
+        - `ai_cost`는 회차를 합한 값
+        - `timings.total_s`는 1회차 총시간에 2회차 작업 시간만 더함(차단 뒤 기다린 시간 제외, fixing 중에는 없음). `deploy_s`는 재배포 시간 포함, `build_s`는 그대로
+        - 다시 BLOCKED면 새 클라우드 배포를 로그 확인 뒤 DELETE. 재배포가 실패하면 failed이고 Local과 새 클라우드 배포를 정리. 재배포 POST가 실패하면 새 ID를 조회해 어댑터가 모르는 ID(404, 거절)일 때만 1회차 정리 기록을 그대로 두고, 응답만 잃었을 수 있으면 새 ID도 DELETE
+        - 진행 상황은 events를 다시 구독해서 받음(blocked에서 done으로 닫힌 스트림은 다시 열리지 않음)
+      parameters:
+        - { name: deployment_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          description: 수정 적용 접수 (status=fixing)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "400":
+          description: 자동 적용할 수 없는 수정안, 엔진이 배포한 Local+GCP가 아님(비교 모드·외부 URL·AWS), 이미 한 번 수정함, 차단된 클라우드의 정리를 확인하지 못함, GCP 사전 확인 실패
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: 없는 배포 또는 프로젝트
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: blocked가 아님(이미 수정 중 포함), 또는 이 프로젝트의 최신 배포가 아님(더 새 배포가 같은 클라우드 서비스를 쓸 수 있음)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/deployments/{deployment_id}/events:
     get:
       operationId: streamEvents
@@ -690,17 +729,18 @@ components:
         status:
           type: string
           enum: [queued, building, deploying, shakedown, analyzing, fixing, deployed, promoted, warned, blocked, failed]
+          description: "deployed·promoted·warned·blocked·failed에서 엔진은 스스로 더 진행하지 않음. blocked는 POST /fix로 한 번 fixing으로 재개될 수 있음"
         mode: { type: string, enum: [comparison] }
         shakedown_id: { type: string }
         release_gate: { type: string, enum: [passed, review, blocked] }
         traffic_blocked: { type: boolean, description: "관리 AWS DELETE 차단 확인 시 true. 기존 외부 URL 트래픽은 차단하지 않음." }
         targets:
           type: object
-          description: "대상 이름 → 상태. 기존 환경은 external(관리/배포 완료 아님), 정리 완료는 stopped, 관리 대상은 TargetDeployment 필드 사용"
+          description: "대상 이름 → 상태. 기존 환경은 external(관리/배포 완료 아님), 정리 완료는 stopped, 관리 대상은 TargetDeployment 필드 사용. 관리 대상의 deployment_id는 Target API에 실제로 쓴 ID(수정 재배포 뒤에는 새 ID), request는 받아들여진 Target API 본문(deployment_id 제외)"
           additionalProperties: true
         attempts:
           type: array
-          description: "시운전 회차. 각 회차의 steps/verdict/report는 shakedown.yaml의 Shakedown과 같은 형식"
+          description: "시운전 회차. 각 회차의 steps/verdict/report는 shakedown.yaml의 Shakedown과 같은 형식. applied_fix는 그 회차가 차단된 뒤 적용한 수정안(POST /fix)"
           items: { type: object, additionalProperties: true }
         timings: { type: object, additionalProperties: { type: number } }
         ai_cost: { type: object, additionalProperties: true }
