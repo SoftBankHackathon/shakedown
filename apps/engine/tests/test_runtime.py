@@ -134,3 +134,21 @@ def test_additional_database_runtime(mode):
     assert database_conflict(mode,'postgresql')
     with pytest.raises(ValueError):
         HttpRuntime.model_validate({'port':3000,'database':{'mode':mode,'name':'app','bindings':{'DATABASE_URL':'postgres_url'}}})
+
+
+def test_runtime_health_path_reaches_shakedown_hints(store,repository,tmp_path):
+    # 시운전은 시나리오가 없으면 기준 환경을 둘러본다. runtime 프로젝트는 사용자가 정한 상태 확인 경로도 열게 알려 준다.
+    from engine.models import CreateProjectRequest
+    from engine.deployments import DeploymentStore,CompareRequest,Endpoint
+    from test_comparisons import Runner,Shakedown,wait
+    plain=store.create(CreateProjectRequest(repo=str(repository)))
+    project=store.set_runtime(plain.id,HttpRuntime.model_validate(runtime()))
+    sd=Shakedown()
+    ds=DeploymentStore(tmp_path/'hints.db',Runner(),shakedown=sd,poll_seconds=.001)
+    try:
+        compare=CompareRequest(baseline=Endpoint(name='local',url='http://127.0.0.1:18080'),candidate=Endpoint(name='candidate',url='https://candidate.example'))
+        for p in (plain,project):
+            assert wait(ds,ds.start_comparison(p,compare)['id'])['status']=='promoted'
+        plain_hints,runtime_hints=[body['hints'] for method,_,body in sd.calls if method=='POST']
+        assert 'health_path' not in plain_hints and runtime_hints['health_path']=='/health'
+    finally:ds.close()
