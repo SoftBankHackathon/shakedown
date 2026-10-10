@@ -2,7 +2,7 @@
 // 데모 버그가 아직 정해지지 않아서 알려진 원인 넷을 정해진 순서로 확인하고, 아무것도 맞지 않으면 일반 보고서를 낸다.
 // hop.instance는 응답 헤더(X-Instance-Id)로 기록된다. 원인 추정은 hop 경로를 기준으로 하고,
 // 로그인 풀림만 로그인을 받은 서버와 튕긴 요청을 받은 서버의 ID가 둘 다 있고 서로 다르면 근거 한 줄을 덧붙인다.
-import type { Fix, Hop, Report, StepDiff, StepResult } from "@shakedown/contracts";
+import type { Fix, Hop, Report, ReportLang, StepDiff, StepResult } from "@shakedown/contracts";
 import { normalizePath } from "./compare.ts";
 import type { Verdict } from "./verdict.ts";
 
@@ -71,9 +71,8 @@ function loginHop(diffs: StepDiff[], first: StepDiff, end: number): Hop | undefi
   return [...earlier, ...first.cloud.hops.slice(0, end)].findLast(isSignInPost);
 }
 
-/** 보고서 언어. 요청의 lang(없으면 en). */
-export type Lang = "ko" | "en" | "ja";
-export const LANGS: readonly Lang[] = ["ko", "en", "ja"];
+/** 보고서 언어. 요청의 lang(없으면 en). 목록은 contracts의 ReportLang 하나로 둔다. */
+export type Lang = ReportLang;
 
 // 규칙 보고서 문장(언어별). 경로·hop 사슬·단계 제목·검사 오류 글자(ended on …)·환경 이름 같은 데이터 조각은 그대로 끼워 넣는다.
 // 판정 요약(verdict.summary)과 단계 비교 이유(reasons)는 규칙 데이터라 영어 그대로 두고, 아래 문장에도 영어 그대로 들어간다.
@@ -181,6 +180,9 @@ const WORDS: Record<Lang, typeof en> = {
     otherStep: (i, title, base, bo, cand, co) => `ステップ ${i}（${title}）: ${base} ${bo}、${cand} ${co}。`,
   },
 };
+
+/** 받을 수 있는 lang 값. 문장을 가진 언어(WORDS의 키)에서 만들어 둘이 어긋나지 않게 한다. */
+export const LANGS = Object.keys(WORDS) as Lang[];
 
 /**
  * 어느 서버가 답했는지 근거 한 줄. 경로만으로는 "다른 서버로 갔다"가 추정이지만, 두 ID가 다르면 직접 보여 준다.

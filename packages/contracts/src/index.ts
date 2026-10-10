@@ -159,6 +159,9 @@ export type CreateProjectRequest = { repo: string; name?: string; image_only?: b
 
 /** Body of POST /api/projects/{id}/deployments — the Action button (engine.yaml). */
 export type ComparisonEndpoint = { name: string; url: string };
+/** 시운전 원인 보고서 언어(shakedown.yaml·engine.yaml lang). verdict.summary와 StepDiff.reasons는 영어 그대로. */
+export type ReportLang = "ko" | "en" | "ja";
+
 export type CompareRequest = { baseline: ComparisonEndpoint; candidate: ComparisonEndpoint };
 
 export type DeployRequest = {

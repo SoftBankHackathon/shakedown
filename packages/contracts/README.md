@@ -23,11 +23,10 @@
 
 ## 상태: 초안
 
-Target API는 **v0.1.5 제안**, Engine API는 **v0.1.6 통합 제안**, Shakedown API는 **v0.1.2 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
+Target API는 **v0.1.5 제안**, Engine API는 **v0.1.6 통합 제안**, Shakedown API는 **v0.1.3 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
 
 바뀔 가능성이 있는 것
 - 상태 확인 방식: 지금은 GET 폴링(2~3초 간격). 콜백(`callback_url`) 방식이 추가될 수 있음
-- 보고서 언어: 시운전 요청에 `lang`(ko, en, ja) 추가 검토 중
 - 같은 프로젝트 동시 배포: 지금은 409로 거절. 필요하면 대기열 방식으로 바뀔 수 있음
 - 대상 이름: 지금은 `local`, `aws`, `gcp` 구현. `onprem`, `azure`는 예정
 - 비교 대상이 3개 이상일 때의 결과 형식: `StepDiff`에 `baseline`, `candidate`를 넣어 두었고 세부는 미정
@@ -39,6 +38,7 @@ Target API는 **v0.1.5 제안**, Engine API는 **v0.1.6 통합 제안**, Shakedo
 
 ## 변경 이력
 
+- **Shakedown v0.1.3 (2026-10-10, 제안. 팀 채널 공유 TBD)**: 요청에 `lang`(`ko`·`en`·`ja`, 기본 `en`) 추가. 규칙 보고서의 headline·cause·evidence 문장과 fix.description, AI 보고서, AI 시나리오의 단계 제목·app_understanding을 그 언어로 씀. 경로·hop·단계 제목·검사 오류 글자, fix의 target·option·value·native, verdict.summary·StepDiff.reasons는 그대로(영어). 목록 밖 값은 400. 응답 키는 그대로. 타입 `ReportLang`(src/index.ts) 추가.
 - **Shakedown v0.1.2 (2026-10-10, 제안. 팀 채널 공유 TBD)**: 요청에 `scenario`가 없으면 시운전이 기준 환경을 보고 고름: 알려진 시나리오(kty-board 기본, GET으로 앞부분만 확인, `fallback`) → AI 시나리오(둘러본 결과로 작성하고 기준 환경에서 미리 돌려 통과한 것만, `ai`) → 규칙 둘러보기(GET만, `fallback`). 그래서 202 응답과 그 직후 조회에는 `scenario`·`scenario_source`가 없고 고른 뒤 채움. 같은 `deployment_id`·같은 baseline이면 처음 고른 시나리오를 다시 씀. 기준 환경에서 열리는 페이지가 없으면 `failed`. `hints`에 알려진 키 `health_path` 추가. 규칙 보고서의 데이터 유실·서버 오류 수정안 문구를 스택 중립으로 바꾸고, 로그인 풀림은 비교 환경에 로그인 POST가 있을 때만 판정. 요청·응답 키는 그대로.
 - **Engine v0.1.6 (2026-10-10, 제안. 팀 채널 공유 TBD)**: 배포 요청 targets에서 gcp도 다른 클라우드(aws·azure)와 함께 보낼 수 있음(v0.1.4의 400 제거). 빌드는 첫 클라우드에서 한 번이고, gcp는 그 이미지(ECR 또는 설정된 ACR)를 Artifact Registry로 같은 digest 그대로 복사해 배포. local과 세 클라우드를 한 번에 고를 수 있게 maxItems 3 → 4. 수정 적용(applyFix)은 지금처럼 Local+GCP 하나일 때만(클라우드 둘 이상이면 400). 요청·응답 형식은 그대로라 타입·fixture는 바꾸지 않음.
 - **Target v0.1.5 (2026-10-10, 제안. 팀 채널 공유 TBD)**: GCP 준비 한도 예외. GCP 어댑터는 420초(7분)를 넘기면 0대로 내린 뒤(최대 19초) failed로 바꾸고, 엔진은 GCP를 450초(7분 30초) 기다림. 다른 대상의 대기는 그대로. 2026-10-10 13:19 Cloud Run이 최소 인스턴스 2대를 확보하는 데 4분 15초가 걸려 옛 한도 270초를 넘긴 일 때문. 요청·응답 형식은 그대로라 타입·fixture는 바꾸지 않음.

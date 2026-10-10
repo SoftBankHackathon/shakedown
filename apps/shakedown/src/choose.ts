@@ -13,10 +13,13 @@ import { crawl, crawlScenario } from "./crawl.ts";
 import { AI_SCENARIO_TIMEOUT_MS, aiScenario } from "./ai-scenario.ts";
 import { noCost, type AiOptions } from "./ai-report.ts";
 import type { Target } from "./shakedown.ts";
+import type { Lang } from "./report.ts";
 
 export type Choice = { scenario: Scenario; source: "ai" | "fallback"; cost: CostLedger };
 export type ChooseOptions = {
   hints?: Record<string, unknown>;
+  /** AI 시나리오의 단계 제목·app_understanding 언어. 없으면 영어. */
+  lang?: Lang;
   /** AI 시나리오 설정. 비어 있으면 AI를 부르지 않는다. */
   ai: AiOptions;
   /**
@@ -89,7 +92,7 @@ export async function chooseScenario(baseline: Target, options: ChooseOptions): 
 
   const left = (options.deadlineAt ?? Infinity) - Date.now() - AI_RESERVE_MS;
   if (left >= AI_MIN_MS) {
-    const ai = await aiScenario({ pages, hints: options.hints }, { ...options.ai, timeoutMs: Math.min(options.ai.timeoutMs ?? AI_SCENARIO_TIMEOUT_MS, left), signal });
+    const ai = await aiScenario({ pages, hints: options.hints, lang: options.lang }, { ...options.ai, timeoutMs: Math.min(options.ai.timeoutMs ?? AI_SCENARIO_TIMEOUT_MS, left), signal });
     cost = ai.cost;
     options.onSpent?.(cost);
     signal?.throwIfAborted();

@@ -170,3 +170,13 @@ test("ANTHROPIC_API_KEY가 있으면 켜고, SHAKEDOWN_AI_SCENARIO=off만 끈다
   assert.deepEqual(aiScenarioOptionsFromEnv({ ANTHROPIC_API_KEY: KEY, SHAKEDOWN_AI_SCENARIO: "off" }), {});
   assert.deepEqual(aiScenarioOptionsFromEnv({}), {});
 });
+
+test("lang: 단계 제목과 app_understanding을 요청 언어로 쓰라고 지시한다(기본 영어)", async (t) => {
+  for (const [lang, name] of [["ko", "Korean"], ["ja", "Japanese"], [undefined, "English"]] as const) {
+    const f = await startFakeClaude(t, answered(answer));
+    await aiScenario({ pages, lang }, { apiKey: KEY, baseURL: f.baseURL });
+    assert.match(f.seen[0].body.system, new RegExp(`Write step titles \\(short imperative phrases\\) and app_understanding in ${name}`), String(lang));
+    // 화면 글자·폼 값은 데이터라 번역하면 기준 환경에서도 맞지 않는다.
+    assert.match(f.seen[0].body.system, /Do not translate paths, form actions, field names, field values, link texts, expected text or placeholders/, String(lang));
+  }
+});

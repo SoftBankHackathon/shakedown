@@ -7,7 +7,7 @@ import { runShakedown, type ShakedownInput, type Target } from "./shakedown.ts";
 import { isScenario } from "./scenario.ts";
 import type { Verdict } from "./verdict.ts";
 import { waitUntilReachable } from "./preflight.ts";
-import { ruleReport } from "./report.ts";
+import { LANGS, ruleReport, type Lang } from "./report.ts";
 import { aiOptionsFromEnv, aiReport, noCost, type AiOptions } from "./ai-report.ts";
 import { aiScenarioOptionsFromEnv } from "./ai-scenario.ts";
 import { chooseScenario, type Choice } from "./choose.ts";
@@ -27,7 +27,7 @@ export type Shakedown = {
   error?: string;
 };
 
-type Job = Pick<ShakedownInput, "baseline" | "candidate" | "scenario"> & { deploymentId: string; hints?: Record<string, unknown> };
+type Job = Pick<ShakedownInput, "baseline" | "candidate" | "scenario"> & { deploymentId: string; hints?: Record<string, unknown>; lang: Lang };
 
 // 엔진은 3분 안에 done이 안 되면 실패로 본다. 보고서 작성까지 넣어도 그보다 먼저 끝내서 이유를 남긴다.
 const DEFAULT_DEADLINE_MS = 150_000;
@@ -75,9 +75,18 @@ function parseRequest(body: unknown): Job | [number, string] {
   if (b.candidates.length > 1) return [422, `only one candidate is supported for now (got ${b.candidates.length})`];
   // 엔진(Python)은 저장된 시나리오가 없으면 null을 보낼 수 있다 → 없는 것과 같게 본다.
   if (b.scenario != null && !isScenario(b.scenario)) return [400, "scenario must have steps with a title and a known action"];
+  // 보고서 언어. 없거나 null이면 영어(이전 엔진과 호환).
+  if (b.lang != null && !LANGS.includes(b.lang as Lang)) return [400, "lang must be ko, en or ja"];
   // hints는 엔진이 레포 분석 결과를 그대로 넘기는 자유 형식이라 모양을 검사하지 않는다.
   const hints = typeof b.hints === "object" && b.hints !== null && !Array.isArray(b.hints) ? (b.hints as Record<string, unknown>) : undefined;
-  return { deploymentId: b.deployment_id, baseline: b.baseline, candidate: b.candidates[0], scenario: (b.scenario ?? undefined) as Scenario | undefined, hints };
+  return {
+    deploymentId: b.deployment_id,
+    baseline: b.baseline,
+    candidate: b.candidates[0],
+    scenario: (b.scenario ?? undefined) as Scenario | undefined,
+    hints,
+    lang: (b.lang ?? "en") as Lang,
+  };
 }
 
 type Settings = {
@@ -85,7 +94,7 @@ type Settings = {
   reachWaitMs: number;
   ai: AiOptions;
   aiScenario: AiOptions;
-  /** 배포마다 처음 고른 시나리오. 키는 "deployment_id 기준 환경 주소". 기록(store)처럼 메모리에만 둔다. */
+  /** 배포마다 처음 고른 시나리오. 키는 "deployment_id 기준 환경 주소 lang". 기록(store)처럼 메모리에만 둔다. */
   chosen: Map<string, Choice>;
 };
 
@@ -144,7 +153,8 @@ async function execute(record: Shakedown, job: Job, { reachWaitMs, ai, aiScenari
   // 엔진은 한 배포(같은 deployment_id) 안에서 비교 대상마다, 수정 적용 뒤 2회차마다 시운전을 따로 부른다.
   // 같은 배포는 같은 시나리오로 돌려야 회차끼리 맞댈 수 있다(2회차가 더 약한 둘러보기로 바뀌면 고쳐지지 않은 버그도 PASS가 된다).
   // 그래서 처음 고른 시나리오와 출처를 다시 쓰고, 이번에 부르지 않은 AI 비용은 0으로 둔다(엔진이 회차마다 더한다).
-  const key = `${job.deploymentId} ${job.baseline.url}`;
+  // AI 시나리오 제목은 요청 언어로 쓰므로 언어가 다르면 따로 고른다(엔진은 한 배포에 늘 같은 lang을 보낸다).
+  const key = `${job.deploymentId} ${job.baseline.url} ${job.lang}`;
   let choice: Choice | undefined;
   if (!scenario) {
     const reused = chosen.get(key);
@@ -155,7 +165,7 @@ async function execute(record: Shakedown, job: Job, { reachWaitMs, ai, aiScenari
     };
     // 고른 시나리오의 본 실행은 AI 보고서 몫을 남기고 끝나야 한다.
     const runDeadlineAt = deadlineAt - AI_TIMEOUT_MS - AI_MARGIN_MS;
-    choice = reused ? { ...reused, cost: spent } : await chooseScenario(job.baseline, { hints: job.hints, ai: aiScenario, deadlineAt: runDeadlineAt, signal, onSpent });
+    choice = reused ? { ...reused, cost: spent } : await chooseScenario(job.baseline, { hints: job.hints, lang: job.lang, ai: aiScenario, deadlineAt: runDeadlineAt, signal, onSpent });
     scenario = choice.scenario;
     spent = choice.cost;
     if (record.status === "running") {
@@ -186,11 +196,11 @@ async function execute(record: Shakedown, job: Job, { reachWaitMs, ai, aiScenari
   if (choice) chosen.set(key, choice);
   // 엔진만 이 비교 대상의 env를 바꿔 다시 배포할 수 있는지 안다. 정확히 true일 때만 자동 적용 가능으로 표시한다.
   const canApplyEnv = job.hints?.can_apply_env === true;
-  const rule = result.verdict.status === "BLOCKED" ? ruleReport(result.steps, result.verdict, { canApplyEnv }) : null;
+  const rule = result.verdict.status === "BLOCKED" ? ruleReport(result.steps, result.verdict, { canApplyEnv, lang: job.lang }) : null;
   // 이미 나온 판정을 AI 때문에 잃지 않도록, AI는 마감까지 남은 시간 안에서만 기다린다.
   const left = deadlineAt - Date.now() - AI_MARGIN_MS;
   const aiOptions = left < AI_MIN_MS ? {} : { ...ai, timeoutMs: Math.min(ai.timeoutMs ?? AI_TIMEOUT_MS, left) };
-  const { report, cost } = await aiReport({ diffs: result.steps, verdict: result.verdict, fallback: rule, hints: job.hints }, aiOptions);
+  const { report, cost } = await aiReport({ diffs: result.steps, verdict: result.verdict, fallback: rule, hints: job.hints, lang: job.lang }, aiOptions);
   return { result, report, cost: addCost(spent, cost) };
 }
 

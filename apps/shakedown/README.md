@@ -42,6 +42,7 @@ HOST=0.0.0.0 PORT=9201 npm start -w @shakedown/shakedown   # 엔진이 다른 PC
 | `GET /shakedowns/{id}` | 200 현재 상태. 실행 중에는 두 환경이 모두 끝낸 단계까지 `steps`가 채워짐. 모르는 id는 404 |
 
 - 요청에 `scenario`가 없거나 null이면 기준 환경을 보고 고릅니다(아래 "시나리오 고르기")
+- 요청의 `lang`(`ko`·`en`·`ja`, 없거나 null이면 `en`)은 원인 보고서(규칙·AI)와 AI 시나리오의 단계 제목·`app_understanding` 언어입니다. 다른 값이면 400 `lang must be ko, en or ja`. 경로·hop·단계 제목·검사 오류 글자와 수정안의 target·option·value·native는 그대로이고, 판정 요약(`verdict.summary`)과 단계 비교 이유(`reasons`)는 영어 그대로입니다
 - 비교 대상(`candidates`)은 지금 1개만 받습니다. 2개 이상이면 422
 - 잘못된 요청은 400 `{error, detail}` (target.yaml과 같은 모양)
 - 시작 전에 두 주소가 응답하는지 최대 20초 다시 시도합니다(터널 주소가 늦게 잡히는 경우). 앱이 낸 응답은 500이어도 닿은 것으로 봅니다. Cloudflare 엣지가 낸 530(`server: cloudflare`, 터널 미준비 1033·1016)은 앱 응답이 아니라서 계속 기다립니다
