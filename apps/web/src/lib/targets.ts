@@ -8,7 +8,7 @@ export type TargetInfo = {
   available: boolean;
   /** Selected by default on import. */
   default: boolean;
-  /** The engine accepts sticky sessions for this target (Azure: Container Apps ingress affinity, GCP: Cloud Run session affinity). */
+  /** The engine accepts sticky sessions for this target (Azure: Container Apps ingress affinity). */
   sticky?: boolean;
 };
 

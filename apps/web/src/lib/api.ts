@@ -32,7 +32,12 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const liveApi = {
+  /** Every registered project, newest first as the engine stores them. */
+  projects: () => call<Project[]>("/api/projects"),
   project: (id: string) => call<Project>(`/api/projects/${id}`),
+  /** Every deployment the engine knows, across projects. */
+  allDeployments: () => call<Deployment[]>("/api/deployments"),
+  health: () => call<{ ok: boolean }>("/api/health"),
   createProject: (body: CreateProjectRequest) =>
     call<Project>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
   deployments: (projectId: string) => call<Deployment[]>(`/api/deployments?project_id=${projectId}`),
@@ -58,6 +63,8 @@ const liveApi = {
 // mock 재생은 blocked에서 멈추지 않고 수정·2회차까지 저절로 가므로 수정 적용 버튼이 나오지 않는다.
 export const api: typeof liveApi = MOCK ? {
   ...mockApi,
+  allDeployments: () => mockApi.deployments(),
+  health: async () => ({ ok: true }),
   compare: async () => { throw new Error("Use live mode to compare existing environments."); },
   applyFix: async () => { throw new Error("Use live mode to apply a fix."); },
 } : liveApi;
