@@ -49,9 +49,9 @@ flowchart LR
 | 시간 제한 | AWS와 같게 준비 270초, 실패 시 정리 최대 120초 |
 | DELETE | 한 번의 갱신으로 ingress 끄기 + 활성 리비전 비활성화 → 공개 주소가 앱 응답을 주지 않음을 확인 → 204. 오류는 502(재시도 가능), 이미 삭제된 ID는 204. DB·로그 보존 |
 | 로그 | 최근 로그는 Container Apps 로그 스트림(거의 실시간), 이전 로그는 Log Analytics 한 번 조회 (반영이 수 분 늦음) |
-| `info` | AWS와 같은 키: `runtime: Azure Container Apps`, `database: Azure PostgreSQL Flexible 17`, `session`, `timezone`, `sticky_sessions`, `image_digest`, `revision`, `transport: HTTPS` |
+| `info` | AWS와 같은 키: `runtime: Azure Container Apps`, `database`(실제 서버에서 읽은 엔진·버전, 예: `Azure PostgreSQL Flexible 17`, DB를 안 쓰면 `none`), `session`, `timezone`, `sticky_sessions`, `image_digest`, `revision`, `transport: HTTPS` |
 | `commands` | AWS와 같게 비움 (SDK로 호출하므로 실행하지 않은 CLI 명령을 적지 않음) |
-| `runtime` (범용 HTTP 런타임) | 엔진이 `project.runtime`을 보내면 `database`·`secret_refs` 대신 사용. **PostgreSQL(또는 DB 없음)만**, 바인딩의 `password`와 `secret_refs`의 `db_password`만 Key Vault 비밀로 연결. `postgres_url` 바인딩(비밀번호 포함 URL)·`init_command`·다른 secret 참조는 400 |
+| `runtime` (범용 HTTP 런타임) | 엔진이 `project.runtime`을 보내면 `database`·`secret_refs` 대신 사용. AWS와 같은 모드를 모두 받는다 (13절): 관리 DB `postgres`·`mysql`·`mongodb`는 스택의 엔진과 같아야 하고, `external`·`none`은 어느 스택에서나 된다. 비밀은 전부 Key Vault 참조 |
 
 어댑터 시작 시 한 번: 구독·테넌트가 설정과 같은지 확인(다르면 실행 거부, 회사 계정 보호), SDK 클라이언트 생성, PostgreSQL 서버가 중지 상태가 아닌지 확인.
 
@@ -176,3 +176,33 @@ PostgreSQL B1ms, ACR Basic, Container Apps(무료 제공량 안쪽 예상), 로�
 1. PR #12 머지 대기 (작업 2·3은 그 코드 위에서). 작업 1은 `feat/azure` 위에서 먼저 구현
 2. 작업 1 → 작업 3 → 작업 2 (PR #12 코드 위라 태윤 님께 공유)
 3. 실측: 실제 Azure에서 medium 적용 → 복제본 2개 이상, 부하 시 확장되는지, 비용 확인
+
+## 13. DB 엔진 (PostgreSQL · MySQL · MongoDB, AWS와 같은 범위)
+스택 하나에 DB 엔진 하나다 (AWS `HACKATHON_DATABASE_ENGINE`과 같은 원칙). 다른 엔진은 새 리소스 그룹에 만들고 어댑터 설정을 그 스택으로 바꾼다. 같은 리소스 그룹을 다른 엔진으로 다시 돌리면 `provision.sh`가 멈춘다(데이터 이전 없음).
+
+```sh
+AZURE_DATABASE_ENGINE=mysql   AZURE_RESOURCE_GROUP=rg-shakedown-mysql AZURE_CONFIG=.data/azure/mysql.json bash infra/azure/scripts/provision.sh
+AZURE_DATABASE_ENGINE=mongodb AZURE_RESOURCE_GROUP=rg-shakedown-mongo AZURE_CONFIG=.data/azure/mongo.json bash infra/azure/scripts/provision.sh
+```
+
+| 엔진 | Azure 서비스 | 네트워크 | AWS 대응 |
+|---|---|---|---|
+| `postgres` | PostgreSQL Flexible 17, B1ms | 위임 서브넷 + 사설 DNS | RDS PostgreSQL 17 |
+| `mysql` | MySQL Flexible 8.0, B1ms (안정 API의 최신. 8.4는 preview API) | 위임 서브넷 + 사설 DNS, TLS 필수 | RDS MySQL 8.4 |
+| `mongodb` | Cosmos DB for MongoDB vCore 8.0, M10 · 샤드 1 | private endpoint (`privatelink.mongocluster.cosmos.azure.com`) | EC2 3대 TLS 레플리카셋 |
+
+바인딩과 비밀 (어댑터는 비밀값을 모르고 Key Vault 주소만 안다):
+
+| 바인딩 / 참조 | Azure에서 |
+|---|---|
+| `host`·`port`·`name`·`username`·`jdbc_url` | 평문 환경변수 (`databaseEnvironment`, AWS와 같은 값) |
+| `password` | Key Vault `db-password` |
+| `postgres_url`·`mysql_url`·`mongodb_url` | Key Vault `db-url`. Bicep이 비밀번호를 URL 인코딩해 만든다 (`packages/contracts` `databaseUrl`과 같은 모양, Cosmos는 `mongodb+srv` + SCRAM + `retrywrites=false`) |
+| `secret_refs` | `db_password`, `db_url`, 그리고 설정 `secrets`에 등록한 Key Vault 비밀 (외부 DB 접속 문자열 등). 앱 관리 ID가 그 볼트를 읽을 수 있어야 한다 |
+| `init_command` | `sd-init` Container Apps 작업이 같은 이미지·환경변수로 한 번 실행하고 성공해야 앱을 갱신한다 (AWS `schema_init` 단계와 같음) |
+
+- MongoDB 스택은 `mongodb_url`(과 `name`)만 받는다. Cosmos vCore는 SRV 주소 하나로 접속해서 `host`·`port`·`password`를 따로 조합한 주소는 맞지 않는다 (AWS도 MongoDB는 `mongodb_url`만).
+- 기존 Spring 샘플 요청(`runtime` 없음)은 PostgreSQL 스택에서만 받는다.
+- 이전 템플릿으로 만든 스택(2026-10-09 PostgreSQL)에는 `db-url` 비밀이 없어 `postgres_url` 바인딩은 400이다. `provision.sh`를 다시 돌리면 `sd-init` 작업만 추가되고 앱·DB는 그대로다.
+- 검증: 가짜 Azure로 엔진별 바인딩·비밀·초기화 작업 테스트 (`test/azure-provider.test.ts`), Bicep 3개 `az bicep build` 통과. 실제 MySQL·MongoDB 스택 생성은 아직 안 함.
+

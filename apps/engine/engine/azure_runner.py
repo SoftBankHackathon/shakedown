@@ -63,8 +63,18 @@ class AzureRunner(LocalRunner):
         config = self.config()
         if project.id != config['projectId']:
             raise DeploymentError(f'Azure stack is bound to another project. Set adapter config projectId to {project.id} for this repository and restart the adapter only if the stack is dedicated to it.')
-        if project.analysis.port != config['port'] or (project.analysis.database_name or 'board_db') != config['dbName']:
+        runtime = getattr(project, 'runtime', None)
+        if runtime:
+            port, mode, db_name = runtime['port'], runtime['database']['mode'], runtime['database']['name']
+        else:
+            port, mode, db_name = project.analysis.port, 'postgres', project.analysis.database_name or 'board_db'
+        managed = mode in ('postgres', 'mysql', 'mongodb')
+        if port != config['port'] or (managed and db_name != config['dbName']):
             raise DeploymentError('Application port/database must match the prepared Azure stack.')
+        # One Azure stack serves one database engine (README 13절). Point AZURE_ADAPTER_CONFIG at the matching stack.
+        engine = config.get('dbEngine', 'postgres')
+        if managed and mode != engine:
+            raise DeploymentError(f'Azure stack database is {engine}; this project needs {mode}. Provision a {mode} stack (AZURE_DATABASE_ENGINE={mode}) and point AZURE_ADAPTER_CONFIG at it.')
         # Refuse other logins (for example a company subscription) before touching any Azure resource.
         if self.capture(['az', 'account', 'show', '--query', 'id', '-o', 'tsv']).lower() != config['subscriptionId'].lower():
             raise DeploymentError('Azure CLI subscription does not match the configured stack.')
@@ -114,7 +124,7 @@ class AzureRunner(LocalRunner):
         config = self.preflight(project)
         tag = config['repositoryUri'] + ':' + deployment_id
         analysis = self.build(project, tag, platform='linux/amd64')
-        if analysis.port != config['port'] or (analysis.database_name or 'board_db') != config['dbName']:
+        if analysis.port != config['port'] or (not getattr(project, 'runtime', None) and (analysis.database_name or 'board_db') != config['dbName']):
             raise DeploymentError('Checked-out application no longer matches the Azure stack.')
         with tempfile.TemporaryDirectory(prefix='shakedown-acr-') as auth:
             env = self.docker_env(auth)
