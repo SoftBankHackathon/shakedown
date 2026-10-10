@@ -131,4 +131,5 @@ AI는 판단을 돕는 자리에만 두고, 결과를 뒤집는 자리에는 두
 - [공통 계약(OpenAPI)](packages/contracts/README.md)
 - [샘플 앱](samples/README.md)
 - [2026-10-08 통합 점검](docs/integration-audit-2026-10-08.md)
+- [김태윤 개발 회고 — 트러블슈팅·설계 선택·실측 근거](docs/retrospectives/2026-10-10-taeyun-engineering.md)
 - [설계 문서 (Notion)](https://app.notion.com/p/1b28bee9ada4820d8ce681ad430490b7)
