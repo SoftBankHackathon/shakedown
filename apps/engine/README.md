@@ -169,7 +169,7 @@ API:
 
 계획 응답에 `fallback_diagnostic`과 `prompt_version`을 포함해 어떤 진단과 규격으로 생성했는지 확인할 수 있습니다. 프롬프트 본문이나 키를 별도 로그로 저장하지 않습니다.
 
-### Security Gate prerequisite (#16)
+### Security Gate prerequisite (#16, updated by #25)
 
 Image planning now scans an isolated repository snapshot using the merged
 `apps/security-gate/main.py --with-gitleaks` (schema 3.0), before rule generation
@@ -182,10 +182,13 @@ request flag or LLM fallback that overrides this gate.
 
 Install the Security Gate's Semgrep/Gitleaks tools as described in
 `apps/security-gate/README.md`; the engine Python environment also needs its
-requirements. The current gate supports Compose privileged checks, limited
-Python patterns and text-secret detection, not all-language vulnerability
-analysis. Missing applicable checks remain REVIEW; unsupported/binary inputs
-can fail scanning. In particular, Java/Gradle samples are not automatically
-approved. Tool installation alone does not make unsupported projects pass.
+requirements. The #25 gate supports limited Python, Java, JavaScript and
+TypeScript patterns, Compose privileged checks and text-secret detection.
+The engine validates the bundled v3 JSON schema. An absent Compose file is
+accepted only as Docker REVIEW/NOT_APPLICABLE with no files/errors, while the
+overall result and both Semgrep/Gitleaks must still be ALLOW/SUCCESS.
+Unsupported source languages, template coverage gaps and scanner failures remain
+blocking. A structurally valid Gradle wrapper JAR can be excluded from text-secret
+scanning; that is not a security review of the binary or dependencies.
 Only a sanitized decision is returned; raw scanner findings/output are not
 sent to the dashboard or LLM. No production security guarantee is implied.

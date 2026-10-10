@@ -10,9 +10,12 @@ from engine.deployments import LocalRunner, DeploymentError
 
 
 def report(decision='ALLOW'):
-    return dict(schema_version='3.0', decision=decision, scan_status='SUCCESS',
-                **{key:dict(decision='ALLOW',scan_status='SUCCESS')
-                   for key in ('docker_compose','semgrep','gitleaks')})
+    payload = json.loads((security.GATE_ROOT / 'examples' / 'normal-v3.json').read_text())
+    payload['decision'] = decision
+    payload['scan_status'] = 'FAILED' if decision == 'SCAN_FAILED' else 'SUCCESS'
+    payload['reason_code'] = {'ALLOW':'ALL_APPLICABLE_CHECKS_PASSED', 'DENY':'RISK_DETECTED',
+                              'REVIEW':'REVIEW_REQUIRED', 'SCAN_FAILED':'REQUIRED_SCAN_FAILED'}[decision]
+    return payload
 
 
 @pytest.mark.parametrize('decision', ['ALLOW','DENY','REVIEW','SCAN_FAILED'])
@@ -93,3 +96,31 @@ def test_image_plan_api_rejects_before_llm(client,repository,monkeypatch):
     monkeypatch.setattr(security,'require_allow',lambda _:(_ for _ in ()).throw(security.SecurityGateError('REVIEW')))
     response=client.post(f'/api/projects/{project}/image-plans',json={})
     assert response.status_code==400 and 'REVIEW' in response.json()['detail']
+
+
+def no_compose_report():
+    payload = report()
+    payload['docker_compose'].update(decision='REVIEW', scan_status='NOT_APPLICABLE', files=[], errors=[])
+    return payload
+
+
+def test_compose_not_applicable_accepts_successful_required_scanners(monkeypatch, tmp_path):
+    payload = no_compose_report()
+    monkeypatch.setattr(security.subprocess, 'run', lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps(payload)))
+    assert security.require_allow(tmp_path) == {'schema_version':'3.0', 'decision':'ALLOW', 'scan_status':'SUCCESS'}
+
+
+@pytest.mark.parametrize('defect', ['compose_error', 'compose_files', 'compose_failed',
+    'semgrep_na', 'gitleaks_na', 'missing_tool', 'missing_field', 'coverage_gap'])
+def test_no_compose_never_weakens_required_checks(monkeypatch, tmp_path, defect):
+    payload = no_compose_report()
+    if defect == 'compose_error': payload['docker_compose']['errors'] = ['ACCESS_DENIED']
+    elif defect == 'compose_files': payload['docker_compose']['files'] = report()['docker_compose']['files']
+    elif defect == 'compose_failed': payload['docker_compose']['scan_status'] = 'FAILED'
+    elif defect.endswith('_na'):
+        payload[defect[:-3]].update(decision='REVIEW', scan_status='NOT_APPLICABLE', scanned_files=0)
+    elif defect == 'missing_tool': del payload['gitleaks']
+    elif defect == 'missing_field': del payload['semgrep']['scanned_files']
+    elif defect == 'coverage_gap': payload['semgrep']['unsupported_files'] = 1
+    monkeypatch.setattr(security.subprocess, 'run', lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps(payload)))
+    with pytest.raises(security.SecurityGateError, match='SCAN_FAILED'): security.require_allow(tmp_path)

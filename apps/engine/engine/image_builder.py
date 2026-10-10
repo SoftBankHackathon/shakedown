@@ -162,7 +162,9 @@ def snapshot(source,destination, *, security=False):
 def checked_source(root):
     from engine.security import require_allow
     with tempfile.TemporaryDirectory(prefix='shakedown-security-') as directory:
-        staged=Path(directory)/'source'
+        # macOS exposes its private temporary directory through /var -> /private/var.
+        # Canonicalize only our newly-created snapshot, not an untrusted input path.
+        staged=Path(directory).resolve()/'source'
         # Scan secrets too, before excluding them from the Docker context.
         snapshot(root,staged,security=True)
         report=require_allow(staged)
