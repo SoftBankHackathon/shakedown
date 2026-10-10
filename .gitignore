@@ -163,3 +163,6 @@ __pycache__/
 build/
 out/
 !gradle/wrapper/gradle-wrapper.jar
+
+# HTTPS operator configuration and credentials remain local
+infra/https/config.json

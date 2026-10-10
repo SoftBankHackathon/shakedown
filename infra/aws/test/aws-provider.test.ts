@@ -271,3 +271,26 @@ test('all three Mongo bootstrap scripts match source and retry replica initializ
  assert.ok(source.includes('if docker exec shakedown-mongo mongosh --quiet --tls --tlsCAFile /security/ca.pem /tmp/configure.js'));
  assert.equal(f.Resources.MongoSnapshotPolicy.Condition,'WithMongoSnapshots');
 });
+
+test('HTTPS bridge gates deploy/redeploy/stop and publishes only the registered HTTPS URL', async t => {
+  const fake=setup();fake.provider.config={...config,httpsControlUrl:'http://127.0.0.1:9301'};
+  const gates:boolean[]=[];let secure=403;
+  t.mock.method(globalThis,'fetch',async(url:unknown,options:RequestInit)=>{
+    if(String(url).includes(':9301/')){
+      const open=JSON.parse(String(options.body)).open;gates.push(open);secure=open?200:403;
+      return Response.json({configured:true,url:'https://app.example.com',blocked:!open});
+    }
+    assert.equal(new URL(String(url)).hostname,'app.example.com');
+    return new Response('',{status:secure});
+  });
+  const first=await fake.provider.deploy(request,AbortSignal.timeout(2000),()=>{});
+  assert.equal(first.url,'https://app.example.com');assert.equal(first.info.transport,'HTTPS (edge)');
+  await fake.provider.deploy({...request,deployment_id:'dep_retry'},AbortSignal.timeout(2000),()=>{});
+  await fake.provider.stop(()=>{});assert.equal(secure,403);assert.deepEqual(gates,[false,true,false,true,false]);
+});
+test('unavailable HTTPS control fails closed on HTTP and does not start a task',async t=>{
+  const fake=setup();fake.provider.config={...config,httpsControlUrl:'http://127.0.0.1:9301'};
+  t.mock.method(globalThis,'fetch',async()=>new Response('',{status:503}));
+  await assert.rejects(fake.provider.deploy(request,AbortSignal.timeout(2000),()=>{}),/HTTPS gate/);
+  assert.equal(fake.route,403);assert.ok(!fake.actions.includes('CreateServiceCommand'));
+});

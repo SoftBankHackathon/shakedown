@@ -1,7 +1,11 @@
 {
   "name": "shakedown",
   "private": true,
-  "workspaces": ["apps/*", "packages/*", "infra/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "infra/*"
+  ],
   "scripts": {
     "dev:aws": "npm run dev -w @shakedown/aws",
     "test:aws": "npm run test -w @shakedown/aws",
@@ -15,6 +19,9 @@
     "dev:web": "npm run dev -w @shakedown/web",
     "dev:web:live": "npm run dev:live -w @shakedown/web",
     "build:web": "npm run build -w @shakedown/web",
-    "lint:web": "npm run lint -w @shakedown/web"
+    "lint:web": "npm run lint -w @shakedown/web",
+    "dev:https": "npm run dev -w @shakedown/https",
+    "test:https": "npm run test -w @shakedown/https",
+    "check:https": "npm run check -w @shakedown/https"
   }
 }

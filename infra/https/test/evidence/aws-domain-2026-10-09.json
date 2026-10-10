@@ -1,0 +1,18 @@
+{
+  "checked_at": "2026-10-09T14:04:13.978653+00:00",
+  "domain": "softbank.jaehwan.kr",
+  "method": "GET /",
+  "read_only": true,
+  "addresses": [
+    "168.107.12.64"
+  ],
+  "http": {
+    "status": 404,
+    "server": "nginx/1.24.0 (Ubuntu)",
+    "location": null
+  },
+  "https": {
+    "error": "[SSL: TLSV1_UNRECOGNIZED_NAME] tlsv1 unrecognized name (_ssl.c:1082)",
+    "type": "SSLError"
+  }
+}

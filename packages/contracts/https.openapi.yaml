@@ -1,0 +1,233 @@
+openapi: 3.1.0
+info:
+  title: Shakedown HTTPS control
+  version: 0.1.0
+  description: Loopback service; engine exposes the same paths prefixed with /api. DNS is registered manually.
+servers:
+  - url: http://127.0.0.1:9301
+security: []
+paths:
+  /projects/{id}/targets/{target}/https:
+    parameters:
+      - $ref: "#/components/parameters/Project"
+      - $ref: "#/components/parameters/Target"
+    get:
+      operationId: getHttps
+      summary: Read certificate, DNS instructions and real verification state
+      responses:
+        "200":
+          $ref: "#/components/responses/Binding"
+        "404":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: configureHttps
+      summary: Start or reuse a durable HTTPS binding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [domain]
+              properties:
+                domain:
+                  type: string
+                  maxLength: 253
+                  examples: [app.example.com]
+                local_mode:
+                  type: string
+                  enum: [tunnel, caddy]
+      responses:
+        "202":
+          $ref: "#/components/responses/Binding"
+        "400":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /projects/{id}/targets/{target}/https/recheck:
+    parameters:
+      - $ref: "#/components/parameters/Project"
+      - $ref: "#/components/parameters/Target"
+    post:
+      operationId: recheckHttps
+      summary: Resume checks and renew the 24-hour waiting deadline
+      responses:
+        "202":
+          $ref: "#/components/responses/Binding"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+components:
+  parameters:
+    Project:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[a-zA-Z0-9_-]{1,64}$"
+    Target:
+      name: target
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [aws, azure, gcp, local]
+  responses:
+    Binding:
+      description: Stored binding; ready certifies HTTPS, not the application test verdict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Binding"
+    Error:
+      description: Sanitized error without credentials or command output
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message]
+            properties:
+              code:
+                type: string
+              message:
+                type: string
+  schemas:
+    Binding:
+      type: object
+      required:
+        [
+          binding_id,
+          project_id,
+          target,
+          kind,
+          domain,
+          status,
+          dns_records,
+          origin_url,
+          deployment_origin,
+          checks,
+          created_at,
+          updated_at,
+          next_check_at,
+          deadline,
+          internal_transport,
+        ]
+      properties:
+        binding_id:
+          type: string
+        project_id:
+          type: string
+        target:
+          type: string
+          enum: [aws, azure, gcp, local]
+        kind:
+          type: string
+          enum:
+            [
+              aws-alb,
+              azure-container-apps,
+              azure-app-service,
+              gcp-alb,
+              cloudflare-tunnel,
+              caddy,
+            ]
+        domain:
+          type: string
+        status:
+          type: string
+          enum:
+            [
+              preflight,
+              dns_pending,
+              certificate_pending,
+              applying,
+              verifying,
+              ready,
+              needs_action,
+              failed,
+            ]
+        dns_records:
+          type: array
+          items:
+            type: object
+            required: [type, name, value, purpose]
+            properties:
+              type:
+                type: string
+                enum: [A, CNAME, TXT]
+              name:
+                type: string
+              value:
+                type: string
+              purpose:
+                type: string
+                enum: [routing, ownership]
+              note:
+                type: string
+        https_url:
+          type: string
+          format: uri
+        origin_url:
+          type: string
+          format: uri
+        deployment_origin:
+          type: string
+          format: uri
+        certificate:
+          type: object
+          required: [renewal]
+          properties:
+            issuer:
+              type: string
+            expires_at:
+              type: string
+              format: date-time
+            fingerprint:
+              type: string
+            renewal:
+              type: string
+              const: managed
+        checks:
+          type: array
+          items:
+            type: object
+            required: [name, ok, detail]
+            properties:
+              name:
+                type: string
+              ok:
+                type: boolean
+              detail:
+                type: string
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+        traffic_blocked:
+          type: [boolean, "null"]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        checked_at:
+          type: string
+          format: date-time
+        next_check_at:
+          type: string
+          format: date-time
+        deadline:
+          type: string
+          format: date-time
+        internal_transport:
+          type: string
+          enum: [http, https, unverified]

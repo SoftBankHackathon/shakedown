@@ -25,6 +25,35 @@ class Aws:
         if path.endswith('/logs'): return []
         return {'status': 'ready', 'url': 'http://evil.example' if self.fail == 'url' else URL, 'instances':2}
 
+@pytest.mark.parametrize('reported', [URL, 'https://app.example.com'])
+@pytest.mark.parametrize('verdict', ['PASS', 'BLOCKED'])
+def test_aws_https_flows_into_shakedown_and_blocked_still_collects_logs_before_delete(project, tmp_path, reported, verdict):
+    import httpx
+    from engine.https_client import HttpsClient
+    class SecureAws(Aws):
+        def call(self, method, path, body=None):
+            result = super().call(method, path, body)
+            if result and isinstance(result, dict) and result.get('status') == 'ready':
+                result['url'] = reported
+            return result
+    aws = SecureAws(); sd = Shakedown(verdict)
+    ds = DeploymentStore(tmp_path/'https.db', Runner(), aws=aws, shakedown=sd, poll_seconds=.001)
+    def registry(request):
+        if '/targets/local/' in request.url.path: return httpx.Response(404)
+        return httpx.Response(200, json={'project_id':project.id,'target':'aws','status':'ready',
+            'domain':'app.example.com','https_url':'https://app.example.com','origin_url':URL,
+            'certificate':{'expires_at':'2099-01-01T00:00:00Z'},'checked_at':'2026-10-09T00:00:00Z',
+            'traffic_blocked':False})
+    ds.https = HttpsClient('http://127.0.0.1:9301', httpx.MockTransport(registry))
+    try:
+        d = wait(ds, ds.start(project, DeployRequest(targets=['local','aws'],shakedown=True))['id'])
+        assert d['status'] == ('promoted' if verdict == 'PASS' else 'blocked')
+        assert sd.calls[0][2]['candidates'][0] == {'name':'aws','url':'https://app.example.com'}
+        if verdict == 'BLOCKED':
+            assert aws.calls[-2][1].endswith('/logs') and aws.calls[-1][0] == 'DELETE'
+            assert d['traffic_blocked'] is True
+    finally: ds.close()
+
 @pytest.mark.parametrize('targets', [['aws'], ['local', 'aws']])
 def test_selected_targets_use_digest_and_real_comparison(project, tmp_path, targets):
     aws = Aws(); local = Runner(); sd = Shakedown()

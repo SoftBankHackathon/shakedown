@@ -4,6 +4,7 @@ import Link from "next/link";
 import { RuntimeSettings } from "@/components/runtime-settings";
 import { ArchitecturePlanner } from "@/components/architecture-planner";
 import { ImageBuilder } from "@/components/image-builder";
+import { HttpsSettings } from "@/components/https-settings";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useT } from "@/components/i18n";
@@ -216,6 +217,7 @@ export default function ProjectPage() {
       <ArchitecturePlanner key={id+JSON.stringify(project.runtime)} projectId={id} />
       <ImageBuilder projectId={id} />
 
+      <HttpsSettings projectId={id} />
       <Section title={t("project.deployments")}>
         {deps.length === 0 && <p className="text-sm text-muted">{t("project.noDeployments")}</p>}
         <ul className="divide-y divide-line">
