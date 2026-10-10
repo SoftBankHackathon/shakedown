@@ -19,9 +19,10 @@ export type RunContainer = {
 export type RunVpcAccess = { networkInterfaces: { network: string; subnetwork: string }[]; egress: 'PRIVATE_RANGES_ONLY' | 'ALL_TRAFFIC' };
 export type RunCondition = { type?: string; state?: string; message?: string };
 // Cloud Run v2 Service 중 우리가 쓰는 칸만 적는다. uri부터는 GCP가 채우는 읽기 전용 값이다(int64는 JSON에서 문자열).
+// scaling(서비스 수준)과 template.scaling(리비전 수준)은 따로다. 자동 확장의 실제 상한은 두 max 중 작은 값이다.
 export type RunService = {
-  template: { revision?: string; containers: RunContainer[]; vpcAccess?: RunVpcAccess; sessionAffinity?: boolean };
-  scaling?: { scalingMode?: 'AUTOMATIC' | 'MANUAL'; manualInstanceCount?: number };
+  template: { revision?: string; containers: RunContainer[]; vpcAccess?: RunVpcAccess; sessionAffinity?: boolean; scaling?: { minInstanceCount?: number; maxInstanceCount?: number } };
+  scaling?: { scalingMode?: 'AUTOMATIC' | 'MANUAL'; manualInstanceCount?: number; minInstanceCount?: number; maxInstanceCount?: number };
   invokerIamDisabled?: boolean;
   uri?: string; generation?: string; observedGeneration?: string; reconciling?: boolean;
   latestReadyRevision?: string; latestCreatedRevision?: string; terminalCondition?: RunCondition;

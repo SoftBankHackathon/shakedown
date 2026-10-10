@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { architectures, type Tier } from './architecture.js';
 import type { Config } from './config.js';
 import { validateRequest } from './config.js';
 import type { CloudRun, RunEnv, RunJob, RunService, RunVpcAccess } from './cloud-run.js';
@@ -45,6 +46,7 @@ export class GcpProvider implements Provider {
 
   private env(request: DeployRequest, initialize: boolean): RunEnv[] {
     const c = this.config;
+    const pool = request.architecture && !initialize ? architectures[request.architecture.template_id].pool : undefined;
     return [
       ...Object.entries({
         SPRING_DATASOURCE_URL: `jdbc:postgresql://${c.dbHost}:5432/${c.dbName}`,
@@ -53,6 +55,9 @@ export class GcpProvider implements Provider {
         SPRING_JPA_HIBERNATE_DDL_AUTO: initialize ? 'update' : 'validate',
         SPRING_PROFILES_ACTIVE: initialize ? 'schema-init' : this.profile(request),
         TZ: request.options.tz,
+        // 계획 배포 앱만: 등급별 인스턴스당 DB 연결 풀(기본 10). 최대 대수까지 늘어도 지금 Cloud SQL 연결 한도 안에 든다(architecture.ts).
+        // 이름은 Spring 환경변수 규칙(점은 밑줄, 대시는 제거)을 따른다. schema Job, small, 계획 없는 배포는 기본값 그대로다.
+        ...(pool !== undefined ? { SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE: String(pool) } : {}),
       }).map(([name, value]) => ({ name, value })),
       // 비밀번호 값은 Cloud Run이 Secret Manager에서 직접 꺼낸다. 설정 파일·요청·로그 어디에도 값이 남지 않는다.
       { name: 'SPRING_DATASOURCE_PASSWORD', valueSource: { secretKeyRef: { secret: c.dbPasswordSecret, version: 'latest' } } },
@@ -78,6 +83,9 @@ export class GcpProvider implements Provider {
 
   private service(request: DeployRequest): RunService {
     const c = this.config;
+    // 계획이 없으면 지금까지와 같은 본문(설정 사양, 수동 대수)이다. 계획이 있으면 사양과 확장 방식은 카탈로그에서만 가져온다.
+    const spec = request.architecture ? architectures[request.architecture.template_id] : undefined;
+    const automatic = spec?.scaling === 'AUTOMATIC';
     return {
       template: {
         revision: this.revisionName(request.deployment_id),
@@ -87,13 +95,19 @@ export class GcpProvider implements Provider {
           ports: [{ containerPort: c.port }],
           env: this.env(request, false),
           // resources를 적으면 cpuIdle 기본값(true)이 꺼진다. 요청 기반 과금을 유지하려고 true를 적는다.
-          resources: { limits: { memory: c.memory, cpu: c.cpu }, cpuIdle: true },
+          resources: { limits: { memory: spec?.memory ?? c.memory, cpu: spec?.cpu ?? c.cpu }, cpuIdle: true },
         }],
         vpcAccess: this.vpcAccess(),
         sessionAffinity: request.options.sticky_sessions,
+        // 리비전 상한도 서비스 상한과 같게 적는다. 안 적으면 서버가 채운 값(2026-10-09 GET에서 3)이 남아 그보다 먼저 막는다.
+        ...(automatic ? { scaling: { maxInstanceCount: spec.max } } : {}),
       },
       // 수동 스케일링: 요청 대수를 그대로 띄우고, 0으로 바꾸면 새 리비전 없이 서비스가 꺼진다.
-      scaling: { scalingMode: 'MANUAL', manualInstanceCount: request.options.replicas },
+      // 자동 확장(계획 medium·large): min대를 늘 띄우고 부하(기본 CPU 60%)에 따라 max대까지 늘린다.
+      // 업데이트 마스크 없이 전체를 바꾸므로, 다음 계획 없는 배포는 min/max가 지워진 수동 모드로 돌아간다.
+      scaling: automatic
+        ? { scalingMode: 'AUTOMATIC', minInstanceCount: spec.min, maxInstanceCount: spec.max }
+        : { scalingMode: 'MANUAL', manualInstanceCount: request.options.replicas },
       // 공개 여부는 allUsers 권한 하나로만 다룬다. IAM 검사를 끄면 권한을 빼도 막히지 않는다.
       invokerIamDisabled: false,
     };
@@ -102,6 +116,7 @@ export class GcpProvider implements Provider {
   async deploy(request: DeployRequest, signal: AbortSignal, log: Log): Promise<ReadyResult> {
     // 직전 stop의 allUsers 제거가 아직 돌고 있으면, 그것이 이번 배포가 줄 권한을 나중에 지워 버릴 수 있다. 끝나길 먼저 기다린다.
     await this.closing;
+    const plan = request.architecture;
     const existing = await this.run.getService(signal);
     // IAM 반영은 보통 2분, 길면 7분이다. 서비스가 있으면 맨 앞에서 권한을 줘서 Job·갱신 시간 동안 반영되게 한다.
     if (existing) await phase('grant_public', log, () => this.run.setPublic(true, signal));
@@ -110,6 +125,10 @@ export class GcpProvider implements Provider {
     // 첫 배포는 서비스가 없어 권한을 붙일 곳이 없었다. 만든 직후에 준다.
     if (!existing) await phase('grant_public', log, () => this.run.setPublic(true, signal));
     const service = await phase('wait_ready', log, () => this.waitReady(request, signal));
+    // 공개 확인(public_health) 전에 실제로 적용된 확장 범위를 확인한다. 카탈로그와 다르면 여기서 실패하고 Manager가 0대로 내린다.
+    // "공개 전"은 아니다. 이미 있는 서비스는 grant_public이 맨 앞이라 이때 새 리비전이 이미 공개 주소로 트래픽을 받고 있다.
+    // 실패가 로그에서 이 단계로 보이게 phase로 감싼다. 계획 없는 배포는 확인할 범위가 없어 단계 로그도 전과 같다.
+    const scaling = plan ? await phase('verify_scaling', log, async () => this.actualScaling(architectures[plan.template_id], service)) : 'manual';
     await phase('public_health', log, () => this.waitHttp(request.health_path, signal));
     log('public health check passed: HTTP 200 without cookies');
     return { url: this.run.serviceUrl(), instances: request.options.replicas, info: {
@@ -118,8 +137,24 @@ export class GcpProvider implements Provider {
       sticky_sessions: String(request.options.sticky_sessions),
       image_digest: request.image.split('@')[1],
       revision: service.latestReadyRevision?.split('/').pop() ?? 'unknown',
-      scaling: 'manual',
+      scaling,
+      // 등급, 계획이 없으면 legacy(AWS·Azure 어댑터와 같은 키). DB 고가용성은 계획에만 있고 적용하지 않으므로 info에 적지 않는다.
+      architecture: plan?.template_id ?? 'legacy',
     } };
+  }
+
+  // 서버가 리비전 상한을 따로 채우는 일이 있다(2026-10-09 v2 GET에서 template.scaling.maxInstanceCount=3 확인).
+  // 실제 상한은 서비스·리비전 max 중 작은 값이라, 다시 읽은 범위가 카탈로그와 다르면 info와 화면이 거짓 범위를 보이지 않게 실패한다.
+  private actualScaling(spec: (typeof architectures)[Tier], service: RunService): string {
+    if (spec.scaling === 'MANUAL') return 'manual';
+    const min = service.scaling?.minInstanceCount;
+    const maxes = [service.scaling?.maxInstanceCount, service.template.scaling?.maxInstanceCount].filter((n): n is number => n !== undefined);
+    const max = maxes.length ? Math.min(...maxes) : undefined;
+    // 자동 확장은 API 기본 모드라 응답에서 scalingMode가 빠질 수 있다. MANUAL로 읽힐 때만 다른 것으로 본다.
+    if (service.scaling?.scalingMode === 'MANUAL' || min !== spec.min || max !== spec.max) {
+      throw new Error(`Cloud Run 자동 확장 범위가 카탈로그와 다릅니다: 기대 ${spec.min}-${spec.max}, 실제 ${service.scaling?.scalingMode ?? 'AUTOMATIC'} ${min ?? '?'}-${max ?? '?'}`);
+    }
+    return `automatic ${min}-${max}`;
   }
 
   private async waitReady(request: DeployRequest, signal: AbortSignal): Promise<RunService> {
