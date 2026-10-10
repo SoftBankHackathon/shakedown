@@ -1,4 +1,5 @@
 """Local and pre-provisioned cloud (AWS, Azure, GCP) orchestration. Never fabricates a shakedown verdict."""
+import re
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import json
@@ -78,6 +79,24 @@ class LocalRunner:
         # Deliberately fixed loopback destination; caller input cannot select an HTTP endpoint.
         from engine.https_client import target_address
         self.base = target_address('local', 'http://127.0.0.1:9101')
+
+    @staticmethod
+    def valid_url(value):
+        try:
+            parsed = urlsplit(value)
+            if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ('', '/'):
+                return False
+            configured = os.environ.get('LOCAL_PUBLIC_URL', '').rstrip('/')
+            if os.environ.get('LOCAL_DELIVERY_MODE', 'tunnel') == 'direct':
+                expected = urlsplit(configured)
+                return (expected.scheme in ('http', 'https') and bool(expected.hostname)
+                        and not expected.username and not expected.password
+                        and expected.path == '' and not expected.query and not expected.fragment
+                        and (parsed.scheme, parsed.hostname, parsed.port if parsed.port is not None else (443 if parsed.scheme == 'https' else 80))
+                        == (expected.scheme, expected.hostname, expected.port if expected.port is not None else (443 if expected.scheme == 'https' else 80)))
+            return parsed.scheme == 'https' and bool(re.fullmatch(r'[a-z0-9-]+\.trycloudflare\.com', parsed.hostname or '')) and parsed.port in (None, 443)
+        except (ValueError, TypeError):
+            return False
 
     @contextmanager
     def source(self, repo):
@@ -273,8 +292,7 @@ class DeploymentStore:
             state = runner.call('GET', '/deployments/' + self.target_id(d, target))
             if state.get('status') == 'failed': raise DeploymentError(f'{target} deployment failed; inspect its logs.')
             if state.get('status') == 'ready':
-                url = urlsplit(state.get('url', ''))
-                valid = (url.scheme == 'https' and (url.hostname or '').endswith('.trycloudflare.com')) if target == 'local' else runner.valid_url(state.get('url', ''))
+                valid = LocalRunner.valid_url(state.get('url', '')) if target == 'local' else runner.valid_url(state.get('url', ''))
                 # 사용자 도메인 HTTPS 바인딩이 준비돼 있으면 공개 주소를 그 주소로 바꾼다. 없으면 기존 검증(valid)대로 처리한다.
                 from engine.https_client import HttpsError
                 try:

@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile, rename, readdir, rm } from 'node:fs/promise
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DockerRuntime } from './runtime.mjs';
+import { deliveryConfig } from './delivery.mjs';
 
 const ID = /^dep_[a-z0-9]+$/;
 const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -96,6 +97,7 @@ export async function createService({ root, runtime }) {
           if (existing.deleted || (existing.fingerprint && existing.fingerprint !== fingerprint(input))) return respond(res,409,{error:'Deployment ID is deleted or belongs to another request'});
           return respond(res,202,existing.state);
         }
+        if (runtime.singleDeployment && [...records.values()].some(r=>!r.deleted)) return respond(res,409,{error:'Direct endpoint is reserved; delete the existing deployment before deploying another'});
         if ([...records.values()].some(r => r.project_id === input.project_id && ['pending','deploying'].includes(r.state.status))) return respond(res,409,{error:'Project deployment already in progress'});
         try { runtime.validate?.(input); } catch (error) { return respond(res,400,{error:error.message}); }
         const record = { fingerprint: fingerprint(input), project_id: input.project_id, state: { deployment_id:id,target:'local',status:'pending',started_at:new Date().toISOString() }, lines:[] };
@@ -141,7 +143,7 @@ export async function createService({ root, runtime }) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const root = path.resolve(process.env.LOCAL_DATA_DIR ?? path.join(path.dirname(fileURLToPath(import.meta.url)),'.data'));
   const secrets = process.env.LOCAL_SECRETS_FILE ? JSON.parse(await readFile(process.env.LOCAL_SECRETS_FILE,'utf8')) : {};
-  const runtime = new DockerRuntime(root,{password:process.env.LOCAL_DB_PASSWORD,secrets});
+  const runtime = new DockerRuntime(root,{delivery:deliveryConfig(process.env),password:process.env.LOCAL_DB_PASSWORD,secrets});
   const {server} = await createService({root,runtime});
   server.listen(Number(process.env.PORT ?? 9101),'127.0.0.1',()=>console.log(`Local target API: http://127.0.0.1:${server.address().port}`));
 }

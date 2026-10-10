@@ -8,7 +8,7 @@ info:
 
     배포 대상(인프라)이 구현하는 API. 엔진(apps/engine)이 호출합니다.
 
-    - `local` 구현: infra/local (김태윤) — Docker + Cloudflare Tunnel
+    - `local` 구현: infra/local (김태윤) — Docker + Cloudflare Tunnel 또는 운영자 지정 direct URL
     - `aws` 구현: infra/aws (김재환) — ECS Fargate + ALB + RDS
     - `gcp` 구현: infra/gcp (김태현) — Cloud Run + Cloud SQL PostgreSQL
 
@@ -17,7 +17,7 @@ info:
 
     약속
     - `ready`는 "컨테이너가 떴다"가 아니라 **`url`로 외부에서 접속해 health_path가 200을 준다**는 뜻
-    - `url`은 **공개 주소**여야 함 (로컬은 Tunnel 주소, AWS는 ALB 주소, GCP는 run.app 주소). localhost 금지
+    - `url`은 **엔진/시운전에서 접근 가능한 주소**여야 함 (로컬은 Tunnel 또는 운영자 지정 direct URL, AWS는 ALB 주소, GCP는 run.app 주소). direct URL은 엔진과 대상에 동일하게 설정하며 서버 자신도 health_path로 접근 가능해야 함
     - 비밀값(DB 비밀번호 등)은 `secret_refs`로 이름만 받고, 값은 인프라가 각자의 저장소에서 꺼냄
     - 같은 `deployment_id`로 다시 요청하면 새로 만들지 않고 기존 결과를 돌려줌(멱등)
 

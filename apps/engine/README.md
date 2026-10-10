@@ -286,3 +286,11 @@ gcloud auth application-default login
 GCP 빌드는 linux/amd64 단일 manifest이며 한 번 빌드해 `imagePrefixes[0]` 저장소의 `kty-board`에 push합니다. digest는 `gcloud artifacts docker images describe`로 레지스트리에서 읽고, 인증 중 로컬 Docker에 pull하여 두 대상에 같은 주소를 전달합니다. `gcloud auth print-access-token` 토큰은 표준입력으로만 넘겨 임시 Docker 설정에 로그인하고 끝나면 지웁니다. GCP 옵션은 replicas 1~2, sticky_sessions(Cloud Run 세션 어피니티, best-effort), tz입니다. 설정·gcloud 프로젝트·프로젝트 ID·포트·DB가 다르면 배포를 거절합니다. GCP 빌드도 Local·AWS와 같은 보안 검사(Security Gate)를 거칩니다. 실행 설정(runtime)을 저장한 프로젝트와 아키텍처 계획(`architecture_plan_id`)은 아직 GCP에서 지원하지 않아 거절합니다.
 
 BLOCKED의 GCP 정리는 서비스를 0대로 내리고, 공개 권한(`allUsers`) 회수는 어댑터가 뒤에서 처리합니다(IAM 반영 수 분). Cloud SQL·Artifact Registry 비용은 남으므로 `infra/gcp/README.md`의 "비용 멈추기"를 따릅니다.
+
+### Direct local/on-premises target
+
+Use matching `LOCAL_DELIVERY_MODE=direct` and `LOCAL_PUBLIC_URL` on both the engine
+and local target to allow a configured non-Tunnel endpoint. Only that exact HTTP(S)
+origin is accepted. See `infra/local/README.md` for host-port/firewall and systemd
+setup. The default remains Cloudflare Tunnel; this does not add remote Docker image
+transport or automatically provision an on-premises host.
