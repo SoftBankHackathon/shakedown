@@ -6,7 +6,7 @@ import { switchLine } from "./report.ts";
 import type { Verdict } from "./verdict.ts";
 
 // 가격 출처: claude-api 스킬 shared/models.md 모델 표(2026-09-25 캐시). claude-opus-5-5는 100만 토큰당 입력 $4, 출력 $20
-const MODEL = "claude-opus-5-5";
+export const MODEL = "claude-opus-5-5";
 const USD_PER_MTOK_IN = 4;
 const USD_PER_MTOK_OUT = 20;
 const USD_TO_KRW = 1400;
@@ -16,7 +16,7 @@ const MAX_RETRIES = 0;
 // Opus 5.5는 생각(thinking)을 끌 수 없고 그 토큰도 max_tokens에 들어가서, 보고서 길이보다 넉넉히 잡는다.
 const MAX_TOKENS = 4000;
 // fallbacks: "default"(거절 종류별로 서버가 대체 모델을 고름)는 이 날짜의 헤더와 짝이다. 배열 형식은 날짜가 달라 400이 난다.
-const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+export const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
 const CONFIDENCE = ["high", "medium", "low"];
 const FIX_TEXT_FIELDS = ["target", "option", "value", "description", "native"] as const;
@@ -72,6 +72,21 @@ export function aiOptionsFromEnv(env: Record<string, string | undefined> = proce
   return { apiKey: env.ANTHROPIC_API_KEY };
 }
 
+/** options로 Claude 클라이언트를 만든다. client도 키도 없으면 null(AI 꺼짐). AI 시나리오(ai-scenario.ts)도 같은 설정을 쓴다. */
+export function clientOf(options: AiOptions): Anthropic | null {
+  return options.client ?? (options.apiKey ? new Anthropic({ apiKey: options.apiKey, baseURL: options.baseURL, maxRetries: MAX_RETRIES }) : null);
+}
+
+/** 빈 비용. 필드가 늘 때 한곳만 고치게 비용 0은 이것으로 만든다. */
+export const noCost = (): CostLedger => ({ calls: 0, input_tokens: 0, output_tokens: 0, krw: 0 });
+
+/** 응답 한 번의 비용. 대시보드가 ₩{krw}로 그대로 찍으므로 소수 둘째 자리까지만 남긴다. */
+export function costOf(usage: { input_tokens: number; output_tokens: number }, usdToKrw = USD_TO_KRW): CostLedger {
+  const { input_tokens, output_tokens } = usage;
+  const krw = Math.round(((input_tokens * USD_PER_MTOK_IN + output_tokens * USD_PER_MTOK_OUT) * usdToKrw) / 1e4) / 100;
+  return { calls: 1, input_tokens, output_tokens, krw };
+}
+
 function side(r: StepResult) {
   return { final_path: r.final_path, final_status: r.final_status, failed_checks: r.checks.filter((c) => !c.ok).map((c) => c.detail) };
 }
@@ -91,7 +106,7 @@ function promptData(input: AiInput): string {
   return JSON.stringify({ diverging_steps: steps, rule_report: input.fallback, hints: input.hints ?? {} });
 }
 
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+export const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function isFix(v: unknown): v is Fix {
   return isObject(v) && FIX_TEXT_FIELDS.every((k) => typeof v[k] === "string") && typeof v.auto_applicable === "boolean";
@@ -138,11 +153,10 @@ function keepInstanceEvidence(report: Report, fallback: Report | null): Report {
 }
 
 export async function aiReport(input: AiInput, options: AiOptions): Promise<{ report: Report | null; cost: CostLedger }> {
-  const cost: CostLedger = { calls: 0, input_tokens: 0, output_tokens: 0, krw: 0 };
+  const cost = noCost();
   if (input.verdict.status !== "BLOCKED") return { report: null, cost };
 
-  const client =
-    options.client ?? (options.apiKey ? new Anthropic({ apiKey: options.apiKey, baseURL: options.baseURL, maxRetries: MAX_RETRIES }) : null);
+  const client = clientOf(options);
   if (!client) return { report: input.fallback, cost };
 
   const response = await client.beta.messages
@@ -165,11 +179,7 @@ export async function aiReport(input: AiInput, options: AiOptions): Promise<{ re
     });
   if (!response) return { report: input.fallback, cost };
 
-  const { input_tokens, output_tokens } = response.usage;
-  const usdToKrw = options.usdToKrw ?? USD_TO_KRW;
-  // 대시보드가 ₩{krw}로 그대로 찍으므로 소수 둘째 자리까지만 남긴다.
-  const krw = Math.round(((input_tokens * USD_PER_MTOK_IN + output_tokens * USD_PER_MTOK_OUT) * usdToKrw) / 1e4) / 100;
-  const spent = { calls: 1, input_tokens, output_tokens, krw };
+  const spent = costOf(response.usage, options.usdToKrw);
 
   // 거절이면 content가 비었거나 스키마를 안 지킬 수 있어서, 내용을 읽기 전에 거른다.
   if (response.stop_reason === "refusal") return { report: input.fallback, cost: spent };

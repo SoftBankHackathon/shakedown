@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes } from "node:crypto";
 import type { CostLedger, Report, Scenario, StepDiff } from "@shakedown/contracts";
 import { runShakedown, type ShakedownInput, type Target } from "./shakedown.ts";
-import { defaultScenario } from "./scenario.ts";
+import { defaultScenario, isScenario } from "./scenario.ts";
 import type { Verdict } from "./verdict.ts";
 import { waitUntilReachable } from "./preflight.ts";
 import { ruleReport } from "./report.ts";
@@ -33,7 +33,6 @@ const DEFAULT_REACH_WAIT_MS = 20_000;
 const AI_MARGIN_MS = 2_000;
 const AI_MIN_MS = 1_000;
 const AI_TIMEOUT_MS = 20_000;
-const ACTIONS = new Set(["visit", "submit_form", "click_link"]);
 // 시나리오 하나는 수십 KB면 충분하다. 큰 본문을 끝까지 메모리에 쌓지 않게 막는다.
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -59,15 +58,6 @@ function isTarget(value: unknown): value is Target {
   return (
     typeof t?.name === "string" && t.name !== "" &&
     typeof t.url === "string" && /^https?:\/\//.test(t.url) && URL.canParse(t.url)
-  );
-}
-
-// 단계가 0개인 시나리오는 아무것도 안 하고 PASS가 되므로 받지 않는다.
-function isScenario(value: unknown): value is Scenario {
-  const s = value as Partial<Scenario> | null;
-  return (
-    Array.isArray(s?.steps) && s.steps.length > 0 &&
-    s.steps.every((step) => typeof step?.title === "string" && ACTIONS.has(step.action))
   );
 }
 

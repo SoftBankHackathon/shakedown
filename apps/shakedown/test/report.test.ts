@@ -207,6 +207,14 @@ test("링크를 못 찾은 실패는 'request failed:'로 시작해도 접속 �
   assert.deepEqual(report?.evidence, [`Step 7 (Open the new post) worked on local (ended on /posts/11) but not on aws (${error}).`]);
 });
 
+test("삭제·로그아웃이라 보내지 않은 단계는 'request failed:'로 시작해도 접속 실패가 아니다", () => {
+  const steps = withNames(fixture.attempts[1].steps);
+  const error = 'request failed: link "post" goes to /posts/3/delete, which looks unsafe (delete, log out, admin or payment); not followed';
+  steps[6] = { ...steps[6], kind: "env_diff", severity: "critical", cloud: { ...steps[6].cloud, status: "failed", error, final_path: null, final_status: null, hops: [], checks: [] } };
+  const report = ruleReport(steps, { status: "BLOCKED", first_divergence: 7, summary: "" });
+  assert.notEqual(report?.headline, "aws is not reachable");
+});
+
 const boards: Array<{ close: () => Promise<void> }> = [];
 after(() => Promise.all(boards.map((b) => b.close())));
 

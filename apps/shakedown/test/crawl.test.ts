@@ -42,11 +42,13 @@ test("같은 출처 링크만 따라가고 로그아웃·삭제·관리자·결�
         <a href="#top">Top</a>
         <form action="/search" method="get"><input name="q"></form>
         <form action="/items/3/delete" method="post"></form><form action="/checkout" method="post"></form>`,
-      "/products": `<title>Products</title><a href="/about">About</a><a href="/products?page=2">Next</a>`,
+      "/products": `<title>Products</title><a href="/about">About</a><a href="/products?page=2">Next</a>
+        <a href="/badminton">Badminton</a><a href="/administrator">Administrator</a><a href="/payments">Payments</a>`,
     },
   });
   const pages = await crawl(a.url);
-  assert.deepEqual(pages.map((p) => p.path), ["/", "/products", "/about"]);
+  // /badminton의 admin은 낱말이 아니라서 연다.
+  assert.deepEqual(pages.map((p) => p.path), ["/", "/products", "/about", "/badminton"]);
   assert.deepEqual(pages[0].links, [
     { text: "Products", path: "/products" },
     { text: "Top", path: "/" },

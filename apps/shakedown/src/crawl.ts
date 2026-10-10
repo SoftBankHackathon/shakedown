@@ -5,6 +5,7 @@ import type { Scenario } from "@shakedown/contracts";
 import { createSession } from "./http.ts";
 import { normalizePath } from "./compare.ts";
 import { listForms, listLinks, pageText, pageTitle, type FormSummary } from "./html.ts";
+import { isForbidden } from "./steps.ts";
 
 export type CrawledPage = {
   /** 연 경로 */
@@ -27,12 +28,8 @@ const CRAWL_MS = 15_000;
 const MAX_LINKS = 30;
 const TEXT_CHARS = 300;
 
-/** GET이어도 상태를 바꾸는 흔한 주소(로그아웃·삭제). 둘러보기에서 열지 않고, AI 시나리오에서도 받지 않는다. */
-export const UNSAFE = /log-?out|sign-?out|delete|remove|destroy/i;
 // 화면이 아닌 정적 파일은 비교할 사용자 흐름이 아니다.
 const STATIC = /\.(css|js|mjs|map|png|jpe?g|gif|svg|ico|webp|woff2?|ttf|eot|pdf|zip|txt|xml)$/i;
-/** 관리자·결제 기능. 시운전이 건드리면 안 되므로 둘러보기에서 열지 않고 AI에게도 주지 않는다(AI 시나리오에 있으면 버린다). */
-export const OFF_LIMITS = /admin|checkout|payment|billing|purchase/i;
 // 데이터마다 다른 경로 칸(숫자·ObjectId·UUID)이 있는 주소. 칸을 고르는 규칙은 단계 비교(compare.ts)와 같다.
 export const isDataPath = (path: string) => normalizePath(path) !== path;
 // 경로만 남긴다. 쿼리와 ;jsessionid=… 같은 경로 매개변수는 세션마다 달라서 같은 화면이 다른 주소로 두 번 열리지 않게 뗀다.
@@ -46,7 +43,7 @@ export function follow(href: string, from: URL): string | null {
   if (!URL.canParse(href, from)) return null;
   const url = new URL(href, from);
   const path = pathOnly(url);
-  if (url.origin !== from.origin || STATIC.test(path) || UNSAFE.test(path) || OFF_LIMITS.test(path)) return null;
+  if (url.origin !== from.origin || STATIC.test(path) || isForbidden(path)) return null;
   // 데이터마다 다른 주소는 빼낸다. 환경마다 DB가 따로라 기준 환경의 /posts/6·?id=6·?page=2가 비교 환경엔 없어 거짓 차단이 된다.
   // 쿼리가 붙은 링크는 대개 이런 주소(번호·검색·쪽 번호)라서 따라가지 않는다. slug(/posts/my-first-post)는 모양으로 알 수 없어 남는다.
   if (url.search || isDataPath(path)) return null;
@@ -91,7 +88,7 @@ export async function crawl(baseUrl: string, options: { healthPath?: unknown; ti
         title: pageTitle(page.html),
         text: pageText(page.html).slice(0, TEXT_CHARS),
         links: [...links].slice(0, MAX_LINKS).map(([to, text]) => ({ text, path: to })),
-        forms: listForms(page.html).filter((f) => !UNSAFE.test(f.action) && !OFF_LIMITS.test(f.action)),
+        forms: listForms(page.html).filter((f) => !isForbidden(f.action)),
         error: null,
       });
     } catch (err) {

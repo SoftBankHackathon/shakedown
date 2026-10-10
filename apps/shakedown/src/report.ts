@@ -31,13 +31,13 @@ function outcome(r: StepResult): string {
   return r.error ? `ended on ${r.final_path}, ${r.error}` : `ended on ${r.final_path}`;
 }
 
-// steps.ts는 폼·링크를 못 찾거나 리다이렉트가 너무 많을 때도 "request failed:"를 붙인다. 이건 접속 실패가 아니다.
+// steps.ts는 폼·링크를 못 찾거나, 삭제·로그아웃이라 보내지 않았거나, 리다이렉트가 너무 많을 때도 "request failed:"를 붙인다. 이건 접속 실패가 아니다.
 function isUnreachable(r: StepResult): boolean {
   return (
     r.final_status === null &&
     r.error !== null &&
     r.error.startsWith("request failed:") &&
-    !/not found on the current page|too many redirects/.test(r.error)
+    !/not found on the current page|looks unsafe|too many redirects/.test(r.error)
   );
 }
 
