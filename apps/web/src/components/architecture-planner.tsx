@@ -45,7 +45,7 @@ export function ArchitecturePlanner({projectId}:{projectId:string}) {
     }catch(e){setError(e instanceof Error?e.message:String(e));setBusy(false);}
   }
   if(MOCK)return null;
-  return <section id="architecture-planner" className="card p-5 space-y-5 scroll-mt-20">
+  return <section id="architecture-planner" className="panel panel-body space-y-5 scroll-mt-20">
     <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold text-lg">AWS 아키텍처 판단</h2><Link href="/settings" className="text-sm text-accent hover:underline">AI API 설정</Link></div>
     <p className="max-w-3xl text-sm text-muted">저장소의 구조와 운영 요구를 함께 보고 소·중·대 설계안을 비교합니다. 현재는 HTTP 컨테이너 서비스용 설계 판단을 지원하며, 선택을 저장한 뒤 아래 배포 버튼으로 해당 구성을 AWS에 적용할 수 있습니다. 선택 저장만으로는 과금 자원을 변경하지 않습니다.</p>
     <fieldset disabled={busy||loading} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 disabled:opacity-60">
@@ -65,7 +65,7 @@ export function ArchitecturePlanner({projectId}:{projectId:string}) {
       </select></label>
       <label className="flex items-center gap-2 text-sm self-end pb-2"><input type="checkbox" checked={form.use_ai} onChange={e=>change({use_ai:e.target.checked})}/>연결된 Claude로 판단</label>
     </fieldset>
-    <div className="space-y-2"><button disabled={busy||loading} onClick={()=>void request()} className="rounded-lg bg-accent text-white px-4 py-2 text-sm disabled:opacity-50">{busy?"처리 중…":"아키텍처 판단하기"}</button>
+    <div className="space-y-2"><button disabled={busy||loading} onClick={()=>void request()} className="button primary">{busy?"처리 중…":"아키텍처 판단하기"}</button>
       <p className="text-xs text-muted">AI 연결 시 요청당 1회 호출하며 요금이 발생할 수 있습니다. 운영 입력과 스택·DB·의존성·README 키워드 등 추출 정보만 전송합니다. 미연결 시 규칙 판단을 사용합니다.</p></div>
     {error&&<p role="alert" className="text-sm text-bad">{error}</p>}
     {plan&&<div className="space-y-4 border-t border-line pt-4">
@@ -81,10 +81,10 @@ export function ArchitecturePlanner({projectId}:{projectId:string}) {
           <tr className="border-b border-line"><th className="p-2 font-normal text-muted">확장</th>{plan.templates.map(t=><td className="p-2" key={t.id}>{t.autoscaling?"CPU 목표 추적 자동 확장":"고정 용량"}</td>)}</tr>
           <tr className="border-b border-line"><th className="p-2 font-normal text-muted">데이터 계층</th>{plan.templates.map(t=><td className="p-2 align-top" key={t.id}>{t.database}</td>)}</tr>
           <tr className="border-b border-line"><th className="p-2 font-normal text-muted">검토 사항</th>{plan.templates.map(t=><td className="p-2 align-top text-xs text-muted max-w-64" key={t.id}>{t.tradeoff}</td>)}</tr>
-          <tr><th className="p-2 font-normal text-muted">설계안 저장</th>{plan.templates.map(t=><td className="p-2" key={t.id}><button disabled={busy||loading||dirty||!!plan.assessment.blockers.length||!!plan.assessment.missing_inputs.length||!plan.assessment.eligible_templates.includes(t.id)} onClick={()=>void request(t.id)} className="rounded border border-accent px-3 py-2 text-accent disabled:opacity-40">{plan.selected_template===t.id?"선택됨":"이 설계 선택"}</button></td>)}</tr>
+          <tr><th className="p-2 font-normal text-muted">설계안 저장</th>{plan.templates.map(t=><td className="p-2" key={t.id}><button disabled={busy||loading||dirty||!!plan.assessment.blockers.length||!!plan.assessment.missing_inputs.length||!plan.assessment.eligible_templates.includes(t.id)} onClick={()=>void request(t.id)} className="button secondary">{plan.selected_template===t.id?"선택됨":"이 설계 선택"}</button></td>)}</tr>
         </tbody></table></div>
       <p className="text-sm text-muted">{plan.deployment.reason}</p>
-      {plan.selected_template&&<div className="space-y-2"><button disabled={busy||dirty||!plan.deployment.ready} onClick={()=>void deploySelected()} className="rounded-lg bg-accent px-4 py-2 text-sm text-white disabled:opacity-40">{busy?"배포 준비 중…":`${plan.selected_template} 구성으로 AWS 배포`}</button><p className="text-xs text-muted">기존 앱 배포를 교체합니다. 관리형 PostgreSQL을 사용하는 경우 RDS 가용성도 변경합니다. 배포 준비 중 접근이 중단되며 AWS 요금이 발생합니다. 배포 중지는 앱을 멈추지만 DB와 기반 스택은 유지합니다.</p></div>}
+      {plan.selected_template&&<div className="space-y-2"><button disabled={busy||dirty||!plan.deployment.ready} onClick={()=>void deploySelected()} className="button primary">{busy?"배포 준비 중…":`${plan.selected_template} 구성으로 AWS 배포`}</button><p className="text-xs text-muted">기존 앱 배포를 교체합니다. 관리형 PostgreSQL을 사용하는 경우 RDS 가용성도 변경합니다. 배포 준비 중 접근이 중단되며 AWS 요금이 발생합니다. 배포 중지는 앱을 멈추지만 DB와 기반 스택은 유지합니다.</p></div>}
       <details className="text-xs text-muted"><summary className="cursor-pointer">분석 근거와 주의사항</summary><ul className="mt-2 space-y-1">{plan.assessment.warnings.map((w,i)=><li key={i}>{w}</li>)}</ul><p className="mt-2">감지 스택: {plan.facts.stack} / 서비스 형태: {plan.facts.workload}</p><ul className="mt-2 space-y-1">{plan.facts.evidence.map(e=><li key={e.id}>{e.id}: {JSON.stringify(e.value)} ({e.source})</li>)}</ul></details>
     </div>}
   </section>;

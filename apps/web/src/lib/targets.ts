@@ -8,7 +8,7 @@ export type TargetInfo = {
   available: boolean;
   /** Selected by default on import. */
   default: boolean;
-  /** The engine accepts sticky sessions for this target (Azure: Container Apps ingress affinity, GCP: Cloud Run session affinity). */
+  /** The engine accepts sticky sessions for this target (Azure: Container Apps ingress affinity). */
   sticky?: boolean;
 };
 
@@ -23,10 +23,9 @@ export const TARGETS: TargetInfo[] = [
 
 export const DEFAULT_TARGETS = TARGETS.filter((t) => t.default).map((t) => t.id);
 
-/** Live selection with `id` turned on. The engine never deploys GCP together with another cloud, so picking GCP drops AWS/Azure and picking either drops GCP. */
+/** Selection with `id` turned on, kept in catalog order. Every available target can be selected together (UI mockup; the engine still answers 400 for more than one cloud). */
 export function pickTarget(current: TargetName[], id: TargetName): TargetName[] {
-  const clash = (x: TargetName) => x !== "local" && id !== "local" && (x === "gcp" || id === "gcp");
-  return TARGETS.filter((t) => t.id === id || (current.includes(t.id) && !clash(t.id))).map((t) => t.id);
+  return TARGETS.filter((t) => t.id === id || current.includes(t.id)).map((t) => t.id);
 }
 
 /** Starting options for a compared target: two instances in UTC, the setup that exposes environment differences. */

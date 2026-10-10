@@ -25,7 +25,7 @@ export function RuntimeSettings({project,onSaved}:{project:Project;onSaved:(p:Pr
       onSaved(data);setMessage('저장했어요. 아키텍처 설계는 새 설정으로 다시 판단하세요.');
     }catch(e){setMessage(e instanceof Error?e.message:String(e));}finally{setBusy(false);}
   }
-  return <section className="card p-5 space-y-4"><h2 className="font-semibold text-lg">HTTP 앱 실행 설정</h2>
+  return <section className="panel panel-body space-y-4"><h2 className="font-semibold text-lg">HTTP 앱 실행 설정</h2>
     <p className="text-sm text-muted">언어와 관계없이 단일 HTTP 컨테이너를 실행합니다. 앱은 0.0.0.0에서 연결을 받고 헬스체크에 200을 반환해야 합니다. 저장 전에는 기존 샘플 배포 설정을 사용합니다.</p>
     <fieldset disabled={busy} className="space-y-3"><legend className="sr-only">실행 설정</legend><div className="grid sm:grid-cols-3 gap-3">
       <label>앱 포트<input className={field} type="number" min={1} max={65535} value={port} onChange={e=>setPort(Number(e.target.value))}/></label>
@@ -38,7 +38,7 @@ export function RuntimeSettings({project,onSaved}:{project:Project;onSaved:(p:Pr
       <label className="block">비밀값 참조 (JSON)<textarea className={field+' font-mono text-sm'} rows={3} value={refs} onChange={e=>setRefs(e.target.value)}/></label>
       <p className="text-xs text-muted">비밀값 자체를 입력하지 마세요. 예: {`{"DATABASE_URL":"app_database_url"}`} — 해당 이름을 로컬 Secret 파일 또는 AWS 어댑터의 Secrets Manager 매핑에 먼저 등록하세요. 외부 DB는 연결만 하며 생성·변경하지 않습니다.</p>
       {mode!=='none'&&<label className="block">DB 초기화 명령 (JSON 배열, 생략 시 [])<input className={field+' font-mono text-sm'} value={command} onChange={e=>setCommand(e.target.value)}/><span className="text-xs text-muted">예: [&quot;python&quot;,&quot;migrate.py&quot;]. 같은 이미지에서 배포마다 1회 실행하고 성공해야 앱을 시작합니다. 반복 실행해도 안전한 명령을 사용하세요.</span></label>}
-    </div></details><button onClick={()=>void save()} className="rounded bg-accent text-white px-4 py-2 disabled:opacity-50">{busy?'저장 중…':'실행 설정 저장'}</button></fieldset>
+    </div></details><button onClick={()=>void save()} className="button primary">{busy?'저장 중…':'실행 설정 저장'}</button></fieldset>
     {message&&<p role="status" className="text-sm">{message}</p>}
   </section>;
 }

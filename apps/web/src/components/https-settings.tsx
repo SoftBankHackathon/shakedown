@@ -169,7 +169,7 @@ export function HttpsSettings({ projectId }: { projectId: string }) {
                 {!binding && (
                   <button
                     disabled={busy || loading || !domain.trim()}
-                    className="rounded bg-accent px-4 py-2 text-white disabled:opacity-50"
+                    className="button primary"
                   >
                     {busy ? "설정 요청 중…" : "HTTPS 연결"}
                   </button>
@@ -197,7 +197,7 @@ export function HttpsSettings({ projectId }: { projectId: string }) {
                   <button
                     onClick={() => void submit(true)}
                     disabled={busy}
-                    className="rounded border border-line px-3 py-1.5 disabled:opacity-50"
+                    className="button secondary"
                   >
                     {busy ? "확인 요청 중…" : "DNS·접속 다시 확인"}
                   </button>
