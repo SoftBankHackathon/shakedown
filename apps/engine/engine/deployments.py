@@ -168,7 +168,7 @@ class ShakedownClient:
             raise DeploymentError('Shakedown request failed; check 127.0.0.1:9201. No PASS was recorded.') from None
 
 class DeploymentStore:
-    def __init__(self, path: Path, runner=None, poll_seconds=1, timeout=300, shakedown=None, shakedown_timeout=180, aws=None, azure=None, gcp=None):
+    def __init__(self, path: Path, runner=None, poll_seconds=1, timeout=300, shakedown=None, shakedown_timeout=180, aws=None, azure=None, gcp=None, ready_timeouts=None):
         from engine.https_client import HttpsClient
         self.https = HttpsClient()
         self.shakedown = shakedown or ShakedownClient()
@@ -184,6 +184,10 @@ class DeploymentStore:
         self.azure = azure or AzureRunner()
         self.gcp = gcp or GcpRunner()
         self.poll_seconds, self.timeout = poll_seconds, timeout
+        # 대상별 준비 대기(초). 없으면 timeout. GCP 어댑터는 Cloud Run이 인스턴스를 늦게 잡는 날(2026-10-10, 4분 15초)을 견디려고
+        # 420초를 넘기면 0대로 내린 뒤(최대 19초) failed를 낸다. 엔진이 먼저 끊으면 늘린 어댑터 한도가 소용없고 정리 중인 서비스에
+        # DELETE가 겹치므로 420 + 19초에 폴링 여유를 더해 450초. 넘긴 값은 이 기본값 위에 덮어써 GCP 예외가 빠지지 않게 한다.
+        self.ready_timeouts = {'gcp': 450, **(ready_timeouts or {})}
         self.pool = ThreadPoolExecutor(max_workers=2)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS deployments (id TEXT PRIMARY KEY, project_id TEXT, status TEXT, payload TEXT)')
@@ -287,7 +291,7 @@ class DeploymentStore:
 
     def wait_ready(self, d, target):
         runner = self.runner_for(target)
-        deadline = time.monotonic() + (max(self.timeout, 2700) if target == 'aws' and d.get('architecture') else self.timeout)
+        deadline = time.monotonic() + (max(self.timeout, 2700) if target == 'aws' and d.get('architecture') else self.ready_timeouts.get(target, self.timeout))
         while time.monotonic() < deadline:
             state = runner.call('GET', '/deployments/' + self.target_id(d, target))
             if state.get('status') == 'failed': raise DeploymentError(f'{target} deployment failed; inspect its logs.')

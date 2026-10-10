@@ -98,7 +98,7 @@ curl -X POST http://127.0.0.1:8700/api/deployments/<id>/fix
 - 실제 checkout을 재분석합니다. Dockerfile 코드를 실행하므로 신뢰하는 저장소만 사용하세요.
 - 로컬 배포는 PostgreSQL 샘플용: replicas=1, sticky_sessions=false. DB 비밀번호는 Local Target의 `db_password` secret reference 사용. 프로파일별 env 자동 전달은 미지원.
 - Local은 배포마다 새 이미지/Compose 스택/볼륨을 만듭니다. AWS는 기존 ECS 서비스와 RDS를, GCP는 기존 Cloud Run 서비스와 Cloud SQL을 재사용합니다. 기존 DB를 이어 쓰는 업데이트와 성공 배포 자동 정리는 미지원.
-- 빌드 900초, Local readiness 300초, 시운전 폴링 180초, 개별 HTTP 요청 20초 제한. 시운전 서비스 자체 마감 시간에는 진행 중 HTTP/접속 재시도를 취소합니다. 이미 접수된 쓰기를 되돌리지는 않습니다.
+- 빌드 900초, Local readiness 300초, GCP readiness 450초, 시운전 폴링 180초, 개별 HTTP 요청 20초 제한. 시운전 서비스 자체 마감 시간에는 진행 중 HTTP/접속 재시도를 취소합니다. 이미 접수된 쓰기를 되돌리지는 않습니다.
 - 배포/비교 중 예외가 나면 이번 요청으로 접수한 관리 대상들을 DELETE 시도합니다. 기존 외부 대상은 삭제하지 않습니다. BLOCKED에서는 관리 클라우드 대상(AWS 또는 GCP)의 로그를 조회한 뒤 DELETE하여 공개 403/태스크 종료(GCP는 0대)를 확인합니다. Local은 유지하며 WARN은 삭제하지 않습니다. 로그 본문은 엔진에 복제하지 않고 각 클라우드 어댑터 기록에 보존합니다. Local Target DELETE는 진단 로그·DB 볼륨을 보존합니다.
 - 재시작 시 미완료 기록은 failed로 전환. 자동 재실행하지 않습니다. SQLite 기록은 `apps/engine/.data`에 저장됩니다.
 - 엔진/Target/Shakedown 서비스는 loopback에 유지합니다. 엔진은 localhost/127.0.0.1:3700 Origin만 허용하고 내부 호출은 9101/9102/9103(GCP)/9104/9201로 고정됩니다. 이는 프로덕션 인증 체계가 아닙니다.
@@ -284,6 +284,8 @@ gcloud auth application-default login
 ```
 
 GCP 빌드는 linux/amd64 단일 manifest이며 한 번 빌드해 `imagePrefixes[0]` 저장소의 `kty-board`에 push합니다. digest는 `gcloud artifacts docker images describe`로 레지스트리에서 읽고, 인증 중 로컬 Docker에 pull하여 두 대상에 같은 주소를 전달합니다. `gcloud auth print-access-token` 토큰은 표준입력으로만 넘겨 임시 Docker 설정에 로그인하고 끝나면 지웁니다. GCP 옵션은 replicas 1~2, sticky_sessions(Cloud Run 세션 어피니티, best-effort), tz입니다. 설정·gcloud 프로젝트·프로젝트 ID·포트·DB가 다르면 배포를 거절합니다. GCP 빌드도 Local·AWS와 같은 보안 검사(Security Gate)를 거칩니다. 실행 설정(runtime)을 저장한 프로젝트는 DB 모드가 `none`·`postgres`일 때만 받습니다(MySQL·MongoDB·외부 DB는 거절, postgres는 DB 이름이 설정 `dbName`과 같아야 함). runtime 프로젝트는 포트를 설정과 비교하지 않고(Cloud Run이 리비전마다 컨테이너 포트를 정함), env 자동 수정 힌트(`can_apply_env`)도 주지 않습니다(수정안이 Spring 샘플 전용). 어댑터 쪽 조건은 `infra/gcp/README.md` "범용 런타임" 절에 있습니다. 아키텍처 계획(`architecture_plan_id`)은 아직 GCP에서 지원하지 않아 거절합니다.
+
+준비 대기: 엔진은 GCP 배포가 `ready`가 되기를 450초(7분 30초)까지 기다립니다(Local·AWS·Azure는 300초, 아키텍처 계획을 쓴 AWS 배포는 2700초). GCP 어댑터는 420초를 넘기면 0대로 내린 뒤(최대 19초) `failed`를 냅니다. 엔진이 먼저 끊으면 늘린 어댑터 한도가 소용없고 정리 중인 서비스에 DELETE가 겹치므로, 어댑터의 `failed`를 받을 때까지 기다리게 한 값입니다. 엔진의 오류 문구는 그대로 `gcp deployment failed; inspect its logs.`이고, 구체적인 이유는 어댑터의 배포 상태(`error`)에 있습니다. 2026-10-10 13:19 Cloud Run이 최소 인스턴스 2대를 확보하는 데 4분 15초가 걸려(평소 1분 안) 어댑터의 옛 한도 270초를 넘긴 뒤 늘렸습니다.
 
 BLOCKED의 GCP 정리는 서비스를 0대로 내리고, 공개 권한(`allUsers`) 회수는 어댑터가 뒤에서 처리합니다(IAM 반영 수 분). Cloud SQL·Artifact Registry 비용은 남으므로 `infra/gcp/README.md`의 "비용 멈추기"를 따릅니다.
 

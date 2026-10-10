@@ -1,5 +1,10 @@
 """Engine/GCP deployment tests: no GCP project, network, Docker or costs."""
+import re
+import time
+import types
+from pathlib import Path
 import pytest
+from engine import deployments
 from engine.deployments import DeploymentStore, DeployRequest, DeploymentError
 from test_comparisons import Runner, Shakedown, wait, project
 from test_aws_deployments import Aws
@@ -107,7 +112,7 @@ def test_blocked_stops_only_managed_gcp_after_logs(project, tmp_path, cleanup_fa
     finally: ds.close()
 
 def test_gcp_timeout_attempts_delete(project, tmp_path):
-    gcp = Gcp(); ds = DeploymentStore(tmp_path/'d.db', Runner(), gcp=gcp, timeout=0)
+    gcp = Gcp(); ds = DeploymentStore(tmp_path/'d.db', Runner(), gcp=gcp, ready_timeouts={'gcp': 0})
     try:
         d = wait(ds, ds.start(project, DeployRequest(targets=['gcp']))['id'])
         assert d['status'] == 'failed' and 'timed out' in d['error']
@@ -129,4 +134,38 @@ def test_runtime_project_sends_its_runtime_to_gcp_without_legacy_fields_or_the_e
         assert 'database' not in body and 'secret_refs' not in body and 'env' not in body
         # env 수정안(SPRING_PROFILES_ACTIVE=demo,session-jdbc)은 Spring 샘플 전용이라 runtime 프로젝트에는 자동 적용 힌트를 주지 않는다.
         assert [('can_apply_env' in body['hints']) for method, _, body in sd.calls if method == 'POST'] == [False]
+    finally: ds.close()
+
+@pytest.mark.parametrize('target, architecture, overrides, limit', [
+    ('gcp', None, None, 450), ('local', None, None, 300), ('aws', None, None, 300), ('azure', None, None, 300),
+    ('aws', {'id': 'aws-ha'}, None, 2700),
+    # 다른 대상만 바꿔 넘겨도 GCP 예외는 남아야 한다.
+    ('local', None, {'local': 120}, 120), ('gcp', None, {'local': 120}, 450)])
+def test_ready_wait_gives_only_gcp_extra_time(tmp_path, monkeypatch, target, architecture, overrides, limit):
+    # GCP 어댑터는 420초를 넘기면 0대로 내린 뒤(최대 19초) failed를 낸다. 엔진이 먼저 끊으면 늘린 어댑터 한도가 소용없다.
+    # 실제로 7분 30초를 기다리지 않도록 이 모듈의 시계와 sleep만 가짜로 바꾼다.
+    clock = [0.0]
+    monkeypatch.setattr(deployments, 'time', types.SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=lambda s: clock.__setitem__(0, clock[0] + s), time=time.time))
+    class Pending:
+        def call(self, method, path, body=None): return {'status': 'deploying'}
+    pending = Pending(); ds = DeploymentStore(tmp_path/'d.db', pending, aws=pending, azure=pending, gcp=pending, ready_timeouts=overrides)
+    try:
+        with pytest.raises(DeploymentError, match=f'{target} deployment readiness timed out'):
+            ds.wait_ready({'id': 'dep_x', 'project_id': 'prj_x', 'architecture': architecture, 'targets': {target: {}}}, target)
+        assert clock[0] == limit
+    finally: ds.close()
+
+def test_gcp_wait_outlasts_adapter_limit_and_stop(tmp_path):
+    # 어댑터 한도와 stop 예산은 infra/gcp/src/gcp-provider.ts에 있다. 둘에 여유를 더한 것보다 엔진이 길게 기다려야
+    # 엔진이 시간 초과로 끊기 전에 어댑터의 failed가 닿는다. 한쪽만 바꾸면 여기서 깨진다.
+    # 여유 10초: 엔진 폴링 간격(1초), abort가 진행 중 GCP 호출에 닿는 지연, failed 기록까지의 시간.
+    source = (Path(__file__).resolve().parents[3] / 'infra/gcp/src/gcp-provider.ts').read_text()
+    adapter_ms = {}
+    for name in ('READY_TIMEOUT_MS', 'STOP_TIMEOUT_MS'):
+        found = re.search(rf'export const {name} = ([\d_]+);', source)
+        assert found, f'{name} must stay a numeric literal in gcp-provider.ts so this check can read it'
+        adapter_ms[name] = int(found.group(1).replace('_', ''))
+    ds = DeploymentStore(tmp_path/'d.db', Runner())
+    try: assert adapter_ms['READY_TIMEOUT_MS'] + adapter_ms['STOP_TIMEOUT_MS'] + 10_000 <= ds.ready_timeouts['gcp'] * 1000
     finally: ds.close()
