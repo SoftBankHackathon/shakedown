@@ -28,7 +28,7 @@ def result(target, *, findings=None, error=None, version=None, scanned=0, applic
     findings = findings or []
     return {"tool": "gitleaks", "scope": "local_directory_text_secrets", "target_path": str(target),
             "scan_status": "FAILED" if error else "SUCCESS" if applicable else "NOT_APPLICABLE",
-            "decision": "SCAN_FAILED" if error else "DENY" if findings else "ALLOW" if applicable else "REVIEW",
+            "decision": "SCAN_FAILED" if error else "DENY" if findings else "ALLOW",
             "version": version, "scanned_files": scanned, "excluded_binary_files": excluded, "findings": findings,
             "errors": [error] if error else []}
 

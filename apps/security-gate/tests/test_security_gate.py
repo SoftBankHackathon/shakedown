@@ -32,7 +32,7 @@ def compose(tmp_path, source, name="compose.yaml"):
 
 @pytest.mark.parametrize("fixture,decision", [
     ("safe", "ALLOW"), ("deny", "DENY"), ("multi", "DENY"),
-    ("dynamic", "REVIEW"), ("malformed", "SCAN_FAILED"),
+    ("dynamic", "DENY"), ("malformed", "SCAN_FAILED"),
     ("alias", "SCAN_FAILED"), ("tag", "SCAN_FAILED"), ("duplicate", "SCAN_FAILED"),
 ])
 def test_fixture_decisions_and_json_schema(fixture, decision):
@@ -52,10 +52,10 @@ def test_deny_evidence_location():
     }
 
 
-def test_multiservice_reports_only_risk_and_uncertainty():
+def test_multiservice_reports_enabled_and_unresolved_privileged():
     findings = scan(FIXTURES / "multi")["files"][0]["findings"]
-    assert [(f["service"], f["decision"]) for f in findings] == [
-        ("admin", "DENY"), ("worker", "REVIEW")]
+    assert [(f["service"], f["decision"], f["reason_code"]) for f in findings] == [
+        ("admin", "DENY", "PRIVILEGED_ENABLED"), ("worker", "DENY", "PRIVILEGED_UNRESOLVED")]
 
 
 @pytest.mark.parametrize("name", sorted(discovery.COMPOSE_NAMES))
@@ -69,22 +69,23 @@ def test_all_compose_names_recursive_and_direct(tmp_path, name):
 
 @pytest.mark.parametrize("value,decision", [
     ("true", "DENY"), ('"true"', "DENY"), ("false", "ALLOW"),
-    ('"false"', "REVIEW"), ("null", "REVIEW"), ("1", "REVIEW"),
-    ("0", "REVIEW"), ("[]", "REVIEW"), ("{}", "REVIEW"),
+    # 정적으로 false라고 확정할 수 없는 값은 privileged일 수 있으므로 막는다.
+    ('"false"', "DENY"), ("null", "DENY"), ("1", "DENY"),
+    ("0", "DENY"), ("[]", "DENY"), ("{}", "DENY"),
 ])
 def test_privileged_value_classification(tmp_path, value, decision):
     path = compose(tmp_path, f"services:\n  web:\n    privileged: {value}\n")
     assert validate(scan(path))["decision"] == decision
 
 
-def test_no_files_is_not_applicable_and_review_and_never_executes_scripts(tmp_path):
+def test_no_files_is_not_applicable_and_allowed_and_never_executes_scripts(tmp_path):
     script = tmp_path / "untrusted.py"
     script.write_text("raise RuntimeError('must never run')", encoding="utf-8")
     result = validate(scan(tmp_path))
     assert result["scan_status"] == "NOT_APPLICABLE"
-    assert result["decision"] == "REVIEW"
+    assert result["decision"] == "ALLOW"
     assert result["files"] == []
-    assert scan(script)["decision"] == "REVIEW"
+    assert scan(script)["decision"] == "ALLOW"
 
 
 def test_nonexistent_path_fails_closed(tmp_path):
@@ -244,7 +245,7 @@ def test_total_size_and_finding_limits_fail_closed(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("fixture,exit_code", [
-    ("safe", 0), ("deny", 1), ("dynamic", 2), ("malformed", 3),
+    ("safe", 0), ("deny", 1), ("dynamic", 1), ("malformed", 3),
 ])
 def test_cli_json_and_exit_codes(fixture, exit_code):
     completed = subprocess.run([sys.executable, str(ROOT / "main.py"), str(FIXTURES / fixture)],

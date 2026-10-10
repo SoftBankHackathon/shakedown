@@ -45,15 +45,15 @@ def test_syntax_only_language_never_implies_security_approval(tmp_path, suffix, 
     report = semgrep.scan_semgrep(tmp_path, runner=unexpected)
     assert report['unsupported_files'] == 1
     assert report['scanned_files'] == 0
-    assert report['decision'] == ('REVIEW' if valid else 'SCAN_FAILED')
+    assert report['decision'] == ('DENY' if valid else 'SCAN_FAILED')
     assert report['errors'] == ([] if valid else ['SOURCE_SYNTAX_INVALID'])
 
 
-def test_mixed_supported_and_syntax_only_repo_still_requires_review(tmp_path):
+def test_mixed_supported_and_syntax_only_repo_is_blocked(tmp_path):
     (tmp_path / 'app.js').write_text('const value = 1;')
     (tmp_path / 'lib.c').write_text(SAMPLES['c'][0])
     report = semgrep.scan_semgrep(tmp_path, runner=output_runner())
-    assert report['decision'] == 'REVIEW'
+    assert report['decision'] == 'DENY'
     assert report['scanned_languages'] == ['javascript']
     assert report['unsupported_languages'] == ['c']
 

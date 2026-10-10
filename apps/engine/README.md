@@ -222,19 +222,21 @@ Image planning now scans an isolated repository snapshot using the merged
 or an LLM call. Secret files are included in this scan, then excluded from the
 Docker build context. Local and AWS builds, including existing Dockerfiles,
 use the same checked snapshot path; saved image plans are checked again before
-Docker executes. Only `ALLOW` proceeds. `DENY`, `REVIEW`, `SCAN_FAILED`, missing
-scanner tools, invalid output and timeouts stop the operation. There is no
+Docker executes. The gate answers pass or block only: `ALLOW` proceeds, and `DENY`,
+`SCAN_FAILED`, missing scanner tools, invalid output and timeouts stop the operation. There is no
 request flag or LLM fallback that overrides this gate.
 
 Install the Security Gate's Semgrep/Gitleaks tools as described in
 `apps/security-gate/README.md`; the engine Python environment also needs its
-requirements. The #25 gate supports limited Python, Java, JavaScript and
-TypeScript patterns, Compose privileged checks and text-secret detection.
-The engine validates the bundled v3 JSON schema. An absent Compose file is
-accepted only as Docker REVIEW/NOT_APPLICABLE with no files/errors, while the
-overall result and both Semgrep/Gitleaks must still be ALLOW/SUCCESS.
-Unsupported source languages, template coverage gaps and scanner failures remain
-blocking. A structurally valid Gradle wrapper JAR can be excluded from text-secret
+requirements. The gate scans Python, Java, JavaScript, TypeScript, Go and Rust (an allow-list),
+Compose privileged checks and text-secret detection. The engine validates the bundled
+v3 JSON schema; an absent Compose file is simply Docker ALLOW, while Semgrep and
+Gitleaks must both be ALLOW/SUCCESS. Any source outside the allow-list (or no scannable
+source at all) is blocked as `DENY`/`UNSUPPORTED_SOURCE`; the error explains each
+Semgrep `block_reasons` entry and names the blocked languages. Parts the
+gate cannot inspect inside supported files (CDN scripts, Thymeleaf `[[${...}]]`) are
+reported in `coverage_gaps` and do not block; malformed templates and unsupported
+script types do. A structurally valid Gradle wrapper JAR can be excluded from text-secret
 scanning; that is not a security review of the binary or dependencies.
 Only a sanitized decision is returned; raw scanner findings/output are not
 sent to the dashboard or LLM. No production security guarantee is implied.

@@ -28,27 +28,23 @@ UNSUPPORTED = {
     ".cs": "csharp", ".swift": "swift", ".dart": "dart", ".lua": "lua",
     ".sh": "shell", ".bash": "shell", ".ps1": "powershell", ".pl": "perl",
     ".r": "r", ".ex": "elixir", ".exs": "elixir", ".clj": "clojure",
-    ".jsp": "jsp", ".sql": "sql", ".fs": "fsharp", ".vb": "visualbasic",
+    ".jsp": "jsp", ".fs": "fsharp", ".vb": "visualbasic",
 }
-# Explicit non-application-source scope. These still go through secret scanning.
-DATA_SUFFIXES = frozenset({".md", ".txt", ".rst", ".yaml", ".yml", ".json", ".xml",
-    ".toml", ".ini", ".cfg", ".conf", ".properties", ".env", ".html", ".htm", ".css",
-    ".csv", ".lock", ".gradle", ".jar", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg"})
-DATA_NAMES = frozenset({"go.mod", "go.sum", "Dockerfile", "Makefile", "gradlew", "gradlew.bat", "mvnw", "mvnw.cmd",
-    "README", "LICENSE", "NOTICE", ".gitignore", ".gitattributes", ".dockerignore", ".semgrepignore"})
+# 못 본 범위 중 보고만 하고 막지 않는 것: 템플릿 값, 외부·누락·동적 script 참조.
+# 그 밖의 gap(깨진 템플릿, 미지원 script 타입, 새로 생길 gap)은 막는다. gate.schema.json의 ALLOW 조건과 같아야 한다.
+REPORTED_GAPS = frozenset({"TEMPLATE_EXPRESSION", "EXTERNAL_SCRIPT_REFERENCE",
+                           "UNRESOLVED_SCRIPT_REFERENCE", "DYNAMIC_SCRIPT_REFERENCE"})
 
 
 def source_language(path):
+    """검사 가능 언어(SUPPORTED)와 알려진 미지원 언어(UNSUPPORTED)만 소스로 본다.
+    확장자를 모르는 파일(설정·문서·이미지·.sql 등)은 소스로 보지 않고 Secret 검사만 받는다."""
     suffix = path.suffix.lower()
     if suffix in SUPPORTED:
         return SUPPORTED[suffix][0]
-    if path.name.endswith(".gradle.kts"):
+    if path.name.endswith(".gradle.kts"):  # Gradle 빌드 스크립트
         return None
-    if suffix in UNSUPPORTED:
-        return UNSUPPORTED[suffix]
-    if path.name in DATA_NAMES or path.name.startswith(".env"):
-        return None
-    return None if suffix in DATA_SUFFIXES else "unknown"
+    return UNSUPPORTED.get(suffix)
 
 
 def empty_coverage():

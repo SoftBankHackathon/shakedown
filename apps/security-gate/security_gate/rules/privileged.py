@@ -18,13 +18,13 @@ def check(data, root, file_path):
         if "privileged" not in config or config["privileged"] is False:
             continue
         value = config["privileged"]
-        # Quoted true also denies; all other non-boolean forms need review.
-        deny = value is True or (isinstance(value, str) and value.strip().lower() == "true")
+        # Quoted true denies, and so does any value that cannot be resolved statically (e.g. ${VAR}).
+        enabled = value is True or (isinstance(value, str) and value.strip().lower() == "true")
         node = mapping_value(mapping_value(services_node, service), "privileged")
         findings.append({
-            "decision": "DENY" if deny else "REVIEW", "file_path": str(file_path),
+            "decision": "DENY", "file_path": str(file_path),
             "service": service, "rule_id": RULE_ID,
-            "reason_code": "PRIVILEGED_ENABLED" if deny else "PRIVILEGED_UNRESOLVED",
+            "reason_code": "PRIVILEGED_ENABLED" if enabled else "PRIVILEGED_UNRESOLVED",
             "location": {"line": node.start_mark.line + 1,
                          "column": node.start_mark.column + 1,
                          "path": ["services", service, "privileged"]},

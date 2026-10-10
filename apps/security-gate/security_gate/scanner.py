@@ -30,8 +30,7 @@ def _scan_local(target, max_file_bytes):
             total_findings += len(findings)
             if total_findings > MAX_TOTAL_FINDINGS:
                 raise ScanError("FINDING_LIMIT_EXCEEDED")
-            decision = next((d for d in ("DENY", "REVIEW")
-                             if any(f["decision"] == d for f in findings)), "ALLOW")
+            decision = "DENY" if findings else "ALLOW"
             files.append(file_result(path, decision, findings))
         except ScanError as exc:
             files.append(file_result(path, "SCAN_FAILED", error=exc.code))
