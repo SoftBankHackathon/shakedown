@@ -77,7 +77,7 @@ AWS `configSchema`와 같은 이름을 쓴다. Bicep 출력값에서 `config-fro
 ```
 
 ## 6. 파일 구성
-AWS 어댑터와 같은 구조에 `bicep/`(main: 기반, app: 앱과 스키마 초기화 작업), `src/azure-provider.ts`, `scripts/`(provision, publish-image, schema-init, session-check)를 추가한다. 각 파일 첫머리 주석에 역할과 이유를 적었다. `store.ts`, `manager.ts`와 `model.ts`의 Provider 인터페이스는 `target` 이름 외에 AWS 전용 내용이 없어서 공용으로 빼서 같이 쓴다 (김재환 님 합의 후. 합의 전이면 복사 후 나중에 합침).
+AWS 어댑터와 같은 구조에 `bicep/`(main: 기반, app: 앱과 스키마 초기화 작업, init: `sd-init` 작업. 같은 내용을 `terraform/`으로도 만든다, 14절), `src/azure-provider.ts`, `scripts/`(provision, publish-image, schema-init, session-check)를 추가한다. 각 파일 첫머리 주석에 역할과 이유를 적었다. `store.ts`, `manager.ts`와 `model.ts`의 Provider 인터페이스는 `target` 이름 외에 AWS 전용 내용이 없어서 공용으로 빼서 같이 쓴다 (김재환 님 합의 후. 합의 전이면 복사 후 나중에 합침).
 
 ## 7. 처음 한 번 준비 (비용 발생)
 해커톤 구독은 무료 체험(지출 한도 켜짐)이라 크레딧을 넘겨 청구되지 않는다. 그래서 예산 알림은 생략한다.
@@ -206,3 +206,38 @@ AZURE_DATABASE_ENGINE=mongodb AZURE_RESOURCE_GROUP=rg-shakedown-mongo AZURE_CONF
 - 이전 템플릿으로 만든 스택(2026-10-09 PostgreSQL)에는 `db-url` 비밀이 없어 `postgres_url` 바인딩은 400이다. `provision.sh`를 다시 돌리면 `sd-init` 작업만 추가되고 앱·DB는 그대로다.
 - 검증: 가짜 Azure로 엔진별 바인딩·비밀·초기화 작업 테스트 (`test/azure-provider.test.ts`), Bicep 3개 `az bicep build` 통과. 실제 MySQL·MongoDB 스택 생성은 아직 안 함.
 
+
+## 14. Terraform (`terraform/`, Bicep + `provision.sh` 대체)
+`bicep/` 3개와 `provision.sh`가 만들던 것을 Terraform 하나로 만든다. 리소스 이름 규칙, 어댑터 설정(`.data/azure/<리소스 그룹>.json`)은 같다. 2026-10-10부터 데모 스택은 Terraform으로 만든 `rg-shakedown-tf-postgres`다 (Bicep `rg-shakedown-board`는 import하지 않고 지운 뒤 다시 만듦, 게시판 데이터 초기화).
+
+```sh
+export AZURE_SUBSCRIPTION_ID=<해커톤 구독 ID>
+export AZURE_DATABASE_ENGINE=postgres AZURE_PROJECT_ID=<엔진 프로젝트 ID>
+bash infra/azure/scripts/terraform.sh plan      # 바뀔 내용만
+bash infra/azure/scripts/terraform.sh apply     # 생성 → .data/azure/rg-shakedown-tf-postgres.json 검증까지
+export AZURE_ADAPTER_CONFIG=$PWD/.data/azure/rg-shakedown-tf-postgres.json
+IMAGE=$(bash infra/azure/scripts/publish-image.sh) && bash infra/azure/scripts/schema-init.sh "$IMAGE"   # PostgreSQL 데모만
+bash infra/azure/scripts/terraform.sh destroy   # 스택 전체 삭제 (Key Vault도 purge)
+```
+
+- 리소스 그룹 기본값은 `rg-shakedown-tf-<엔진>`, 리전은 `AZURE_LOCATION`(기본 `koreacentral`). az 로그인 구독이 `AZURE_SUBSCRIPTION_ID`와 다르면 아무것도 하지 않는다.
+- 상태는 local backend로 `.data/azure/terraform/`(gitignore, 소유자만 읽기)에 둔다. 스택(리소스 그룹)마다 workspace 하나. 상태에 DB 비밀번호가 들어간다.
+- Key Vault 비밀은 Bicep처럼 azapi로 ARM(관리 평면)에 PUT한다. 배포자에게 비밀 쓰기 역할이 따로 필요 없다. ARM은 비밀 DELETE를 받지 않아(405) `azapi_resource_action`으로 쓰고, destroy 때는 볼트와 함께 지워진다.
+- 어댑터가 바꾸는 것(앱 template·secret·ingress, 작업 template·secret, schema-init 이미지)과 PostgreSQL이 DB 서브넷에 붙이는 `Microsoft.Storage` 엔드포인트는 `ignore_changes`라, 배포 뒤 plan이 "No changes"이고 다시 apply해도 되돌리지 않는다.
+- 무료 체험 구독은 Container Apps 환경이 구독 전체에 1개다(`MaxNumberOfGlobalEnvironmentsInSubExceeded`, 같은 리전이면 `MaxNumberOfRegionalEnvironmentsInSubExceeded`). 스택은 한 번에 하나만 끝까지 만들어진다. 엔진을 바꾸려면 지금 스택을 destroy하고 만든다. `provision.sh`도 같다.
+- destroy 직후 같은 리소스 그룹 이름으로 다시 만들면(특히 다른 리전) ARM이 몇 분간 방금 만든 리소스를 404로 돌려줘 apply가 멈춘다. 몇 분 기다리거나 `AZURE_RESOURCE_GROUP`을 새 이름으로 준다.
+- VNet에 붙은 Container Apps 환경은 지우는 데 오래 걸린다(Bicep 스택 삭제 26분, 대부분 환경). 환경이 다 지워져야 새 환경을 만들 수 있다.
+
+실측 (2026-10-10, 이 구독):
+
+| 단계 | 시간 |
+|---|---|
+| PostgreSQL 스택 apply (리소스 23개) | 7분 51초 — PostgreSQL 5분 5초, Container Apps 환경 2분 54초, Key Vault 2분 30초, 권한 반영 대기 90초 (병렬) |
+| 이미지 게시 (`publish-image.sh`, 빌드 캐시 있음) | 38초 |
+| schema-init (작업 실행) | 43초, 스크립트 전체 61초 |
+| 앱 배포 (어댑터, 복제본 2 · sticky) | 48.5초 — update_app 14.7초, wait_revision 31.4초 |
+| 로그인 유지 (`session-check.py`) | 20/20 |
+| MySQL 스택 destroy (Container Apps 없음) | 5분 14초, Key Vault purge 포함 |
+
+- MySQL 스택은 Container Apps 앞까지 실제로 만들었다(MySQL 서버 5~6분). 한 번은 MySQL이 Azure에서 Ready가 된 뒤에도 azurerm 폴링이 50분 넘게 끝나지 않았다. 그러면 Ctrl+C로 멈추고 다시 apply하거나 destroy한다(상태에 서버가 남는다).
+- az 2.91의 `az containerapp job start`는 실행이 끝난 뒤에도 돌아오지 않아 `schema-init.sh`는 ARM `jobs/{job}/start`를 `az rest`로 직접 부르고, 응답의 실행 이름으로 상태를 본다.
