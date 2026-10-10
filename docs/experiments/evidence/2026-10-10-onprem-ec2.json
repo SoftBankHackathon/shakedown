@@ -1,0 +1,129 @@
+{
+  "runtime": {
+    "results": [
+      {
+        "language": "node",
+        "mode": "none",
+        "variant": "none",
+        "http": 200,
+        "migration_runs": 0,
+        "count": null
+      },
+      {
+        "language": "node",
+        "mode": "postgres",
+        "variant": "postgres",
+        "http": 200,
+        "migration_runs": 2,
+        "count": 1
+      },
+      {
+        "language": "node",
+        "mode": "postgres",
+        "variant": "postgres_url",
+        "http": 200,
+        "migration_runs": 2,
+        "count": 1
+      },
+      {
+        "language": "python",
+        "mode": "none",
+        "variant": "none",
+        "http": 200,
+        "migration_runs": 0,
+        "count": null
+      },
+      {
+        "language": "python",
+        "mode": "postgres",
+        "variant": "postgres",
+        "http": 200,
+        "migration_runs": 2,
+        "count": 1
+      }
+    ],
+    "cleanup": "completed",
+    "scope": "local composeSpec; no security-gate, public tunnel, LLM or AWS execution"
+  },
+  "databases": {
+    "results": [
+      {
+        "mode": "mysql",
+        "read_write": true,
+        "restart_persistence": true,
+        "wrong_password_rejected": true,
+        "special_character_password": true
+      },
+      {
+        "mode": "mongodb",
+        "read_write": true,
+        "restart_persistence": true,
+        "wrong_password_rejected": true,
+        "special_character_password": true
+      }
+    ],
+    "cleanup": "completed",
+    "scope": "local official database images, driver connections; no AWS or public endpoint"
+  },
+  "reboot-prepare": {
+    "phase": "prepare",
+    "app_restart_persistence": true,
+    "count": 2,
+    "reboot_required": true
+  },
+  "reboot-verify": {
+    "phase": "verify",
+    "host_reboot_confirmed": true,
+    "automatically_running_services": [],
+    "manual_compose_up_persistence": true,
+    "count": 2,
+    "scope": "actual composeSpec with loopback app port; no tunnel or target deployment API"
+  },
+  "versions": {
+    "node": "v22.23.2",
+    "docker": "Docker version 25.0.14, build 0bab007",
+    "compose": "Docker Compose version v5.6.0",
+    "source": "85c12a53b5a23ffc535ca0aeb04f39ba4aefc8b2"
+  },
+  "unit_test_summary": [
+    "# tests 12",
+    "# pass 12",
+    "# fail 0"
+  ],
+  "experiment": {
+    "date": "2026-10-10",
+    "host": "EC2 Amazon Linux 2023 t3.medium, encrypted 24GiB EBS",
+    "stack": "shakedown-onprem-validation-1010",
+    "instance": "i-0a337447260724358",
+    "network": "existing IGW and default route; public IPv4; app ingress limited to client /32",
+    "tunnel": false,
+    "ecs": false,
+    "rds": false,
+    "db_ports_published": false,
+    "public_probe_protocol": "HTTP, not HTTPS",
+    "public_probe_before_reboot": {
+      "language": "node",
+      "database": true,
+      "count": 2
+    },
+    "public_probe_after_manual_recovery": {
+      "language": "node",
+      "database": true,
+      "count": 2
+    },
+    "control_api": {
+      "health": 200,
+      "origin_rejected": 403,
+      "foreign_host_rejected": 403,
+      "binding": "127.0.0.1:9101"
+    },
+    "scope_label_note": "Existing scripts say local/no AWS to mean they issue no AWS calls. They ran on EC2. Reboot harness app bind was overridden to public TCP18080 with client /32 restriction."
+  },
+  "cleanup": {
+    "host_containers": 0,
+    "host_volumes": 0,
+    "cloudformation": "DELETE_COMPLETE",
+    "instance_state": "terminated",
+    "attached_volumes_remaining": 0
+  }
+}
