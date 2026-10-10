@@ -215,3 +215,12 @@ def test_resolve_rejects_foreign_unselected_and_stale_plans(store,repository,tmp
 def approved_security_gate(monkeypatch):
     # Unit tests for architecture/AWS behavior; negative gates have separate coverage.
     monkeypatch.setattr('engine.security.require_allow',lambda _: {'decision':'ALLOW'})
+
+
+def test_explicit_mongodb_offers_tls_replica_set_architectures():
+    f={**facts(database='mongodb'),'runtime_database':'mongodb'}
+    plan=recommend(f,requirements(),disconnected())
+    assert plan['assessment']['eligible_templates']==['small','medium','large']
+    assert 'EC2 MongoDB' in plan['templates'][0]['database']
+    high=ArchitectureRequest(peak_rps=5,availability='high',traffic='steady')
+    assert recommend(f,high,disconnected())['recommended_template']=='medium'

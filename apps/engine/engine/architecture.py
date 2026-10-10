@@ -117,7 +117,9 @@ def assess(facts, options):
     conflict = database_conflict(facts.get('runtime_database'), signals['database'])
     if conflict: blockers.append(conflict)
     if signals['database'] is None:warnings.append('DB가 감지되지 않았습니다. DB가 없다는 확정은 아니며 필요 여부를 확인하세요.')
-    elif facts.get('runtime_database') != 'external' and signals['database'] not in {'postgres','postgresql','mysql','mariadb','sqlite'}:blockers.append('감지된 DB는 RDS 관계형 DB 설계안과 일치하지 않습니다. DB 구성을 별도로 검토하세요.')
+    elif facts.get('runtime_database') != 'external' and signals['database'] not in ({'postgres','postgresql','mysql','mariadb','sqlite','mongodb'} if facts.get('runtime_database')=='mongodb' else {'postgres','postgresql','mysql','mariadb','sqlite'}):blockers.append('감지된 DB는 RDS 관계형 DB 설계안과 일치하지 않습니다. DB 구성을 별도로 검토하세요.')
+    if facts.get('runtime_database')=='mongodb':
+        warnings.append('MongoDB는 3개 AZ의 TLS replica set입니다. DB 용량 자동 확장은 없으며 primary 재선출 동안 일시적으로 쓰기가 지연될 수 있습니다.')
     if signals['readme_hints']:warnings.append('README 키워드는 미검증 힌트입니다. 실제 코드·운영 요구와 대조하세요.')
     if options.priority=='cost' and tier>0:warnings.append('비용 우선보다 입력된 트래픽·가용성 요구를 우선했습니다. 실제 비용 견적이 필요합니다.')
     warnings += ['RPS 경계 10/100과 CPU·메모리·태스크 수는 초기 설계 가정이며 부하 테스트로 조정해야 합니다.',
@@ -131,6 +133,9 @@ def recommend(facts, options, llm):
     if facts.get('runtime_database') in {'none','external'}:
         for template in catalog:
             template['database']='DB 없음' if facts['runtime_database']=='none' else '기존 외부 DB (가용성 변경 없음)'
+    if facts.get('runtime_database') in {'mysql','mongodb'}:
+        for template in catalog:
+            template['database']=('EC2 MongoDB TLS replica set · 3 AZ · EBS' if facts['runtime_database']=='mongodb' else template['database'].replace('RDS','RDS MySQL'))
     assessment=assess(facts,options)
     selected=assessment['minimum_tier'] if assessment['eligible_templates'] else None
     source='rule';reasons=assessment['reasons']; cited=[]

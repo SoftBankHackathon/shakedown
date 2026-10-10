@@ -15,6 +15,10 @@ export const configSchema = z.object({
   publicUrl: z.url().refine(v => new URL(v).protocol === 'http:' && new URL(v).hostname.endsWith('.elb.amazonaws.com')),
   subnetIds: z.array(z.string().startsWith('subnet-')).min(2).max(3), securityGroupId: z.string().startsWith('sg-'),
   executionRoleArn: arn, taskRoleArn: arn, logGroup: z.string().startsWith('/shakedown/'),
+  dbHosts: z.array(z.string().regex(/^[a-zA-Z0-9.-]+$/)).length(3).optional(),
+  dbInstanceIds: z.array(z.string().regex(/^i-[a-z0-9]+$/)).length(3).optional(),
+  dbCaSecretArn: arn.optional(),
+  dbEngine: z.enum(['postgres','mysql','mongodb']).default('postgres'),
   dbInstanceId: z.string().regex(/^[a-zA-Z][a-zA-Z0-9-]{0,62}$/).optional(),
   dbHost: z.string().regex(/^[a-zA-Z0-9.-]+$/).optional(), dbName: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/).optional(),
   dbUsername: z.string().regex(/^[a-zA-Z0-9_]+$/).optional(), dbPasswordSecretArn: arn.optional(), dbUrlSecretArn: arn.optional(),
@@ -26,7 +30,7 @@ export function loadConfig(path: string): Config {
   const config = configSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
   const prefix = `${config.accountId}.dkr.ecr.${config.region}.amazonaws.com/${config.repository}`;
   if (config.repositoryUri !== prefix) throw new Error('ECR repository account/region mismatch');
-  for (const value of [config.clusterArn, config.listenerArn, config.gateRuleArn, config.targetGroupArn, config.executionRoleArn, config.taskRoleArn, config.dbPasswordSecretArn, config.dbUrlSecretArn, ...Object.values(config.secrets)]) {
+  for (const value of [config.clusterArn, config.listenerArn, config.gateRuleArn, config.targetGroupArn, config.executionRoleArn, config.taskRoleArn, config.dbPasswordSecretArn, config.dbUrlSecretArn, config.dbCaSecretArn, ...Object.values(config.secrets)]) {
     if (value && value.split(':')[4] !== config.accountId) throw new Error('Resource ARN account mismatch');
   }
   return config;
@@ -34,9 +38,12 @@ export function loadConfig(path: string): Config {
 export function validateRequest(config: Config, request: DeployRequest) {
   const reject = (message: string): never => { throw new ApiError(400, message); };
   const runtime=request.runtime;
-  const managed=!runtime || runtime.database.mode==='postgres';
-  if (managed && (!config.dbHost||!config.dbName||!config.dbUsername||!config.dbPasswordSecretArn)) reject('PostgreSQL configuration is required');
-  if (runtime?.database.mode==='postgres' && Object.values(runtime.database.bindings).includes('postgres_url') && (!config.dbUrlSecretArn || config.dbUrlSecretArn===config.dbPasswordSecretArn)) reject('A dedicated PostgreSQL URL secret is required; update the foundation stack and adapter config');
+  const managed=!runtime || ['postgres','mysql','mongodb'].includes(runtime.database.mode);
+  if(managed && (runtime?.database.mode??'postgres')!==(config.dbEngine??'postgres')) reject('Database engine does not match the provisioned stack');
+  if(runtime?.database.mode==='mongodb' && (!config.dbCaSecretArn||!config.dbHosts||!config.dbInstanceIds||new Set(config.dbHosts).size!==3||new Set(config.dbInstanceIds).size!==3)) reject('MongoDB TLS replica set configuration is required');
+  if (managed && (!config.dbHost||!config.dbName||!config.dbUsername||!config.dbPasswordSecretArn)) reject('Managed database configuration is required');
+  if (managed && runtime && Object.values(runtime.database.bindings).some(v=>['postgres_url','mysql_url','mongodb_url'].includes(v)) && (!config.dbUrlSecretArn || config.dbUrlSecretArn===config.dbPasswordSecretArn)) reject('A dedicated database URL secret is required; update the foundation stack and adapter config');
+  if(runtime?.database.mode==='mongodb' && Object.values(runtime.database.bindings).some(v=>v==='password'||v==='username')) reject('AWS MongoDB uses the bootstrapped mongodb_url binding; separate credentials are unsupported');
   if (request.architecture) {
     const spec = architectures[request.architecture.template_id];
     if ((managed && !config.dbInstanceId) || new Set(config.subnetIds).size < spec.azs) reject('아키텍처 배포용 기반 스택/DB 식별자/AZ 서브넷을 먼저 준비하세요.');
@@ -48,7 +55,7 @@ export function validateRequest(config: Config, request: DeployRequest) {
   if (!request.image.startsWith(config.repositoryUri + '@sha256:') || !/^sha256:[a-f0-9]{64}$/.test(request.image.split('@')[1] ?? '')) reject('허용된 ECR 저장소의 sha256 digest 이미지가 필요합니다.');
   if (runtime) {
     if (request.port!==runtime.port || request.health_path!==runtime.health_path || request.database || Object.keys(request.env).length || Object.keys(request.secret_refs).length) reject('Do not mix runtime and legacy settings');
-    if (runtime.database.mode==='postgres' && runtime.database.name!==config.dbName) reject('Use the configured PostgreSQL database');
+    if (managed && runtime.database.name!==config.dbName) reject('Use the configured database name');
     for (const ref of Object.values(runtime.secret_refs)) if (!config.secrets[ref]) reject('Register the secret reference in the adapter configuration');
     return;
   }

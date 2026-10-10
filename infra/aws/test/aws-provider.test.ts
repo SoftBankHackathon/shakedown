@@ -1,4 +1,5 @@
 import YAML from 'yaml';
+import {spawnSync} from 'node:child_process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -151,7 +152,8 @@ test('generic initialization overrides image entrypoint and a failing migration 
 
 test('DB-free foundation makes RDS resources/secret grants conditional and parameterizes app port',()=>{
   const f=YAML.parse(readFileSync(new URL('../cloudformation/foundation.yaml',import.meta.url),'utf8'));
-  for(const name of ['Database','DbSecret','DbSg','DbSubnets'])assert.equal(f.Resources[name].Condition,'WithDatabase');
+  for(const name of ['Database','DbSg','DbSubnets'])assert.equal(f.Resources[name].Condition,'WithRds');
+  assert.equal(f.Resources.DbSecret.Condition,'WithDatabase');
   assert.deepEqual(f.Resources.TargetGroup.Properties.Port,{Ref:'AppPort'});
   assert.equal(f.Outputs.DbHost.Condition,'WithDatabase');
 });
@@ -179,7 +181,7 @@ test('managed URL reaches ECS only as a versioned secret and missing config fail
   const fake=setup();
   const runtime={version:'http-runtime.v1',port:8080,health_path:'/',env:{},secret_refs:{},database:{mode:'postgres',name:config.dbName!,bindings:{DATABASE_URL:'postgres_url',PGPASSWORD:'password'}},init_command:[]};
   const r=requestSchema.parse({...request,env:{},runtime});
-  await assert.rejects(fake.provider.deploy(r,AbortSignal.timeout(2000),()=>{}),/dedicated PostgreSQL URL secret/);
+  await assert.rejects(fake.provider.deploy(r,AbortSignal.timeout(2000),()=>{}),/dedicated database URL secret/);
   assert.equal(fake.actions.length,0);
   const arn=`arn:aws:secretsmanager:ap-northeast-2:${config.accountId}:secret:url-abcdef`;
   fake.provider.config={...fake.provider.config,dbUrlSecretArn:arn};
@@ -208,4 +210,64 @@ test('foundation grants secret writes only to dedicated URL and external reads t
   const kms=execution.find((s:any)=>s['Fn::If']?.[0]==='WithAdditionalKmsKeys');
   assert.equal(kms['Fn::If'][1].Action,'kms:Decrypt');
   assert.ok(kms['Fn::If'][1].Condition.StringEquals['kms:ViaService']);
+});
+
+
+for(const mode of ['mysql','mongodb'] as const)test(`${mode} AWS runtime uses matching secret and never invokes RDS for MongoDB`,async t=>{
+ const fake=setup();const arn=`arn:aws:secretsmanager:ap-northeast-2:${config.accountId}:secret:url-example`;
+ fake.provider.config={...config,dbEngine:mode,dbUrlSecretArn:arn,dbInstanceId:mode==='mongodb'?'i-mongo':config.dbInstanceId,...(mode==='mongodb'?{dbHosts:['10.42.0.50','10.42.1.50','10.42.2.50'],dbInstanceIds:['i-a','i-b','i-c'],dbCaSecretArn:arn+'-ca'}:{})};
+ fake.provider.scaling.send=(async()=>({})) as typeof fake.provider.scaling.send;
+ fake.provider.ec2.send=(async(c:any)=>c.constructor.name==='DescribeInstancesCommand'?{Reservations:[{Instances:[0,1,2].map(i=>({State:{Name:'running'},PrivateIpAddress:`10.42.${i}.50`,VpcId:'v',Placement:{AvailabilityZone:'az'+i}}))}]}:{Subnets:config.subnetIds.map(()=>({VpcId:'v'}))}) as typeof fake.provider.ec2.send;
+ fake.provider.rds.send=(async()=>{assert.fail('No RDS mutations for ordinary deployment');}) as typeof fake.provider.rds.send;
+ fake.provider.secretManager.send=(async(c:any)=>{
+  if(c.constructor.name==='PutSecretValueCommand'){assert.equal(mode,'mysql');assert.ok(c.input.SecretString.startsWith('mysql://'));return {VersionId:'url-version'};}
+  if(mode==='mongodb'){if(c.input.SecretId===arn+'-ca')return {SecretString:'-----BEGIN CERTIFICATE-----',VersionId:'ca-version'};assert.equal(c.input.SecretId,arn);return {SecretString:`mongodb://app:password@10.42.0.50:27017,10.42.1.50:27017,10.42.2.50:27017/${config.dbName}?authSource=${config.dbName}&replicaSet=shakedown&tls=true&tlsCAFile=/run/shakedown/db-ca/ca.pem`,VersionId:'url-version'};}
+  return c.input.SecretId===arn?{SecretString:'{}',VersionId:'empty'}:{SecretString:JSON.stringify({password:'private@%value'}),VersionId:'password-version'};
+ }) as typeof fake.provider.secretManager.send;
+ t.mock.method(globalThis,'fetch',async()=>new Response('',{status:fake.route}));
+ const runtime={version:'http-runtime.v1',port:8080,health_path:'/',env:{},secret_refs:{},database:{mode,name:config.dbName!,bindings:{DATABASE_URL:mode+'_url'}},init_command:[]};
+ const r=requestSchema.parse({...request,env:{},runtime});
+ await fake.provider.deploy(r,AbortSignal.timeout(2000),()=>{});
+ const app=(fake.definitions[0] as any).containerDefinitions[0];
+ assert.equal(app.secrets[0].valueFrom,`${arn}:::url-version`);
+ assert.ok(!app.environment.some((v:any)=>v.name==='DATABASE_URL'));
+ if(mode==='mongodb'){const ca=(fake.definitions[0] as any).containerDefinitions[1];assert.equal(ca.name,'database-ca');assert.equal(ca.secrets[0].valueFrom,arn+'-ca:::ca-version');assert.equal(app.mountPoints[0].readOnly,true);assert.equal(app.dependsOn[0].condition,'SUCCESS');}
+ fake.provider.config.dbEngine='postgres';
+ assert.throws(()=>fake.provider.validate(r),/engine does not match/);
+});
+
+test('MongoDB infrastructure has app-only ingress, encrypted persistent EBS and scheduled backup',()=>{
+ const f=YAML.parse(readFileSync(new URL('../cloudformation/foundation.yaml',import.meta.url),'utf8'));
+ assert.deepEqual(f.Resources.MongoSg.Properties.SecurityGroupIngress,[{IpProtocol:'tcp',FromPort:27017,ToPort:27017,SourceSecurityGroupId:{Ref:'AppSg'}}]);
+ assert.equal(f.Resources.MongoData.Properties.Encrypted,true);
+ assert.equal(f.Resources.MongoData.DeletionPolicy,'Snapshot');
+ assert.equal(f.Resources.MongoSnapshotPolicy.Properties.PolicyDetails.Schedules[0].RetainRule.Count,7);
+ for(const node of ['MongoInstance','MongoInstance2','MongoInstance3'])assert.ok(f.Resources[node].Properties.UserData['Fn::Base64']['Fn::Sub'].includes('--tlsMode requireTLS'));
+ assert.equal(f.Resources.MongoReady.Type,'AWS::CloudFormation::WaitCondition');
+ assert.equal(f.Resources.MongoInstance.Properties.MetadataOptions.HttpTokens,'required');
+});
+
+
+test('Mongo bootstrap shell parses and incomplete replica configuration fails before AWS calls',()=>{
+ const f=YAML.parse(readFileSync(new URL('../cloudformation/foundation.yaml',import.meta.url),'utf8'));
+ const script=f.Resources.MongoInstance.Properties.UserData['Fn::Base64']['Fn::Sub'].replace(/\$\{[^}]+\}/g,'placeholder');
+ const syntax=spawnSync('bash',['-n'],{input:script,encoding:'utf8'});
+ assert.equal(syntax.status,0,syntax.stderr);
+ const fake=setup();fake.provider.config={...config,dbEngine:'mongodb'};
+ const runtime={version:'http-runtime.v1',port:8080,health_path:'/',env:{},secret_refs:{},database:{mode:'mongodb',name:config.dbName,bindings:{DATABASE_URL:'mongodb_url'}},init_command:[]};
+ const r=requestSchema.parse({...request,env:{},runtime,architecture:{version:'aws-architecture.v1',template_id:'medium'}});
+ assert.throws(()=>fake.provider.validate(r),/TLS replica set configuration/);
+ assert.equal(fake.actions.length,0);
+});
+
+test('all three Mongo bootstrap scripts match source and retry replica initialization',()=>{
+ const f=YAML.parse(readFileSync(new URL('../cloudformation/foundation.yaml',import.meta.url),'utf8'));
+ const source=readFileSync(new URL('../scripts/mongodb-node.sh',import.meta.url),'utf8');
+ for(let i=0;i<3;i++){
+  const suffix=i===0?'':String(i+1);
+  const expected=source.replaceAll('@@INDEX@@',String(i)).replaceAll('@@VOLUME@@','${MongoData'+suffix+'}');
+  assert.equal(f.Resources['MongoInstance'+suffix].Properties.UserData['Fn::Base64']['Fn::Sub'],expected);
+ }
+ assert.ok(source.includes('if docker exec shakedown-mongo mongosh --quiet --tls --tlsCAFile /security/ca.pem /tmp/configure.js'));
+ assert.equal(f.Resources.MongoSnapshotPolicy.Condition,'WithMongoSnapshots');
 });

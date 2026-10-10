@@ -6,6 +6,8 @@ container with a configurable port and health path. The application must bind
 `0.0.0.0`, read its configured port, and return HTTP 200 from its health endpoint.
 Runtime settings are explicit user inputs, not facts guessed by the LLM.
 
+For MySQL/MongoDB setup, driver/TLS requirements and EC2 backup/recovery, see [managed databases](managed-databases.md).
+
 ## Database modes
 
 - `none`: no local PostgreSQL service, no Spring variables, no DB secret or
@@ -14,6 +16,7 @@ Runtime settings are explicit user inputs, not facts guessed by the LLM.
   instance already configured in the adapter. Map environment variable names
   to `host`, `port`, `name`, `username`, `password`, `jdbc_url`, or `postgres_url`. The password
   is resolved by the adapter/Secrets Manager and never stored in project JSON.
+- `mysql` / `mongodb`: automatically provision local official-image containers; AWS uses prepared RDS MySQL / three-AZ TLS MongoDB replica set respectively. Use matching `mysql_url` / `mongodb_url` bindings. MongoDB AWS uses a fixed three-member TLS replica set.
 - `external`: pass the app's existing connection through adapter-registered
   secret references. No DB is provisioned or resized. Network reachability,
   credentials and TLS options for the external PostgreSQL endpoint are the
@@ -140,6 +143,5 @@ architecture selection and direct engine build. `external` is not subject to
 managed RDS compatibility checks; local persistence warnings still apply.
 Unknown DB detection is not proof of a DB-free app.
 
-Validation: engine 275 tests, local 10 tests, AWS SDK 33 tests; CloudFormation
-lint, TypeScript, web lint/build. AWS tests use SDK doubles: the new URL-secret
-path and external IAM grants have not been redeployed to a live AWS account.
+Latest validation: engine 278 tests, local 12 tests, AWS SDK 44 tests; CloudFormation
+lint, TypeScript, web lint/build. AWS tests use SDK doubles. The PostgreSQL URL synchronization path and external IAM grants have not been redeployed to a live AWS account. The later MongoDB TLS replica-set path was live-tested; see [results](experiments/2026-10-10-mongodb-tls-failover.md).

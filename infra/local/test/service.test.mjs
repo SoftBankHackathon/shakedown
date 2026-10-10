@@ -128,3 +128,14 @@ test('managed PostgreSQL URL binding encodes credentials and stays out of logs',
   const runner=new DockerRuntime('/tmp',{password});
   assert.ok(!runner.redact(uri.href).includes(encodeURIComponent(password)));
 });
+
+for(const mode of ['mysql','mongodb'])test(`${mode} creates isolated database, matching URL and persistent volume`,()=>{
+ const r={version:'http-runtime.v1',port:3000,health_path:'/',env:{},secret_refs:{},database:{mode,name:'app',bindings:{DATABASE_URL:mode+'_url'}},init_command:[]};
+ const spec=composeSpec({runtime:r,image:'test'},'test@%$');
+ const url=new URL(spec.services.app.environment.DATABASE_URL);
+ assert.equal(decodeURIComponent(url.password),'test@%$');assert.equal(url.protocol,mode+':');
+ assert.equal(spec.services.db.ports,undefined);assert.ok(spec.services.db.volumes.length);
+ assert.equal(spec.services.app.depends_on.db.condition,'service_healthy');
+ if(mode==='mongodb'){assert.equal(url.searchParams.get('authSource'),'app');assert.ok(spec.configs['mongo-init'].content.includes("role:'readWrite'"));}
+ assert.throws(()=>composeSpec({runtime:{...r,database:{...r.database,bindings:{DATABASE_URL:'postgres_url'}}},image:'test'},'test'));
+});

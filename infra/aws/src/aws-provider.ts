@@ -1,9 +1,9 @@
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { synchronizeDatabaseUrl } from './database-url.js';
-import { databaseEnvironment } from '../../../packages/contracts/runtime.mjs';
+import { databaseEnvironment, managedDatabase } from '../../../packages/contracts/runtime.mjs';
 import { architectures } from './architecture.js';
 import { RDSClient, DescribeDBInstancesCommand, ModifyDBInstanceCommand } from '@aws-sdk/client-rds';
-import { EC2Client, DescribeSubnetsCommand } from '@aws-sdk/client-ec2';
+import { EC2Client, DescribeSubnetsCommand, DescribeInstancesCommand } from '@aws-sdk/client-ec2';
 import { ApplicationAutoScalingClient, RegisterScalableTargetCommand, DeregisterScalableTargetCommand, DescribeScalableTargetsCommand, PutScalingPolicyCommand } from '@aws-sdk/client-application-auto-scaling';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fromIni } from '@aws-sdk/credential-providers';
@@ -52,19 +52,20 @@ export class AwsProvider implements Provider {
     const mediaType = image.imageDetails?.[0]?.imageManifestMediaType;
     if (!mediaType || mediaType.includes('index') || mediaType.includes('manifest.list')) throw new Error('A single Linux AMD64 image manifest is required; publish with --provenance=false --sbom=false');
     const runtime=request.runtime;
-    const urlSecrets = runtime?.database.mode==='postgres' && Object.values(runtime.database.bindings).includes('postgres_url')
+    const urlSecrets = runtime && managedDatabase(runtime.database.mode) && Object.values(runtime.database.bindings).some(v=>['postgres_url','mysql_url','mongodb_url'].includes(v))
       ? await synchronizeDatabaseUrl(this.secretManager,c,signal) : undefined;
     const genericEnv=runtime ? {...runtime.env,PORT:String(runtime.port),TZ:request.options.tz,
-      ...(runtime.database.mode==='postgres'?databaseEnvironment(runtime,{host:c.dbHost!,username:c.dbUsername!,ssl:true}):{})} : {};
+      ...(managedDatabase(runtime.database.mode)?databaseEnvironment(runtime,{host:c.dbHost!,username:c.dbUsername!,ssl:c.dbEngine!=='mongodb'}):{})} : {};
     const genericSecrets=runtime ? [
       ...Object.entries(runtime.secret_refs).map(([name,ref])=>({name,valueFrom:c.secrets[ref]})),
       ...Object.entries(runtime.database.bindings).filter(([,v])=>v==='password').map(([name])=>({name,valueFrom:urlSecrets?.passwordReference ?? `${c.dbPasswordSecretArn}:password::`})),
-      ...Object.entries(runtime.database.bindings).filter(([,v])=>v==='postgres_url').map(([name])=>({name,valueFrom:urlSecrets!.urlReference})),
+      ...Object.entries(runtime.database.bindings).filter(([,v])=>['postgres_url','mysql_url','mongodb_url'].includes(v)).map(([name])=>({name,valueFrom:urlSecrets!.urlReference})),
     ] : [];
     const result = await this.ecs.send(new RegisterTaskDefinitionCommand({
       family: c.serviceName, networkMode: 'awsvpc', requiresCompatibilities: ['FARGATE'], cpu: request.architecture ? architectures[request.architecture.template_id].cpu : '512', memory: request.architecture ? architectures[request.architecture.template_id].memory : '1024',
       runtimePlatform: { cpuArchitecture: 'X86_64', operatingSystemFamily: 'LINUX' },
       executionRoleArn: c.executionRoleArn, taskRoleArn: c.taskRoleArn,
+      ...(runtime?.database.mode==='mongodb'?{volumes:[{name:'database-ca'}]}:{}),
       containerDefinitions: [{ name: 'app', image: request.image, essential: true,
         portMappings: [{ containerPort: c.port, protocol: 'tcp' }],
         environment: Object.entries(runtime ? genericEnv : {
@@ -74,10 +75,11 @@ export class AwsProvider implements Provider {
           SPRING_PROFILES_ACTIVE: initialize ? 'schema-init' : (request.env.SPRING_PROFILES_ACTIVE ?? 'demo,session-memory'),
           SERVER_PORT: String(c.port), TZ: request.options.tz,
         }).map(([name, value]) => ({ name, value })),
+        ...(runtime?.database.mode==='mongodb'?{mountPoints:[{sourceVolume:'database-ca',containerPath:'/run/shakedown/db-ca',readOnly:true}],dependsOn:[{containerName:'database-ca',condition:'SUCCESS' as const}]}:{}),
         secrets: runtime ? genericSecrets : [{ name: 'SPRING_DATASOURCE_PASSWORD', valueFrom: `${c.dbPasswordSecretArn}:password::` }],
         ...(initialize && runtime ? {entryPoint:[runtime.init_command[0]],command:runtime.init_command.slice(1)} : {}),
         logConfiguration: { logDriver: 'awslogs', options: { 'awslogs-group': c.logGroup, 'awslogs-region': c.region, 'awslogs-stream-prefix': request.deployment_id } },
-      }],
+      },...(runtime?.database.mode==='mongodb'?[{name:'database-ca',image:'alpine:3.22',essential:false,entryPoint:['/bin/sh','-c'],command:['printf \'%s\' "$CA_PEM" > /certs/ca.pem && chmod 0444 /certs/ca.pem'],secrets:[{name:'CA_PEM',valueFrom:urlSecrets!.caReference!}],mountPoints:[{sourceVolume:'database-ca',containerPath:'/certs',readOnly:false}]}]:[])],
     }), { abortSignal: signal });
     if (!result.taskDefinition?.taskDefinitionArn) throw new Error('ECS task definition ARN missing');
     return result.taskDefinition.taskDefinitionArn;
@@ -86,12 +88,13 @@ export class AwsProvider implements Provider {
     const c = this.config;
     this.validate(request);
     await this.verifyAccount(); signal.throwIfAborted();
+    if(request.runtime?.database.mode==='mongodb') await this.checkMongo(signal);
     if (request.architecture) await this.checkFoundation(request, signal);
     await phase('close_route', log, () => this.closeRoute(signal));
     log('route closed: new deployment is preparing');
     // Stop previous scaling before a rollout; never allow it to undo desiredCount.
     if (c.dbInstanceId || !c.dbHost) await this.removeScaling(signal);
-    if (request.architecture && (!request.runtime || request.runtime.database.mode==='postgres')) {
+    if (request.architecture && (!request.runtime || ['postgres','mysql'].includes(request.runtime.database.mode))) {
       await phase('database_architecture', log, () => this.configureDatabase(request, signal));
     }
     if (request.runtime ? request.runtime.init_command.length>0 : !!request.architecture) await phase('schema_init', log, () => this.initialize(request, log, signal));
@@ -120,7 +123,7 @@ export class AwsProvider implements Provider {
     log('public health check passed: HTTP 200 without cookies');
     return { url: c.publicUrl, instances: actual.count, info: {
       architecture: request.architecture?.template_id ?? 'legacy',
-      runtime: 'ECS Fargate', database: request.runtime?.database.mode==='none'?'none':request.runtime?.database.mode==='external'?'external':'RDS PostgreSQL 17', timezone: actual.tz,
+      runtime: 'ECS Fargate', database: request.runtime?.database.mode==='none'?'none':request.runtime?.database.mode==='external'?'external':(c.dbEngine==='mongodb'?'MongoDB TLS replica set (3 AZ)':`RDS ${c.dbEngine}`), timezone: actual.tz,
       session: request.runtime ? 'app-managed' : actual.profile.includes('session-jdbc') ? 'jdbc' : 'memory', sticky_sessions: 'false',
       image_digest: actual.digest, task_definition: taskDefinition, transport: 'HTTP (demo)',
     } };
@@ -189,7 +192,7 @@ export class AwsProvider implements Provider {
       if ((!status.services?.[0] || status.services[0].status === 'INACTIVE') && !remaining.taskArns?.length) break;
       await sleep(2_000, undefined, { signal });
     }
-    log('ECS service stopped; RDS and CloudWatch logs retained');
+    log('ECS service stopped; database infrastructure and CloudWatch logs retained');
   }
   async appLogs(id: string, since?: string): Promise<LogLine[]> {
     const signal = AbortSignal.timeout(15_000);
@@ -207,13 +210,20 @@ export class AwsProvider implements Provider {
     const state = await this.scaling.send(new DescribeScalableTargetsCommand({ ServiceNamespace: 'ecs', ResourceIds: [ResourceId], ScalableDimension: 'ecs:service:DesiredCount' }), { abortSignal: signal });
     if (state.ScalableTargets?.length) await this.scaling.send(new DeregisterScalableTargetCommand({ ServiceNamespace: 'ecs', ResourceId, ScalableDimension: 'ecs:service:DesiredCount' }), { abortSignal: signal });
   }
+  private async checkMongo(signal:AbortSignal) {
+    const result=await this.ec2.send(new DescribeInstancesCommand({InstanceIds:this.config.dbInstanceIds}),{abortSignal:signal});
+    const instances=result.Reservations?.flatMap(r=>r.Instances??[])??[];
+    const network=await this.ec2.send(new DescribeSubnetsCommand({SubnetIds:this.config.subnetIds}),{abortSignal:signal});
+    if(instances.length!==3||instances.filter(i=>i.State?.Name==='running').length<2||instances.some(i=>!this.config.dbHosts?.includes(i.PrivateIpAddress??''))||new Set(instances.map(i=>i.Placement?.AvailabilityZone)).size!==3||network.Subnets?.length!==this.config.subnetIds.length||instances.some(i=>i.VpcId!==network.Subnets?.[0].VpcId))throw new Error('MongoDB replica set EC2 state/address/AZ/VPC does not match configuration');
+  }
+
   private async checkFoundation(request: DeployRequest, signal: AbortSignal) {
     const spec = architectures[request.architecture!.template_id];
     const subnets = await this.ec2.send(new DescribeSubnetsCommand({ SubnetIds: this.config.subnetIds.slice(0, spec.azs) }), { abortSignal: signal });
     if (subnets.Subnets?.length !== spec.azs || new Set(subnets.Subnets.map(s => s.AvailabilityZone)).size !== spec.azs || new Set(subnets.Subnets.map(s => s.VpcId)).size !== 1) throw new Error('선택 구성의 AZ별 서브넷이 필요합니다. 기반 스택 설정을 갱신하세요.');
-    if (request.runtime && request.runtime.database.mode!=='postgres') return;
+    if (request.runtime && !['postgres','mysql'].includes(request.runtime.database.mode)) return;
     const db = (await this.rds.send(new DescribeDBInstancesCommand({ DBInstanceIdentifier: this.config.dbInstanceId }), { abortSignal: signal })).DBInstances?.[0];
-    if (!db || db.Engine !== 'postgres' || db.Endpoint?.Address !== this.config.dbHost || db.DBSubnetGroup?.VpcId !== subnets.Subnets[0].VpcId) throw new Error('준비된 PostgreSQL DB/네트워크가 어댑터 설정과 일치하지 않습니다.');
+    if (!db || db.Engine !== this.config.dbEngine || db.Endpoint?.Address !== this.config.dbHost || db.DBSubnetGroup?.VpcId !== subnets.Subnets[0].VpcId) throw new Error('준비된 DB 엔진/네트워크가 어댑터 설정과 일치하지 않습니다.');
   }
   private async configureDatabase(request: DeployRequest, signal: AbortSignal) {
     const multi = architectures[request.architecture!.template_id].multiAZ;

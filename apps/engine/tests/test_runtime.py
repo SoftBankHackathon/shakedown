@@ -122,5 +122,15 @@ def test_direct_deployment_blocks_database_mismatch(tmp_path,monkeypatch):
     monkeypatch.setattr('engine.analyzer.ImageRepoAnalyzer.analyze',lambda *_:SimpleNamespace(database='mysql'))
     runner=LocalRunner()
     runner.command=lambda *a,**kw:pytest.fail('Must not build or execute on a DB conflict')
-    with pytest.raises(DeploymentError,match='PostgreSQL'):
+    with pytest.raises(DeploymentError,match='DB 엔진'):
         runner.build(SimpleNamespace(repo=str(tmp_path),runtime=runtime('postgres')),'test')
+
+@pytest.mark.parametrize('mode', ['mysql', 'mongodb'])
+def test_additional_database_runtime(mode):
+    from engine.runtime import HttpRuntime, database_conflict
+    r=HttpRuntime.model_validate({'port':3000,'database':{'mode':mode,'name':'app','bindings':{'DATABASE_URL':mode+'_url'}}})
+    assert r.database.mode==mode
+    assert database_conflict(mode,mode) is None
+    assert database_conflict(mode,'postgresql')
+    with pytest.raises(ValueError):
+        HttpRuntime.model_validate({'port':3000,'database':{'mode':mode,'name':'app','bindings':{'DATABASE_URL':'postgres_url'}}})

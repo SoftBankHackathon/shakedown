@@ -7,11 +7,11 @@ import { AwsProvider } from '../src/aws-provider.js';
 import { architectures } from '../src/architecture.js';
 const config = configSchema.parse({ ...JSON.parse(readFileSync(new URL('../config.example.json',import.meta.url),'utf8')), dbInstanceId:'test-db', subnetIds:['subnet-a','subnet-b','subnet-c'] });
 const image=config.repositoryUri+'@sha256:'+'a'.repeat(64);
-for (const tier of ['small','medium','large'] as const) {
-  test(`${tier}: actual adapter command flow applies resources, AZs, DB and scaling`, async t=>{
+for (const engine of ['postgres','mysql'] as const) for (const tier of ['small','medium','large'] as const) {
+  test(`${engine}/${tier}: actual adapter command flow applies resources, AZs, DB and scaling`, async t=>{
     const spec=architectures[tier];
-    const request=requestSchema.parse({deployment_id:'dep_archtest',project_id:config.projectId,image,port:8080,health_path:'/',env:{SPRING_PROFILES_ACTIVE:'demo,session-jdbc'},options:{replicas:spec.min},architecture:{version:'aws-architecture.v1',template_id:tier}});
-    const provider=new AwsProvider(config); const commands: {name:string,input:any}[]=[];
+    const request=requestSchema.parse({deployment_id:'dep_archtest',project_id:config.projectId,image,port:8080,health_path:'/',...(engine==='mysql'?{env:{},runtime:{version:'http-runtime.v1',port:8080,health_path:'/',env:{},secret_refs:{},database:{mode:'mysql',name:config.dbName,bindings:{DB_PASSWORD:'password'}},init_command:['node','migrate.mjs']}}:{env:{SPRING_PROFILES_ACTIVE:'demo,session-jdbc'}}),options:{replicas:spec.min},architecture:{version:'aws-architecture.v1',template_id:tier}});
+    const provider=new AwsProvider({...config,dbEngine:engine}); const commands: {name:string,input:any}[]=[];
     let route=403, exists=false, multi=!spec.multiAZ, checks=0;
     // DB polling interval is skipped by returning desired state after the first read.
     const tasks=Array.from({length:spec.min},(_,i)=>({lastStatus:'RUNNING',availabilityZone:`az${i}`,taskDefinitionArn:'app-definition',containers:[{name:'app',imageDigest:image.split('@')[1]}],attachments:[{details:[{name:'privateIPv4Address',value:`10.0.${i}.10`}]}]}));
@@ -21,13 +21,13 @@ for (const tier of ['small','medium','large'] as const) {
     provider.rds.send=(async(c:any)=>{
       commands.push({name:c.constructor.name,input:c.input});
       if(c.constructor.name==='ModifyDBInstanceCommand'){multi=c.input.MultiAZ;return {};}
-      checks++; return {DBInstances:[{Engine:'postgres',Endpoint:{Address:config.dbHost},DBSubnetGroup:{VpcId:'vpc-test'},DBInstanceStatus:'available',MultiAZ:multi,PendingModifiedValues:{}}]};
+      checks++; return {DBInstances:[{Engine:engine,Endpoint:{Address:config.dbHost},DBSubnetGroup:{VpcId:'vpc-test'},DBInstanceStatus:'available',MultiAZ:multi,PendingModifiedValues:{}}]};
     }) as typeof provider.rds.send;
     provider.scaling.send=(async(c:any)=>{commands.push({name:c.constructor.name,input:c.input});return {ScalableTargets:[{}]};}) as typeof provider.scaling.send;
     provider.ecs.send=(async(c:any)=>{
       commands.push({name:c.constructor.name,input:c.input});
       switch(c.constructor.name){
-        case 'RegisterTaskDefinitionCommand':return {taskDefinition:{taskDefinitionArn:c.input.containerDefinitions[0].environment.find((e:any)=>e.name==='SPRING_PROFILES_ACTIVE').value==='schema-init'?'init-definition':'app-definition'}};
+        case 'RegisterTaskDefinitionCommand':return {taskDefinition:{taskDefinitionArn:(c.input.containerDefinitions[0].entryPoint || c.input.containerDefinitions[0].environment.find((e:any)=>e.name==='SPRING_PROFILES_ACTIVE')?.value==='schema-init')?'init-definition':'app-definition'}};
         case 'RunTaskCommand': return {tasks:[{taskArn:'init-task'}]};
         case 'DescribeServicesCommand': return {services:exists?[{status:'ACTIVE',pendingCount:0,deployments:[{taskDefinition:'app-definition',rolloutState:'COMPLETED'}]}]:[]};
         case 'CreateServiceCommand': exists=true;return {};

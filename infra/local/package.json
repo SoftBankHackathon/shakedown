@@ -9,5 +9,9 @@
     "start": "node --env-file-if-exists=.env server.mjs",
     "test": "node --test test/*.test.mjs",
     "demo": "node demo.mjs"
+  },
+  "devDependencies": {
+    "mongodb": "^7.7.0",
+    "mysql2": "^3.24.5"
   }
 }

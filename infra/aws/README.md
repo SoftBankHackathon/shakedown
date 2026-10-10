@@ -213,4 +213,16 @@ provision.sh에서 `HACKATHON_ADDITIONAL_SECRET_ARNS`에 정확한 ARN을 쉼표
 태스크 정의에 Secret 버전을 고정하므로 실행 중 태스크는 자동 갱신되지 않습니다.
 마이그레이션·배포 중 회전은 피하고, 완료 후 새 배포로 반영합니다.
 URL Secret도 Retain 대상이므로 실험 종료 후 별도 정리해야 합니다.
-이번 변경은 SDK 테스트/템플릿 lint로 검증했고 실제 AWS 재배포는 수행하지 않았습니다.
+위 PostgreSQL URL 변경은 SDK 테스트/템플릿 lint로 검증했고 실제 AWS 재배포는 수행하지 않았습니다. 이후 MongoDB TLS 경로의 실측은 아래 기록을 참조하세요.
+
+
+### MySQL / TLS MongoDB replica set
+
+[구성·드라이버 설정·백업/복구](../../docs/managed-databases.md)를 참조하세요.
+`HACKATHON_DATABASE_ENGINE=mysql|mongodb`로 새 전용 스택을 준비하고 outputs/config를
+재생성합니다. 기존 DB 엔진 변경은 provisioning helper가 거부합니다.
+MongoDB는 3 AZ TLS replica set이며 CA를 ECS 앱에 읽기 전용 파일로 전달합니다.
+[실제 TLS/장애 전환 실험](../../docs/experiments/2026-10-10-mongodb-tls-failover.md)에서
+EC2 중지와 primary 프로세스 강제 종료 후 쓰기 복구를 확인했습니다.
+DLM 일일 스냅샷/최근 7개 보존 설정은 제공하지만 실험 계정 SCP로 활성화하지 못했고
+복구는 미검증입니다. AWS MySQL은 SDK 경로 검증이며 이번에 실제 RDS를 만들지는 않았습니다.

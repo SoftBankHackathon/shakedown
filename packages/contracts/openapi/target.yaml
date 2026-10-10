@@ -303,6 +303,8 @@ components:
           enum:
           - none
           - postgres
+          - mysql
+          - mongodb
           - external
           title: Mode
           type: string
@@ -321,6 +323,8 @@ components:
             - password
             - jdbc_url
             - postgres_url
+            - mysql_url
+            - mongodb_url
             type: string
           title: Bindings
           type: object
