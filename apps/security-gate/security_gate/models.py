@@ -31,3 +31,14 @@ def report(target, files=None, error=None):
         "scan_status": status, "decision": decision, "files": files,
         "errors": [error] if error else [],
     }
+
+
+# Aggregators combine tool decisions by severity; the first present wins.
+DECISION_ORDER = ("SCAN_FAILED", "DENY", "REVIEW", "ALLOW")
+REASON_CODES = {"SCAN_FAILED": "REQUIRED_SCAN_FAILED", "DENY": "RISK_DETECTED",
+                "REVIEW": "REVIEW_REQUIRED", "ALLOW": "ALL_APPLICABLE_CHECKS_PASSED"}
+
+
+def combine_decisions(decisions):
+    present = set(decisions)
+    return next(value for value in DECISION_ORDER if value in present)

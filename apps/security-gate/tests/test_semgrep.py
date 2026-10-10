@@ -184,6 +184,7 @@ def test_command_uses_only_local_rules_and_isolated_sources(monkeypatch):
 
 def test_default_cli_matches_working_probe_arguments(monkeypatch):
     calls = []
+    monkeypatch.setattr(semgrep, "find_executable", lambda: "mock-semgrep")
     monkeypatch.setattr(semgrep, "run_cli", output_runner(calls=calls))
     report = semgrep.scan_semgrep(FIXTURES / "safe")
     probe_calls = []
@@ -243,6 +244,7 @@ def test_default_cli_serializes_shared_runtime(monkeypatch):
             with lock:
                 active -= 1
 
+    monkeypatch.setattr(semgrep, "find_executable", lambda: "mock-semgrep")
     monkeypatch.setattr(semgrep, "run_cli", fake_cli)
     def scan(_):
         start.wait(timeout=10)

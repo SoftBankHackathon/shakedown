@@ -170,10 +170,9 @@ def normalize(payload, base, inputs_dir, mapping):
 def _scan_snapshot(target, executable, base, deadline, max_file_bytes, runner):
     version = _version(runner([executable, "version"], cwd=base, env=environment(base),
                               timeout=max(0.000001, deadline - time.monotonic())))
-    excluded = []
-    root, inputs = text_files(target, max_file_bytes, excluded)
+    root, inputs, excluded = text_files(target, max_file_bytes)
     if not inputs:
-        return result(root, version=version, applicable=False, excluded=len(excluded))
+        return result(root, version=version, applicable=False, excluded=excluded)
     validate_target(CONFIG_FILE)
     read_bounded(CONFIG_FILE, 64 * 1024)
     inputs_dir = base / "input"
@@ -211,7 +210,7 @@ def _scan_snapshot(target, executable, base, deadline, max_file_bytes, runner):
     error = "GITLEAKS_SCAN_ERRORS" if completed.stderr else None
     if (completed.returncode == FINDINGS_EXIT_CODE) != bool(findings):
         error = error or "GITLEAKS_INCONSISTENT_RESULT"
-    return result(root, findings=findings, error=error, version=version, scanned=len(inputs), excluded=len(excluded))
+    return result(root, findings=findings, error=error, version=version, scanned=len(inputs), excluded=excluded)
 
 
 def scan_gitleaks(target, *, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, max_file_bytes=1024 * 1024, runner=None):

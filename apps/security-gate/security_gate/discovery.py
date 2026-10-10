@@ -10,6 +10,9 @@ COMPOSE_NAMES = frozenset({"compose.yaml", "compose.yml", "docker-compose.yaml",
 MAX_ENTRIES = 10_000
 MAX_FILES = 256
 MAX_DIRECTORY_DEPTH = 64
+# Dependency, VCS and scratch directories never hold application source or secrets to report.
+EXCLUDED_DIRECTORIES = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__",
+                                  ".pytest_cache", ".pytest-tmp", ".tmp", ".pip-cache"})
 
 
 def is_link(metadata):
@@ -61,3 +64,33 @@ def discover(target):
                     if len(found) > MAX_FILES:
                         raise ScanError("DISCOVERY_LIMIT_EXCEEDED")
     return sorted(found)
+
+
+def iter_files(root, *, limit_code):
+    """Yield regular files under root, skipping EXCLUDED_DIRECTORIES by name.
+
+    Fails closed on links and non-regular entries. Callers apply their own file
+    count limit to the subset they keep, so entry and depth limits live here.
+    """
+    pending, visited = [(root, 0)], 0
+    while pending:
+        directory, depth = pending.pop()
+        if depth > MAX_DIRECTORY_DEPTH:
+            raise ScanError(limit_code)
+        if is_link(directory.lstat()):
+            raise ScanError("SYMLINK_OR_REPARSE_POINT")
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                visited += 1
+                if visited > MAX_ENTRIES:
+                    raise ScanError(limit_code)
+                metadata = entry.stat(follow_symlinks=False)
+                if is_link(metadata):
+                    raise ScanError("SYMLINK_OR_REPARSE_POINT")
+                if stat.S_ISDIR(metadata.st_mode):
+                    if entry.name not in EXCLUDED_DIRECTORIES:
+                        pending.append((Path(entry.path), depth + 1))
+                elif not stat.S_ISREG(metadata.st_mode):
+                    raise ScanError("UNSUPPORTED_PATH_TYPE")
+                else:
+                    yield Path(entry.path)

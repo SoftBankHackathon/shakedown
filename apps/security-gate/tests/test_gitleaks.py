@@ -10,7 +10,7 @@ import jsonschema
 import pytest
 from referencing import Registry, Resource
 
-from security_gate import gitleaks, secret_targets
+from security_gate import discovery, gitleaks, secret_targets
 from security_gate.gate3 import scan_full_repository
 from security_gate.models import ScanError
 
@@ -228,7 +228,7 @@ def test_unsupported_or_oversized_targets_fail_closed(tmp_path, source, limit, e
 
 
 def test_link_branch_rejects_before_copy(monkeypatch):
-    monkeypatch.setattr(secret_targets, "is_link", lambda metadata: True)
+    monkeypatch.setattr(discovery, "is_link", lambda metadata: True)
     report = gitleaks.scan_gitleaks(FIXTURES / "safe", runner=runner())
     assert report["errors"] == ["SYMLINK_OR_REPARSE_POINT"]
 

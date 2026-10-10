@@ -7,8 +7,9 @@ import signal
 import subprocess
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import errno
+from functools import partial
 
 from .discovery import validate_target
 from .models import ScanError
@@ -20,6 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RULE_FILE = PROJECT_ROOT / "semgrep_rules" / "python-security.yml"
 JAVA_RULE_FILE = PROJECT_ROOT / "semgrep_rules" / "java-security.yml"
 WEB_RULE_FILE = PROJECT_ROOT / "semgrep_rules" / "javascript-typescript-security.yml"
+RULE_FILES = (RULE_FILE, JAVA_RULE_FILE, WEB_RULE_FILE)
 RULES = {
     "security-gate-python-eval": ("HIGH", "PYTHON_DYNAMIC_EVAL"),
     "security-gate-python-shell-true": ("HIGH", "PYTHON_SHELL_EXECUTION"),
@@ -67,7 +69,7 @@ def environment(snapshot):
     allowed = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL"}
     env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
     env.update({
-        "HOME": str(snapshot), "USERPROFILE": str(snapshot), "APPDATA": str(snapshot / ".config"),
+        "APPDATA": str(snapshot / ".config"),
         "LOCALAPPDATA": str(snapshot / ".cache"), "XDG_CONFIG_HOME": str(snapshot / ".config"),
         "XDG_CACHE_HOME": str(snapshot / ".cache"), "TMPDIR": str(snapshot),
         "TEMP": str(snapshot), "TMP": str(snapshot),
@@ -77,13 +79,11 @@ def environment(snapshot):
     })
     if os.name == "nt":
         # Match the logged-in profile used by the working direct Windows CLI.
-        # Keep settings, caches, and temporary files in the disposable snapshot.
-        env.pop("HOME", None)
-        profile = os.environ.get("USERPROFILE")
-        if profile:
-            env["USERPROFILE"] = profile
-        else:
-            env.pop("USERPROFILE", None)
+        # Settings, caches and temporary files still stay in the disposable snapshot.
+        if os.environ.get("USERPROFILE"):
+            env["USERPROFILE"] = os.environ["USERPROFILE"]
+    else:
+        env["HOME"] = env["USERPROFILE"] = str(snapshot)
     return env
 
 
@@ -231,14 +231,14 @@ def scan_semgrep(target, *, timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
     coverage = empty_coverage()
     try:
         root, inputs = sources(target, max_file_bytes, coverage)
+        done = partial(result, root, coverage=coverage)
         if not inputs:
-            return result(root, applicable=False, coverage=coverage)
-        validate_sources(inputs, timeout_seconds=deadline - time.monotonic())
+            return done(applicable=False)
         executable = find_executable()
         if executable is None and runner is None:
-            return result(root, error="SEMGREP_NOT_INSTALLED", coverage=coverage)
-        rule_files = [RULE_FILE, JAVA_RULE_FILE, WEB_RULE_FILE]
-        for rule_file in rule_files:
+            return done(error="SEMGREP_NOT_INSTALLED")
+        validate_sources(inputs, timeout_seconds=deadline - time.monotonic())
+        for rule_file in RULE_FILES:
             validate_target(rule_file)
             read_bounded(rule_file, 64 * 1024)
         temporary_root = PROJECT_ROOT / ".tmp"
@@ -253,40 +253,35 @@ def scan_semgrep(target, *, timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
                 mapping[name] = unit
             (snapshot / ".semgrepignore").write_text("", encoding="utf-8")
             command = [executable or "mock-semgrep", "scan",
-                       *[arg for rule_file in rule_files for arg in ("--config", str(rule_file))],
+                       *[arg for rule_file in RULE_FILES for arg in ("--config", str(rule_file))],
                        "--json", "--error", "--strict", "--oss-only", "--metrics", "off",
                        "--disable-version-check", "--disable-nosem", "--no-git-ignore",
                        "--no-rewrite-rule-ids", "--no-secrets-validation", "--jobs", "1",
                        "--timeout", "5", "--timeout-threshold", "1", "--max-memory", "256",
                        "--max-target-bytes", str(max_file_bytes), "--",
                        *(str(snapshot / name) for name in mapping)]
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise subprocess.TimeoutExpired(command, timeout_seconds)
             # The working direct CLI probe uses the common .tmp runtime root;
             # source files still live in a separate snapshot for each scan.
             env = environment(temporary_root)
-            if runner is None:
-                with _runtime_lock(temporary_root, deadline):
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise subprocess.TimeoutExpired(command, timeout_seconds)
-                    completed = run_cli(command, cwd=PROJECT_ROOT, env=env, timeout=remaining)
-            else:
-                completed = runner(command, cwd=PROJECT_ROOT, env=env, timeout=remaining)
+            # Only the real CLI shares the runtime root, so only it takes the lock.
+            with _runtime_lock(temporary_root, deadline) if runner is None else nullcontext():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout_seconds)
+                completed = (runner or run_cli)(command, cwd=PROJECT_ROOT, env=env, timeout=remaining)
             if completed.returncode not in (0, 1):
-                return result(root, error="SEMGREP_EXECUTION_FAILED", coverage=coverage)
+                return done(error="SEMGREP_EXECUTION_FAILED")
             if len(completed.stdout) > MAX_OUTPUT_BYTES:
                 raise ScanError("SEMGREP_OUTPUT_LIMIT_EXCEEDED")
             try:
                 payload = json.loads(completed.stdout)
             except (ValueError, UnicodeError):
-                return result(root, error="SEMGREP_INVALID_JSON", coverage=coverage)
+                return done(error="SEMGREP_INVALID_JSON")
             findings, error, scanned, scanned_units, scanned_languages = _normalize(payload, snapshot, mapping)
             if completed.returncode == 1 and not findings:
                 error = error or "SEMGREP_EXECUTION_FAILED"
-            return result(root, findings=findings, error=error, scanned=scanned, coverage=coverage,
-                          scanned_units=scanned_units, scanned_languages=scanned_languages)
+            return done(findings=findings, error=error, scanned=scanned,
+                        scanned_units=scanned_units, scanned_languages=scanned_languages)
     except subprocess.TimeoutExpired:
         return result(target, error="SEMGREP_TIMEOUT", coverage=coverage)
     except ScanError as exc:
