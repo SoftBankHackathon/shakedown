@@ -70,13 +70,34 @@ def test_port_or_database_mismatch_is_rejected(configured, project):
     config, path = configured; config['dbName'] = 'other_db'; path.write_text(json.dumps(config))
     with pytest.raises(DeploymentError, match='port/database'): GcpRunner().preflight(project)
 
-def test_saved_runtime_is_rejected_before_any_gcp_call(monkeypatch, configured, project):
-    # 실행 설정(runtime)을 저장한 프로젝트는 database·secret_refs 대신 runtime을 보낸다. GCP 어댑터는 PostgreSQL 샘플 계약만 받는다.
+def saved_runtime(project, mode, name='board_db', port=3000):
+    # 실행 설정(runtime)을 저장한 프로젝트는 database·secret_refs 대신 runtime을 보낸다.
+    return project.model_copy(update={'runtime': {'version': 'http-runtime.v1', 'port': port, 'health_path': '/healthz', 'env': {}, 'secret_refs': {},
+                                                  'database': {'mode': mode, 'name': name, 'bindings': {}}, 'init_command': []}})
+
+@pytest.mark.parametrize('mode', ['none', 'postgres'])
+def test_saved_runtime_with_no_db_or_postgres_passes_preflight_on_any_port(monkeypatch, configured, project, mode):
+    runner = GcpRunner()
+    monkeypatch.setattr(runner, 'capture', lambda args, **k: 'shakedown-511106')
+    monkeypatch.setattr(runner, 'call', lambda method, path, body=None: {'ok': True, 'target': 'gcp'})
+    # 옛 방식과 달리 포트는 설정과 같지 않아도 된다(Cloud Run은 리비전마다 containerPort를 정한다). 분석 결과의 포트·DB 이름은 보지 않는다.
+    saved = saved_runtime(project, mode, port=3000)
+    saved = saved.model_copy(update={'analysis': saved.analysis.model_copy(update={'port': 1234, 'database_name': 'other_db'})})
+    assert runner.preflight(saved) is None
+
+@pytest.mark.parametrize('mode', ['mysql', 'mongodb', 'external'])
+def test_saved_runtime_with_another_database_is_rejected_before_any_gcp_call(monkeypatch, configured, project, mode):
     runner, calls = GcpRunner(), []
     monkeypatch.setattr(runner, 'capture', lambda *a, **k: calls.append(a))
     monkeypatch.setattr(runner, 'call', lambda *a, **k: calls.append(a))
-    saved = project.model_copy(update={'runtime': {'port': 8080, 'health_path': '/health', 'database': {'mode': 'none'}}})
-    with pytest.raises(DeploymentError, match='runtime'): runner.preflight(saved)
+    with pytest.raises(DeploymentError, match='none and postgres only'): runner.preflight(saved_runtime(project, mode))
+    assert calls == []
+
+def test_saved_runtime_postgres_must_use_the_prepared_database_name(monkeypatch, configured, project):
+    runner, calls = GcpRunner(), []
+    monkeypatch.setattr(runner, 'capture', lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(runner, 'call', lambda *a, **k: calls.append(a))
+    with pytest.raises(DeploymentError, match='dbName'): runner.preflight(saved_runtime(project, 'postgres', name='other_db'))
     assert calls == []
 
 def test_gcloud_project_mismatch_fails_before_adapter(monkeypatch, configured, project):
@@ -156,3 +177,16 @@ def test_publish_rejects_an_invalid_digest_before_pull(monkeypatch, configured, 
     runner = GcpRunner(); calls = fake_publish(monkeypatch, runner, digest)
     with pytest.raises(DeploymentError, match='digest'): runner.build_publish(project, 'dep_test')
     assert not any('pull' in args for args, _ in calls)
+
+def test_publish_rejects_a_checkout_that_no_longer_matches_the_legacy_port(monkeypatch, configured, project):
+    runner = GcpRunner(); calls = fake_publish(monkeypatch, runner)
+    monkeypatch.setattr(runner, 'build', lambda p, image, platform=None: p.analysis.model_copy(update={'port': p.analysis.port + 1}))
+    with pytest.raises(DeploymentError, match='no longer matches'): runner.build_publish(project, 'dep_test')
+    assert not any('push' in args for args, _ in calls)
+
+def test_publish_with_a_saved_runtime_skips_the_legacy_port_and_database_check(monkeypatch, configured, project):
+    # 엔진 build는 runtime이면 analysis.port를 runtime.port로 바꾼다. DB 이름은 preflight가 runtime 값으로 이미 확인했다.
+    runner = GcpRunner(); fake_publish(monkeypatch, runner)
+    monkeypatch.setattr(runner, 'build', lambda p, image, platform=None: p.analysis.model_copy(update={'port': 3000, 'database_name': None}))
+    analysis, image = runner.build_publish(saved_runtime(project, 'none'), 'dep_test')
+    assert analysis.port == 3000 and image == DIGEST

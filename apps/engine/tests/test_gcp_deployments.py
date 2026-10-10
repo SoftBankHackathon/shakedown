@@ -113,3 +113,20 @@ def test_gcp_timeout_attempts_delete(project, tmp_path):
         assert d['status'] == 'failed' and 'timed out' in d['error']
         assert gcp.calls[-1][0] == 'DELETE' and d['targets']['gcp']['status'] == 'stopped'
     finally: ds.close()
+
+
+RUNTIME = {'version': 'http-runtime.v1', 'port': 3000, 'health_path': '/healthz', 'env': {'NODE_ENV': 'production'}, 'secret_refs': {'APP_DB_PASSWORD': 'db_password'},
+           'database': {'mode': 'postgres', 'name': 'board_db', 'bindings': {'DB_URL': 'jdbc_url', 'DB_PASSWORD': 'password'}}, 'init_command': []}
+
+def test_runtime_project_sends_its_runtime_to_gcp_without_legacy_fields_or_the_env_fix_hint(project, tmp_path):
+    gcp = Gcp(); sd = Shakedown()
+    saved = project.model_copy(update={'runtime': RUNTIME})
+    ds = DeploymentStore(tmp_path/'d.db', Runner(), gcp=gcp, shakedown=sd, poll_seconds=.001)
+    try:
+        assert wait(ds, ds.start(saved, DeployRequest(targets=['local', 'gcp'], shakedown=True))['id'])['status'] == 'promoted'
+        body = next(body for method, _, body in gcp.calls if method == 'POST')
+        assert body['runtime'] == RUNTIME and (body['port'], body['health_path']) == (3000, '/healthz')
+        assert 'database' not in body and 'secret_refs' not in body and 'env' not in body
+        # env 수정안(SPRING_PROFILES_ACTIVE=demo,session-jdbc)은 Spring 샘플 전용이라 runtime 프로젝트에는 자동 적용 힌트를 주지 않는다.
+        assert [('can_apply_env' in body['hints']) for method, _, body in sd.calls if method == 'POST'] == [False]
+    finally: ds.close()

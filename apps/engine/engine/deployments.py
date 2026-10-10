@@ -371,8 +371,9 @@ class DeploymentStore:
             candidates = [Endpoint(name=t, url=d['targets'][t]['url']) for t in others] or ([comparison] if comparison else [])
             if candidates:
                 # 외부 비교 URL은 엔진이 배포한 게 아니라서 env를 바꿀 수 없다. 엔진이 Local과 함께 배포한 클라우드 하나만 자동 수정 대상이다.
+                # 수정안 env(SPRING_PROFILES_ACTIVE=demo,session-jdbc)는 Spring 샘플 전용이라 runtime 프로젝트는 대상이 아니다.
                 results = self.compare(d, Endpoint(name=baseline, url=d['targets'][baseline]['url']), candidates, project,
-                                       can_apply_env=len(others) == 1 and others[0] in ENV_FIX_TARGETS)
+                                       can_apply_env=len(others) == 1 and others[0] in ENV_FIX_TARGETS and not project.runtime)
                 # Close only the managed clouds that failed; with an external comparison the deployed side is judged.
                 failed = {name for name, result in results.items() if result == 'BLOCKED'}
                 if comparison and failed: failed = set(submitted)
