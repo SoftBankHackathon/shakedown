@@ -97,7 +97,8 @@ DB-free deployment and migration failure; no new real AWS deployment has been
 performed for this change.
 
 Security Gate #16 remains a mandatory predecessor for engine planning/builds.
-Its current Python/Compose/binary scope limitations remain unchanged. A missing
-applicable scan still blocks the engine; this runtime generalization does not
-silently bypass that gate. Workers, batch jobs, multiple app containers,
+#25 adds Java/JavaScript/TypeScript rules and validated wrapper-JAR exclusion.
+Compose NOT_APPLICABLE can accompany overall ALLOW, but Semgrep and Gitleaks
+must both succeed. Unsupported languages and template/external-script coverage
+gaps still require REVIEW. This runtime generalization never bypasses that gate. Workers, batch jobs, multiple app containers,
 arbitrary persistent volumes and automatic MySQL conversion remain unsupported.

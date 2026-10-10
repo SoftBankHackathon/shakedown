@@ -38,3 +38,20 @@ def test_real_java_without_compose_reaches_image_plan(tmp_path):
         assert plan['security_gate']['decision'] == 'ALLOW'
     finally:
         builder.close()
+
+
+def test_real_architecture_create_select_resolve_then_reject_changed_source(tmp_path):
+    from engine.architecture import ArchitecturePlanner, ArchitectureRequest, ArchitectureError
+    from engine.runtime import HttpRuntime
+    source = tmp_path / 'source'
+    shutil.copytree(ROOT / 'tests/fixtures/semgrep/javascript_safe', source)
+    (source / 'package.json').write_text('{"dependencies":{"express":"5"}}')
+    project = SimpleNamespace(id='runtime-real', repo=str(source), runtime=HttpRuntime(port=3000).model_dump())
+    planner = ArchitecturePlanner(tmp_path / 'plans.db', LocalRunner(), None)
+    options = ArchitectureRequest(workload='http', peak_rps=5, availability='best_effort', traffic='steady', use_ai=False)
+    plan = planner.create(project, options)
+    planner.select(project, plan['id'], 'small')
+    assert planner.resolve(project, plan['id'])['id'] == 'small'
+    (source / 'danger.js').write_text('eval(process.argv[2]);')
+    with pytest.raises(ArchitectureError, match='DENY'):
+        planner.resolve(project, plan['id'])
