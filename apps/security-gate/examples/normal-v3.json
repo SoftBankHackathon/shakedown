@@ -1,0 +1,46 @@
+{
+  "schema_version": "3.0",
+  "scope": "docker_semgrep_and_gitleaks_text_secrets",
+  "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\gitleaks\\safe",
+  "decision": "ALLOW",
+  "scan_status": "SUCCESS",
+  "reason_code": "ALL_APPLICABLE_CHECKS_PASSED",
+  "docker_compose": {
+    "schema_version": "1.0",
+    "scope": "docker_compose_privileged_only",
+    "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\gitleaks\\safe",
+    "scan_status": "SUCCESS",
+    "decision": "ALLOW",
+    "files": [
+      {
+        "file_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\gitleaks\\safe\\compose.yaml",
+        "decision": "ALLOW",
+        "findings": [],
+        "error": null
+      }
+    ],
+    "errors": []
+  },
+  "semgrep": {
+    "tool": "semgrep",
+    "scope": "local_python_mvp_rules",
+    "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\gitleaks\\safe",
+    "scan_status": "SUCCESS",
+    "decision": "ALLOW",
+    "findings": [],
+    "errors": [],
+    "scanned_files": 1
+  },
+  "gitleaks": {
+    "tool": "gitleaks",
+    "scope": "local_directory_text_secrets",
+    "target_path": "<SECURITY_GATE_ROOT>\\tests\\fixtures\\gitleaks\\safe",
+    "scan_status": "SUCCESS",
+    "decision": "ALLOW",
+    "version": "8.30.0",
+    "scanned_files": 3,
+    "findings": [],
+    "errors": []
+  },
+  "findings": []
+}

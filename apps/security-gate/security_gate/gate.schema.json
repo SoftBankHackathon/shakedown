@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:security-gate:integrated-report:v2",
+  "title": "Security Gate STEP 2 integrated report",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "scope", "target_path", "decision", "scan_status", "reason_code", "docker_compose", "semgrep", "findings"],
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "scope": {"enum": ["docker_compose_privileged_and_semgrep_python_mvp", "docker_compose_privileged_and_semgrep_multilanguage_mvp"]},
+    "target_path": {"type": "string"},
+    "decision": {"enum": ["ALLOW", "DENY", "REVIEW", "SCAN_FAILED"]},
+    "scan_status": {"enum": ["SUCCESS", "FAILED", "NOT_APPLICABLE"]},
+    "reason_code": {"enum": ["ALL_APPLICABLE_CHECKS_PASSED", "RISK_DETECTED", "REVIEW_REQUIRED", "REQUIRED_SCAN_FAILED"]},
+    "docker_compose": {"$ref": "urn:security-gate:docker-report:v1"},
+    "semgrep": {"$ref": "#/$defs/semgrep"},
+    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}}
+  },
+  "allOf": [
+    {"if": {"properties": {"decision": {"const": "ALLOW"}}},
+     "then": {"properties": {
+       "scan_status": {"const": "SUCCESS"}, "reason_code": {"const": "ALL_APPLICABLE_CHECKS_PASSED"},
+       "findings": {"maxItems": 0},
+       "docker_compose": {"anyOf": [
+         {"properties": {"decision": {"const": "ALLOW"}, "scan_status": {"const": "SUCCESS"}}},
+         {"properties": {"decision": {"const": "REVIEW"}, "scan_status": {"const": "NOT_APPLICABLE"}}}
+       ]},
+       "semgrep": {"properties": {"decision": {"const": "ALLOW"}}}
+     }}},
+    {"if": {"properties": {"decision": {"const": "SCAN_FAILED"}}},
+     "then": {"properties": {"scan_status": {"const": "FAILED"}, "reason_code": {"const": "REQUIRED_SCAN_FAILED"}}}}
+  ],
+  "$defs": {
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tool", "rule_id", "severity", "file_path", "line", "decision", "reason_code"],
+      "properties": {
+        "tool": {"enum": ["docker_compose", "semgrep"]},
+        "rule_id": {"enum": ["DOCKER_COMPOSE_PRIVILEGED", "security-gate-python-eval", "security-gate-python-shell-true", "security-gate-java-runtime-exec", "security-gate-java-process-builder", "security-gate-web-dynamic-eval", "security-gate-web-function-constructor", "security-gate-web-shell-exec", "go_subproc_rule-subproc", "go_sql_rule-concat-sqli", "panic-in-function-returning-result"]},
+        "severity": {"enum": ["HIGH", "MEDIUM", "UNKNOWN"]},
+        "file_path": {"type": "string"}, "line": {"type": "integer", "minimum": 1},
+        "decision": {"enum": ["DENY", "REVIEW"]},
+        "reason_code": {"enum": ["PRIVILEGED_ENABLED", "PRIVILEGED_UNRESOLVED", "PYTHON_DYNAMIC_EVAL", "PYTHON_SHELL_EXECUTION", "JAVA_COMMAND_EXECUTION", "JAVA_PROCESS_EXECUTION", "WEB_DYNAMIC_EVAL", "WEB_DYNAMIC_FUNCTION", "WEB_SHELL_EXECUTION", "GO_DYNAMIC_COMMAND", "GO_CONSTRUCTED_SQL", "RUST_PANIC_IN_RESULT"]}
+      }
+    },
+    "semgrep": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tool", "scope", "target_path", "scan_status", "decision", "findings", "errors", "scanned_files"],
+      "properties": {
+        "tool": {"const": "semgrep"}, "scope": {"enum": ["local_python_mvp_rules", "local_multilanguage_mvp_rules"]},
+        "detected_languages": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z]+$"}},
+        "unsupported_languages": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z]+$"}},
+        "unsupported_files": {"type": "integer", "minimum": 0},
+        "unscanned_sources": {"type": "integer", "minimum": 0},
+        "coverage_gaps": {"type": "array", "uniqueItems": true, "items": {"enum": ["TEMPLATE_EXPRESSION", "EXTERNAL_SCRIPT_REFERENCE", "UNRESOLVED_SCRIPT_REFERENCE", "DYNAMIC_SCRIPT_REFERENCE", "UNSUPPORTED_SCRIPT_TYPE", "MALFORMED_TEMPLATE"]}},
+        "scanned_units": {"type": "integer", "minimum": 0},
+        "scanned_languages": {"type": "array", "uniqueItems": true, "items": {"enum": ["python", "java", "javascript", "typescript", "go", "rust"]}},
+        "target_path": {"type": "string"}, "scan_status": {"enum": ["SUCCESS", "FAILED", "NOT_APPLICABLE"]},
+        "decision": {"enum": ["ALLOW", "DENY", "REVIEW", "SCAN_FAILED"]},
+        "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+        "errors": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z_]+$"}},
+        "scanned_files": {"type": "integer", "minimum": 0}
+      },
+      "allOf": [
+        {"if": {"properties": {"scope": {"const": "local_multilanguage_mvp_rules"}}},
+         "then": {"required": ["detected_languages", "unsupported_languages", "unsupported_files", "unscanned_sources", "coverage_gaps", "scanned_units", "scanned_languages"]}},
+        {"if": {"properties": {"decision": {"const": "ALLOW"}}},
+         "then": {"properties": {"scan_status": {"const": "SUCCESS"}, "errors": {"maxItems": 0}, "findings": {"maxItems": 0}, "scanned_files": {"minimum": 1}, "scanned_units": {"minimum": 1}, "scanned_languages": {"minItems": 1}, "unsupported_files": {"const": 0}, "unsupported_languages": {"maxItems": 0}, "unscanned_sources": {"const": 0}, "coverage_gaps": {"maxItems": 0}}}},
+        {"if": {"properties": {"scan_status": {"const": "FAILED"}}},
+         "then": {"properties": {"decision": {"const": "SCAN_FAILED"}, "errors": {"minItems": 1}}}},
+        {"if": {"properties": {"scan_status": {"const": "NOT_APPLICABLE"}}},
+         "then": {"properties": {"decision": {"const": "REVIEW"}, "scanned_files": {"const": 0}}}}
+      ]
+    }
+  }
+}

@@ -1,3 +1,5 @@
+export type { HttpRuntime } from '../runtime.mjs';
+import type { HttpRuntime } from '../runtime.mjs';
 // Shared data contracts between the deploy engine, the shakedown runner and the dashboard.
 // Change these together: every package imports from here.
 //
@@ -7,7 +9,7 @@
 //   Scenario / StepDiff / Report ← shakedown (AI shakedown)
 // Example payloads: ../fixtures/*.json
 
-/** Deploy targets. local and aws are implemented for the hackathon; the rest are planned. */
+/** Deploy targets. local, aws and gcp are implemented for the hackathon; the rest are planned. */
 export type TargetName = "local" | "aws" | "onprem" | "gcp" | "azure";
 
 export type Evidence = { field: string; value: string; file: string | null; source: "rule" | "ai" | "default" };
@@ -54,6 +56,7 @@ export type Deployment = {
 };
 
 export type Project = {
+  runtime?: HttpRuntime | null;
   id: string;
   name: string;
   repo: string;
@@ -77,6 +80,10 @@ export type TargetState = {
   logs_collected?: boolean;
   commands?: string[];
   error?: string | null;
+  /** Target API에 실제로 쓴(받아들여진) 배포 ID. 차단 뒤 수정 재배포를 하면 새 ID로 바뀌고, 그 뒤 조회·DELETE는 이 ID로 한다. */
+  deployment_id?: string;
+  /** 받아들여진 Target API 본문(deployment_id 제외). 수정 재배포는 이 본문에 env만 더해 같은 이미지로 다시 보낸다. */
+  request?: Omit<TargetDeployRequest, "deployment_id">;
 };
 
 export type Step = {
@@ -117,6 +124,7 @@ export type StepDiff = {
 };
 export type Fix = {
   target: string;
+  /** sticky_sessions | tz | env | code_change | none. env면 value는 KEY=VALUE 한 개이고, 같은 이미지에 그 env만 더해 다시 배포한다. */
   option: string;
   value: string;
   description: string;
@@ -143,17 +151,18 @@ export type Attempt = {
 
 export type DeployEvent = { ts: number; kind: string; [k: string]: unknown };
 
-/** Statuses after which a deployment never changes again. */
+/** 엔진이 스스로는 더 진행하지 않는 상태. blocked는 POST /api/deployments/{id}/fix로 한 번 fixing으로 재개될 수 있다. */
 export const TERMINAL_STATUSES: ReadonlySet<Deployment["status"]> = new Set(["warned", "deployed", "promoted", "blocked", "failed"]);
 
 /** Body of POST /api/projects (engine.yaml). */
-export type CreateProjectRequest = { repo: string; name?: string; targets: TargetName[] };
+export type CreateProjectRequest = { repo: string; name?: string; image_only?: boolean; targets: TargetName[] };
 
 /** Body of POST /api/projects/{id}/deployments — the Action button (engine.yaml). */
 export type ComparisonEndpoint = { name: string; url: string };
 export type CompareRequest = { baseline: ComparisonEndpoint; candidate: ComparisonEndpoint };
 
 export type DeployRequest = {
+  architecture_plan_id?: string;
   comparison?: ComparisonEndpoint;
   targets?: TargetName[];
   shakedown: boolean;
@@ -164,6 +173,8 @@ export type DeployRequest = {
 
 /** Target API v0.1.1 proposal — distinct from the engine's DeployRequest. */
 export type TargetDeployRequest = {
+  runtime?: HttpRuntime;
+  architecture?: {version: "aws-architecture.v1"; template_id: ArchitectureTier};
   deployment_id: string;
   project_id: string;
   image: string;
@@ -190,6 +201,58 @@ export type TargetDeployment = {
 };
 export type TargetLogLine = { ts: string; source: "deploy" | "app" | "db"; line: string };
 
+/** Engine-scoped Claude connection. API keys are write-only and never returned. */
+export type LlmConnectionStatus = {
+  provider: "anthropic";
+  configured: boolean;
+  model: string;
+  verified: boolean;
+  source: "none" | "environment" | "memory";
+};
+export type ImagePlan = {
+  id: string;
+  project_id: string;
+  source: "existing" | "rule" | "ai-fallback";
+  template: string;
+  fallback_reason?: string;
+  fallback_diagnostic?: { code: string; stage: "rule_generation"; message: string; details: Record<string, unknown> };
+  prompt_version?: string;
+  dockerfile: string;
+  runtime?: string;
+  entrypoint?: string;
+  port: number;
+  warnings: string[];
+  build_status: "not_built";
+};
+export type ImageBuild = {
+  id: string;
+  project_id: string;
+  status: "queued" | "building" | "built" | "failed";
+  image: string;
+  source: ImagePlan["source"];
+  error?: string;
+};
+
+
+export type ArchitectureTier = "small" | "medium" | "large";
+export type ArchitectureRequest = {
+  workload: "auto" | "http" | "worker" | "batch" | "static";
+  peak_rps: number | null;
+  availability: "unknown" | "best_effort" | "high";
+  traffic: "unknown" | "steady" | "bursty";
+  priority: "balanced" | "cost" | "availability";
+  use_ai: boolean;
+};
+export type ArchitecturePlan = {
+  id: string; project_id: string; created: number; schema_version: string;
+  source: "rule" | "ai"; status: "needs_input" | "proposed" | "selected";
+  recommended_template: ArchitectureTier | null; selected_template: ArchitectureTier | null;
+  requirements: ArchitectureRequest; reasons: string[]; evidence_ids: string[];
+  assessment: { minimum_tier: ArchitectureTier; eligible_templates: ArchitectureTier[]; missing_inputs: string[]; blockers: string[]; warnings: string[]; reasons: string[] };
+  facts: { stack: string; workload: string; workload_source: string; signals: { database: string | null; server_session: boolean; local_storage: boolean; queue_dependency: boolean; readme_hints: string[] }; evidence: {id: string; value: unknown; source: string}[]; analysis_warnings: string[] };
+  templates: { id: ArchitectureTier; name: string; cpu: number; memory_mib: number; min_tasks: number; max_tasks: number; availability_zones: number; autoscaling: boolean; database: string; tradeoff: string }[];
+  deployment: {ready: boolean; reason: string}; evidence_fingerprint: string;
+};
 
 /** HTTPS availability is independent of the application shakedown verdict. */
 export type HttpsTarget = 'aws' | 'azure' | 'gcp' | 'local';

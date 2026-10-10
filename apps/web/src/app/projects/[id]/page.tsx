@@ -1,13 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { RuntimeSettings } from "@/components/runtime-settings";
+import { ArchitecturePlanner } from "@/components/architecture-planner";
+import { ImageBuilder } from "@/components/image-builder";
 import { HttpsSettings } from "@/components/https-settings";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useT } from "@/components/i18n";
 import { AiTag, Badge, Mono, RuleTag, Section } from "@/components/ui";
-import { api, MOCK, ApiError, errorMessage, formatSeconds, type Deployment, type Project, type TargetName, type TargetOptions } from "@/lib/api";
-import { DEFAULT_TARGET_OPTIONS, DEFAULT_TARGETS, TARGETS, targetLabel, TIMEZONES } from "@/lib/targets";
+import { api, API, MOCK, ApiError, errorMessage, formatSeconds, type Deployment, type Project, type TargetName, type TargetOptions } from "@/lib/api";
+import { DEFAULT_TARGET_OPTIONS, DEFAULT_TARGETS, pickTarget, TARGETS, targetLabel, TIMEZONES } from "@/lib/targets";
 
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
@@ -16,7 +19,6 @@ export default function ProjectPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [deps, setDeps] = useState<Deployment[]>([]);
   const [shakedown, setShakedown] = useState(MOCK);
-  const [autofix, setAutofix] = useState(MOCK);
   // Options per non-baseline target, keyed by target name.
   const [opts, setOpts] = useState<Record<string, TargetOptions>>({});
   const [liveTargets, setLiveTargets] = useState<TargetName[]>(["local"]);
@@ -26,7 +28,7 @@ export default function ProjectPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.project(id).then((p) => { setProject(p); const supported = (p.targets ?? ["local"]).filter((x) => x === "local" || x === "aws"); setLiveTargets(supported.length ? supported : ["local"]); }).catch((e) => setError(e.message));
+    api.project(id).then((p) => { setProject(p); const supported = (p.targets ?? ["local"]).filter((x) => TARGETS.some((t) => t.id === x && t.available)); setLiveTargets(supported.length ? supported : ["local"]); }).catch((e) => setError(e.message));
     api.deployments(id).then(setDeps).catch(() => {});
   }, [id]);
 
@@ -34,7 +36,15 @@ export default function ProjectPage() {
     setBusy(true);
     setError(null);
     try {
-      const d = await api.deploy(id, { shakedown: MOCK ? shakedown : liveTargets.length === 2 || !!comparisonUrl.trim(), autofix, options: MOCK ? opts : Object.fromEntries(Object.entries(opts).filter(([name]) => liveTargets.includes(name as TargetName))), targets: MOCK ? undefined : liveTargets, comparison: !MOCK && liveTargets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
+      let architectureId: string | undefined;
+      if(!MOCK && liveTargets.includes("aws")){
+        const response=await fetch(`${API}/api/projects/${id}/architecture-plans/latest`,{cache:"no-store"});
+        if(!response.ok)throw new Error("아키텍처 선택 상태를 확인하지 못했습니다.");
+        const plan=await response.json();
+        if(plan?.selected_template)architectureId=plan.id;
+      }
+      const deploymentOptions=Object.fromEntries(Object.entries(opts).filter(([name])=>liveTargets.includes(name as TargetName)).map(([name,value])=>[name,name==="aws"&&architectureId?{sticky_sessions:false,tz:value.tz}:value]));
+      const d = await api.deploy(id, { architecture_plan_id: architectureId, shakedown: MOCK ? shakedown : liveTargets.length >= 2 || !!comparisonUrl.trim(), autofix: false, options: MOCK ? opts : deploymentOptions, targets: MOCK ? undefined : liveTargets, comparison: !MOCK && liveTargets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
       router.push(`/deployments/${d.id}`);
     } catch (e) {
       setError(e instanceof ApiError && e.status === 409 ? t("home.busy", { name: project?.name ?? id }) : errorMessage(e));
@@ -93,7 +103,7 @@ export default function ProjectPage() {
           <table className="w-full text-sm">
             <tbody>
               {a.evidence.map((e) => (
-                <tr key={e.field + e.value} className="border-t border-line first:border-0">
+                <tr key={`${e.field}|${e.value}|${e.file ?? ""}`} className="border-t border-line first:border-0">
                   <td className="py-2 pr-3 text-muted w-32">{e.field}</td>
                   <td className="py-2 pr-3">{e.value}</td>
                   <td className="py-2 text-right whitespace-nowrap">
@@ -136,8 +146,7 @@ export default function ProjectPage() {
                 {TARGETS.filter((x) => x.available).map((target) => (
                   <label key={target.id} className="text-sm">
                     <input type="checkbox" checked={liveTargets.includes(target.id)} onChange={(e) => {
-                      setLiveTargets((current) => TARGETS.filter((x) => x.available &&
-                        (x.id === target.id ? e.target.checked : current.includes(x.id))).map((x) => x.id));
+                      setLiveTargets((current) => e.target.checked ? pickTarget(current, target.id) : current.filter((x) => x !== target.id));
                       setOpts({});
                     }} /> {target.label}
                   </label>
@@ -168,7 +177,7 @@ export default function ProjectPage() {
                     </label>
                     <label className="flex items-center justify-between text-xs">
                       {t("project.affinity")}
-                      <input type="checkbox" disabled={!MOCK} checked={o.sticky_sessions}
+                      <input type="checkbox" disabled={!MOCK && !TARGETS.find((x) => x.id === name)?.sticky} checked={o.sticky_sessions}
                         onChange={(e) => setOpt(name, { sticky_sessions: e.target.checked })} />
                     </label>
                     <label className="flex items-center justify-between text-xs">
@@ -188,22 +197,25 @@ export default function ProjectPage() {
           <Section title={t("project.after")}>
             {!MOCK && <p className="mb-3 text-sm text-muted">{t("live.scope")}</p>}
             <label className="flex items-start gap-3 text-sm mb-3">
-              <input type="checkbox" disabled={!MOCK} checked={MOCK ? shakedown : liveTargets.length === 2 || !!comparisonUrl.trim()} onChange={(e) => setShakedown(e.target.checked)} className="mt-1" />
+              <input type="checkbox" disabled={!MOCK} checked={MOCK ? shakedown : liveTargets.length >= 2 || !!comparisonUrl.trim()} onChange={(e) => setShakedown(e.target.checked)} className="mt-1" />
               <span>
                 <span className="font-medium">{t("project.shakedown")}</span>
                 <span className="block text-xs text-muted">{t("project.shakedownDesc")}</span>
               </span>
             </label>
-            <label className="flex items-start gap-3 text-sm">
-              <input type="checkbox" disabled={!MOCK} checked={autofix} onChange={(e) => setAutofix(e.target.checked)} className="mt-1" />
-              <span>
-                <span className="font-medium">{t("project.autofix")}</span>
-                <span className="block text-xs text-muted">{t("project.autofixDesc")}</span>
-              </span>
-            </label>
+            {/* 배포 전에 켜는 옵션이 아니다. 차단되면 배포 화면의 원인 분석에서 버튼으로 적용한다(engine.yaml applyFix). */}
+            <div className="text-sm">
+              <span className="font-medium">{t("project.autofix")}</span>
+              <span className="block text-xs text-muted">{t("project.autofixDesc")}</span>
+            </div>
           </Section>
         </div>
       </div>
+
+      <p className="text-sm text-muted">AWS가 선택된 Action은 저장한 최신 아키텍처를 적용합니다. 선택한 설계가 없으면 기존 AWS 기본 구성으로 배포합니다.</p>
+      <RuntimeSettings key={id} project={project} onSaved={setProject} />
+      <ArchitecturePlanner key={id+JSON.stringify(project.runtime)} projectId={id} />
+      <ImageBuilder projectId={id} />
 
       <HttpsSettings projectId={id} />
       <Section title={t("project.deployments")}>

@@ -1,0 +1,9 @@
+{
+  "subscriptionId": "00000000-0000-0000-0000-000000000000", "tenantId": "00000000-0000-0000-0000-000000000000",
+  "resourceGroup": "rg-shakedown-board", "projectId": "prj_board", "containerApp": "sd-app",
+  "repositoryUri": "sdacrreplace.azurecr.io/shakedown-board",
+  "publicUrl": "https://sd-app.replace.koreacentral.azurecontainerapps.io",
+  "dbHost": "sd-pg-replace.postgres.database.azure.com", "dbName": "board_db", "dbUsername": "app",
+  "dbPasswordSecretUri": "https://sd-kv-replace.vault.azure.net/secrets/db-password",
+  "port": 8080
+}

@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useT } from "@/components/i18n";
 import { ActionCard } from "@/components/action-card";
 import { api, ApiError, DONE, errorMessage, MOCK, type Deployment, type TargetName } from "@/lib/api";
-import { DEFAULT_TARGETS, TARGETS } from "@/lib/targets";
+import { DEFAULT_TARGETS, pickTarget, TARGETS } from "@/lib/targets";
 
 type ActionRow = { deployment: Deployment; projectName: string };
 type SavedRow = { id: string; projectName: string };
@@ -15,6 +16,7 @@ const progressKey = (d: Deployment) =>
 
 export default function Home() {
   const t = useT();
+  const router = useRouter();
   const [comparisonUrl, setComparisonUrl] = useState("");
   const [repo, setRepo] = useState("");
   const [targets, setTargets] = useState<TargetName[]>(MOCK ? DEFAULT_TARGETS : ["local"]);
@@ -60,6 +62,16 @@ export default function Home() {
     return () => clearInterval(timer);
   }, []);
 
+  async function prepareImage() {
+    if (!repo.trim()) { setError("레포 URL 또는 로컬 앱 경로를 입력하세요."); return; }
+    setPending((n) => n + 1); setError(null);
+    try {
+      const project = await api.createProject({repo: repo.trim(), image_only: true, targets: targets.length ? targets : ["local"]});
+      router.push(`/projects/${project.id}#image-builder`);
+    } catch (e) { setError(errorMessage(e)); }
+    finally { setPending((n) => n - 1); }
+  }
+
   // One Action: register (or reuse) the repo and start the deployment in a single click.
   async function runAction(e: React.FormEvent) {
     e.preventDefault();
@@ -75,7 +87,7 @@ export default function Home() {
     try {
       const project = await api.createProject({ repo: repo.trim(), targets });
       name = project.name;
-      const deployment = await api.deploy(project.id, { shakedown: MOCK || targets.length === 2 || !!comparisonUrl.trim(), autofix: MOCK, options: {}, targets, comparison: !MOCK && targets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
+      const deployment = await api.deploy(project.id, { shakedown: MOCK || targets.length >= 2 || !!comparisonUrl.trim(), autofix: MOCK, options: {}, targets, comparison: !MOCK && targets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
       setActions((cur) => [{ deployment, projectName: project.name }, ...cur]);
     } catch (err) {
       // The engine owns the "one running deployment per project" rule and answers 409.
@@ -130,6 +142,7 @@ export default function Home() {
             )}
           </button>
         </div>
+        {!MOCK && <button type="button" disabled={pending > 0} onClick={() => void prepareImage()} className="rounded-lg border border-accent px-4 py-2 text-sm text-accent disabled:opacity-50">배포 없이 이미지 먼저 만들기</button>}
         {!MOCK && targets.length === 1 && <label className="block text-sm">{t("live.candidate")}<input type="url" value={comparisonUrl} onChange={(e) => setComparisonUrl(e.target.value)} placeholder="https://comparison.example.com" className="mt-2 w-full rounded-lg border border-line bg-bg p-3" /><span className="text-xs text-muted">{t("live.compareHint")} {t("live.externalHint")}</span></label>}
         <fieldset>
           <legend className="text-xs font-semibold uppercase tracking-wide text-muted">{t("home.targets")}</legend>
@@ -145,7 +158,7 @@ export default function Home() {
                   onClick={() =>
                     setTargets((cur) =>
                       on ? cur.filter((x) => x !== tg.id)
-                        : TARGETS.map((x) => x.id).filter((id) => id === tg.id || cur.includes(id)),
+                        : MOCK ? TARGETS.map((x) => x.id).filter((id) => id === tg.id || cur.includes(id)) : pickTarget(cur, tg.id),
                     )
                   }
                   className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm transition-colors ${

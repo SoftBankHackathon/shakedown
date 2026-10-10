@@ -121,7 +121,7 @@ test('secrets are filtered from deployment and app logs', async () => {
 });
 
 test('AWS request restricts image, project, DB, profiles and plaintext secrets', () => {
-  const c = { projectId: 'prj_board', port: 8080, repositoryUri: image.split('@')[0], dbName: 'board_db' } as Parameters<typeof validateRequest>[0];
+  const c = { projectId: 'prj_board', port: 8080, repositoryUri: image.split('@')[0], dbName: 'board_db', dbHost:'db.internal', dbUsername:'app', dbPasswordSecretArn:'arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:db' } as Parameters<typeof validateRequest>[0];
   assert.doesNotThrow(() => validateRequest(c, input()));
   for (const patch of [{ image: image.split('@')[0] + ':latest' }, { project_id: 'other' }, { env: { SPRING_DATASOURCE_PASSWORD: 'unsafe' } }, { env: { SPRING_PROFILES_ACTIVE: 'schema-init' } }, { secret_refs: { SPRING_DATASOURCE_PASSWORD: 'other' } }, { database: { engine: 'postgres', name: 'other' } }]) {
     assert.throws(() => validateRequest(c, { ...input(), ...patch } as DeployRequest), { statusCode: 400 });

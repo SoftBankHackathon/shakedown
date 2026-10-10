@@ -20,7 +20,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 Shakedown Deploy
               </Link>
               <Tagline />
-              <div className="ml-auto">
+              <div className="ml-auto flex items-center gap-4">
+                <Link href="/settings" className="text-sm text-muted hover:text-text">API 설정</Link>
                 <LangSwitcher />
               </div>
             </div>

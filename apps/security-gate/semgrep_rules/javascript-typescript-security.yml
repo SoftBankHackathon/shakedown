@@ -1,0 +1,27 @@
+rules:
+  - id: security-gate-web-dynamic-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Dynamic code evaluation is prohibited by this gate.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: window.eval(...)
+      - pattern: globalThis.eval(...)
+  - id: security-gate-web-function-constructor
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Dynamic function construction is prohibited by this gate.
+    pattern-either:
+      - pattern: new Function(...)
+      - pattern: Function(...)
+  - id: security-gate-web-shell-exec
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Node shell command execution is prohibited by this gate.
+    pattern-either:
+      - pattern: require('child_process').exec(...)
+      - pattern: require('child_process').execSync(...)
+      - pattern: require('node:child_process').exec(...)
+      - pattern: require('node:child_process').execSync(...)
+      - pattern: child_process.exec(...)
+      - pattern: child_process.execSync(...)

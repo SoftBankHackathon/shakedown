@@ -57,7 +57,9 @@ run `npm run demo` in `infra/local` to verify normal → bug → fix automatical
 ## Shared-session demo (Local + AWS)
 
 The same PostgreSQL image supports `demo,session-memory` and `demo,session-jdbc`.
-The `demo` profile adds an instance ID response header. With two app instances,
+The `demo` profile adds an `X-Instance-Id` response header: `HOSTNAME` when set
+(Docker container ID), otherwise a random `i-xxxxxxxx` made once per app process
+(Cloud Run sets no `HOSTNAME`). The value is logged at startup. With two app instances,
 memory sessions lose authentication across instances; JDBC sessions preserve it.
 Before first JDBC startup, run once with `SPRING_PROFILES_ACTIVE=schema-init`;
 it initializes entity and PostgreSQL session tables and exits. It can be repeated

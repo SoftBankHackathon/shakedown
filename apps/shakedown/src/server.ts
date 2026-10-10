@@ -142,7 +142,9 @@ async function execute(record: Shakedown, job: Job, { reachWaitMs, ai }: Setting
     if (record.status === "running") record.steps = result.steps;
     throw new Error(`baseline ${job.baseline.name} failed at step ${broken.index} (${broken.title}): ${broken.local.error ?? "no error message"}`);
   }
-  const rule = result.verdict.status === "BLOCKED" ? ruleReport(result.steps, result.verdict) : null;
+  // 엔진만 이 비교 대상의 env를 바꿔 다시 배포할 수 있는지 안다. 정확히 true일 때만 자동 적용 가능으로 표시한다.
+  const canApplyEnv = job.hints?.can_apply_env === true;
+  const rule = result.verdict.status === "BLOCKED" ? ruleReport(result.steps, result.verdict, { canApplyEnv }) : null;
   // 이미 나온 판정을 AI 때문에 잃지 않도록, AI는 마감까지 남은 시간 안에서만 기다린다.
   const left = deadlineAt - Date.now() - AI_MARGIN_MS;
   const aiOptions = left < AI_MIN_MS ? {} : { ...ai, timeoutMs: Math.min(ai.timeoutMs ?? AI_TIMEOUT_MS, left) };

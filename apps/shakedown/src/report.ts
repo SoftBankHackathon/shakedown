@@ -1,6 +1,7 @@
 // 판정이 BLOCKED일 때 단계 비교 결과만 보고 원인 보고서를 만든다. AI는 쓰지 않는다.
 // 데모 버그가 아직 정해지지 않아서 알려진 원인 넷을 정해진 순서로 확인하고, 아무것도 맞지 않으면 일반 보고서를 낸다.
-// hop.instance는 응답 헤더로 기록된다. 아래 규칙의 원인 추정은 hop 경로를 기준으로 한다.
+// hop.instance는 응답 헤더(X-Instance-Id)로 기록된다. 원인 추정은 hop 경로를 기준으로 하고,
+// 로그인 풀림만 로그인을 받은 서버와 튕긴 요청을 받은 서버의 ID가 둘 다 있고 서로 다르면 근거 한 줄을 덧붙인다.
 import type { Fix, Hop, Report, StepDiff, StepResult } from "@shakedown/contracts";
 import { normalizePath } from "./compare.ts";
 import type { Verdict } from "./verdict.ts";
@@ -49,6 +50,34 @@ function signInBounce(d: StepDiff): number {
   });
 }
 
+/**
+ * 로그인을 받은 hop: 튕긴 hop 앞의 비교 환경 hop 중 마지막 POST 로그인.
+ * Cloud Run처럼 요청이 가끔만 다른 서버로 가면 로그인 단계는 통과하고 뒤 단계에서 튕긴다. 그래서 앞 단계까지 거슬러 찾는다.
+ */
+function loginHop(diffs: StepDiff[], first: StepDiff, bounce: number): Hop | undefined {
+  const earlier = diffs.filter((d) => d.index < first.index).flatMap((d) => d.cloud.hops);
+  return [...earlier, ...first.cloud.hops.slice(0, bounce)].findLast((h) => h.method === "POST" && isSignIn(h.path));
+}
+
+/**
+ * 어느 서버가 답했는지 근거 한 줄. 경로만으로는 "다른 서버로 갔다"가 추정이지만, 두 ID가 다르면 직접 보여 준다.
+ * ID가 하나라도 없거나(헤더를 안 내는 앱) 같으면 아무것도 보태지 않는다. 그때는 지금처럼 경로 근거만 남는다.
+ */
+function instanceLine(login: Hop | undefined, bounced: Hop): string | null {
+  if (!login?.instance || !bounced.instance || login.instance === bounced.instance) return null;
+  return `${login.method} ${login.path} was handled by instance ${login.instance}, ` +
+    `${bounced.method} ${bounced.path} by instance ${bounced.instance}: 2 different instances served one user's requests.`;
+}
+
+// instanceLine이 만드는 줄의 모양. 만드는 곳과 알아보는 곳을 한 파일에 둬서 문장을 바꿀 때 함께 바뀌게 한다.
+// 서버 ID는 앱이 정하는 아무 문자열이라("web 1", 헤더가 두 번 와서 ", "로 이어진 값) 자리마다 아무 글자나 받는다.
+const SWITCHED = /^.+ was handled by instance .+, .+ by instance .+: 2 different instances served one user's requests\.$/s;
+
+/** 규칙 보고서 evidence에 있는 서버 전환 근거 줄. ai-report가 AI 답에 이 줄을 지킬 때 쓴다. */
+export function switchLine(evidence: string[]): string | undefined {
+  return evidence.find((line) => SWITCHED.test(line));
+}
+
 /** 방금 쓴 값(글 제목·본문·댓글)이 비교 환경에서만 다시 보이지 않는다. */
 function lostWrite(r: StepResult): boolean {
   const ok = r.final_status !== null && r.final_status < 400;
@@ -58,7 +87,7 @@ function lostWrite(r: StepResult): boolean {
   return textMissing || linkMissing || recordMissing;
 }
 
-export function ruleReport(diffs: StepDiff[], verdict: Verdict): Report | null {
+export function ruleReport(diffs: StepDiff[], verdict: Verdict, { canApplyEnv = false }: { canApplyEnv?: boolean } = {}): Report | null {
   if (verdict.status !== "BLOCKED") return null;
   const first = diffs.find((d) => d.index === verdict.first_divergence)!;
   const failed = diffs.find((d) => d.cloud.status === "failed");
@@ -91,6 +120,7 @@ export function ruleReport(diffs: StepDiff[], verdict: Verdict): Report | null {
   if (bounce >= 0) {
     const hops = first.cloud.hops;
     const before = hops[bounce - 1];
+    const switched = instanceLine(loginHop(diffs, first, bounce), hops[bounce]);
     return report(
       `Login is lost on ${cand}: requests land on different instances`,
       `The app keeps the login in server memory (HttpSession). ${cand} runs more than one instance behind a load balancer ` +
@@ -100,16 +130,18 @@ export function ruleReport(diffs: StepDiff[], verdict: Verdict): Report | null {
         ...hopLines(first),
         `${cand} sent ${hops[bounce].method} ${hops[bounce].path} back to the sign-in page (${hops[bounce + 1].path})` +
           `${before ? ` right after ${before.method} ${before.path}` : ""}; ${base} did not.`,
+        ...(switched ? [switched] : []),
       ],
       {
         target: cand,
-        option: "sticky_sessions",
-        value: "true",
-        description: "Pin each user to one instance (session affinity).",
-        native: "nginx upstream ip_hash (on AWS: ALB target-group stickiness, or App Runner auto scaling max size 1 since it has no stickiness; on Cloud Run: --session-affinity)",
-        // 아직 어느 대상도 이 옵션을 실제로 적용하지 못한다(infra/local은 받기만 함, aws는 미확인).
-        // true로 두면 엔진이 자동 수정을 시도하고 "자동 수정 후에도 차단"이 뜬다.
-        auto_applicable: false,
+        // 세션을 서버 메모리 대신 공유 DB(Spring Session JDBC)에 두면 몇 대로 늘려도 로그인이 유지된다.
+        // 같은 이미지에 프로필 env만 바꾸면 되고, 세 어댑터(local·aws·gcp)가 이 값을 이미 받는다.
+        option: "env",
+        value: "SPRING_PROFILES_ACTIVE=demo,session-jdbc",
+        description: "Keep the login in the shared database (Spring Session JDBC) so every instance sees it.",
+        native: "Cloud Run / ECS env SPRING_PROFILES_ACTIVE=demo,session-jdbc (sessions in the spring_session table of Cloud SQL / RDS)",
+        // env를 바꿔 다시 배포할 수 있는 대상인지는 엔진만 안다(hints.can_apply_env). 모르면 제안만 한다.
+        auto_applicable: canApplyEnv,
       },
       "high",
     );

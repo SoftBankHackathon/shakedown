@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { createServer, type Server } from "node:http";
+import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -95,7 +95,19 @@ test("비교 환경이 서버 2대면 BLOCKED, 4단계에서 갈라진다", asyn
   });
   assert.equal(done.report?.headline, "Login is lost on aws: requests land on different instances");
   assert.equal(done.report?.by, "rule");
-  assert.equal(done.report?.fix?.option, "sticky_sessions");
+  assert.equal(done.report?.fix?.option, "env");
+  // 엔진이 env를 바꿀 수 있다고 알려 주지 않았으니(hints 없음) 제안만 한다.
+  assert.equal(done.report?.fix?.auto_applicable, false);
+});
+
+test("hints.can_apply_env=true면 로그인 풀림 수정안이 자동 적용 가능", async () => {
+  const base = await api();
+  const { body } = await post(base, request(await board(), await board({ instances: 2 }), { hints: { can_apply_env: true } }));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.verdict?.status, "BLOCKED");
+  assert.equal(done.report?.fix?.option, "env");
+  assert.equal(done.report?.fix?.value, "SPRING_PROFILES_ACTIVE=demo,session-jdbc");
+  assert.equal(done.report?.fix?.auto_applicable, true);
 });
 
 test("비교 환경이 꺼져 있으면 BLOCKED와 접속 불가 보고서", async () => {
@@ -117,6 +129,36 @@ test("기준 환경이 꺼져 있으면 비교할 수 없으니 failed", async (
   const done = await waitDone(base, body.shakedown_id);
   assert.equal(done.status, "failed");
   assert.equal(done.error, `baseline local is not reachable: ${down.url}`);
+});
+
+test("기준 환경이 계속 Cloudflare 530(터널 미준비)이면 1단계 실패가 아니라 접속 불가로 failed", async () => {
+  const tunnel = await listen(createServer((_, res) => res.writeHead(530, { server: "cloudflare" }).end("error code: 1033")));
+  const base = await api();
+  const { body } = await post(base, request(tunnel, await board()));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.status, "failed");
+  assert.equal(done.error, `baseline local is not reachable: ${tunnel}`);
+  assert.deepEqual(done.steps, []);
+});
+
+test("기준 환경이 접속 확인 뒤 잠깐 Cloudflare 530을 내도(200 → 530 → 200) 시운전을 끝낸다", async () => {
+  // Cloudflare 엣지 흉내: 두 번째 요청(접속 확인 다음, 1단계 GET /join)만 앱에 넘기지 않고 530으로 답한다.
+  const app = new URL(await board());
+  let hits = 0;
+  const edge = await listen(createServer((req, res) => {
+    if (++hits === 2) return void res.writeHead(530, { server: "cloudflare", "content-type": "text/html" }).end("Error 1033");
+    req.pipe(httpRequest({ host: app.hostname, port: app.port, path: req.url, method: req.method, headers: req.headers }, (up) => {
+      res.writeHead(up.statusCode ?? 502, up.headers);
+      up.pipe(res);
+    }));
+  }));
+  const base = await api();
+  const { body } = await post(base, request(edge, await board()));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.status, "done", done.error);
+  assert.equal(done.verdict?.status, "PASS");
+  assert.equal(done.steps.length, 8);
+  assert.deepEqual(done.steps[0].local.hops, [{ method: "GET", path: "/join", status: 200, instance: null }]);
 });
 
 test("기준 환경이 시나리오를 통과하지 못하면 failed, 단계 결과는 남긴다", async () => {

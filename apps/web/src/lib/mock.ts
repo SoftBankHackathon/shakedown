@@ -1,5 +1,5 @@
 // Mock engine for building the dashboard before the real engine exists.
-// It replays a recorded deployment (blocked on AWS → auto-fixed → promoted)
+// It replays a recorded deployment (blocked on GCP → env fix applied → promoted)
 // on a timeline, so every screen state can be seen and timed for the demo.
 
 import recorded from "@shakedown/contracts/fixtures/deployment-blocked-then-fixed.json";
@@ -20,6 +20,12 @@ const [A1, A2] = RECORDED.attempts as Attempt[];
 const TARGET_NAMES = Object.keys(RECORDED.targets);
 /** The target the recorded run fixed and redeployed. */
 const FIXED_TARGET = A1.applied_fix?.target ?? TARGET_NAMES[TARGET_NAMES.length - 1];
+// 기록은 수정이 끝난 뒤의 대상 상태라 세션 저장소가 jdbc다. 수정한 대상이 다시 배포되기 전까지는
+// 수정 전처럼 메모리 세션으로 보여야 1회차(차단)와 2회차(통과)의 차이가 화면에 나타난다.
+const RECORDED_FIXED = RECORDED.targets[FIXED_TARGET];
+const BEFORE_FIX = RECORDED_FIXED.info?.session
+  ? { ...RECORDED_FIXED, info: { ...RECORDED_FIXED.info, session: "memory" } }
+  : RECORDED_FIXED;
 
 // Timeline in seconds from the click. Tuned to feel like the real ~30 s run.
 const STEP = 0.5;
@@ -42,8 +48,11 @@ function clone<V>(v: V): V {
   return JSON.parse(JSON.stringify(v));
 }
 
-function withTargets(d: Deployment, status: (name: string) => Deployment["targets"][string]["status"]) {
-  for (const name of TARGET_NAMES) d.targets[name] = { ...RECORDED.targets[name], status: status(name) };
+function withTargets(d: Deployment, status: (name: string) => Deployment["targets"][string]["status"], fixed = false) {
+  for (const name of TARGET_NAMES) {
+    const recorded = name === FIXED_TARGET && !fixed ? BEFORE_FIX : RECORDED.targets[name];
+    d.targets[name] = { ...recorded, status: status(name) };
+  }
 }
 
 /** What the deployment looks like `t` seconds after the click. */
@@ -90,6 +99,7 @@ function snapshot(id: string, t: number): Deployment {
     return { ...d, status: "fixing", attempts: [A1] };
   }
   d.options = RECORDED.options;
+  withTargets(d, () => "ready", true);
   return { ...d, status: "shakedown", attempts: [A1, partial(A2, SHAKEDOWN_2)] };
 }
 

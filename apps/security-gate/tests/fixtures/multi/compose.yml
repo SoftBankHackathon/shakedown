@@ -1,0 +1,7 @@
+services:
+  web:
+    privileged: false
+  admin:
+    privileged: true
+  worker:
+    privileged: ${PRIVILEGED:-false}

@@ -30,7 +30,7 @@ class AwsRunner(LocalRunner):
                 raise ValueError()
             if not re.fullmatch(r'http://[a-zA-Z0-9.-]+\.elb\.amazonaws\.com/?', config['publicUrl']):
                 raise ValueError()
-            for key in ('projectId', 'port', 'dbName'): config[key]
+            for key in ('projectId', 'port'): config[key]
             return config
         except (OSError, ValueError, KeyError, TypeError):
             raise DeploymentError('Invalid AWS adapter configuration; regenerate it from stack outputs.') from None
@@ -51,7 +51,10 @@ class AwsRunner(LocalRunner):
         config = self.config()
         if project.id != config['projectId']:
             raise DeploymentError(f'AWS stack is bound to another project. Set adapter config projectId to {project.id} for this repository and restart the adapter only if the stack is dedicated to it.')
-        if project.analysis.port != config['port'] or (project.analysis.database_name or 'board_db') != config['dbName']:
+        runtime=getattr(project,'runtime',None)
+        port=runtime['port'] if runtime else project.analysis.port
+        db_name=runtime['database']['name'] if runtime and runtime['database']['mode']=='postgres' else None if runtime else (project.analysis.database_name or 'board_db')
+        if port != config['port'] or (db_name is not None and db_name != config.get('dbName')):
             raise DeploymentError('Application port/database must match the prepared AWS stack.')
         if self.capture(self.cli('sts', 'get-caller-identity', '--query', 'Account', '--output', 'text')) != config['accountId']:
             raise DeploymentError('AWS publisher account does not match the configured stack.')
@@ -59,12 +62,19 @@ class AwsRunner(LocalRunner):
         if not health or health.get('target') != 'aws' or health.get('ok') is not True:
             raise DeploymentError('AWS adapter is not ready on 127.0.0.1:9102.')
 
+    def validate_architecture(self, architecture, project=None):
+        config = self.config()
+        runtime=getattr(project,'runtime',None)
+        managed=not runtime or runtime['database']['mode']=='postgres'
+        if (managed and not config.get('dbInstanceId')) or len(set(config.get('subnetIds', []))) < architecture['availability_zones']:
+            raise DeploymentError('선택 설계용 기반 스택이 필요합니다. foundation.yaml을 갱신하고 DB 식별자와 AZ별 서브넷 설정을 다시 생성하세요.')
+
     def build_publish(self, project, deployment_id):
         self.preflight(project)
         config = self.config()
         tag = config['repositoryUri'] + ':' + deployment_id
         analysis = self.build(project, tag, platform='linux/amd64')
-        if analysis.port != config['port'] or (analysis.database_name or 'board_db') != config['dbName']:
+        if analysis.port != config['port'] or (not getattr(project,'runtime',None) and (analysis.database_name or 'board_db') != config.get('dbName')):
             raise DeploymentError('Checked-out application no longer matches the AWS stack.')
         registry = config['repositoryUri'].split('/')[0]
         # A private, temporary Docker config prevents persisting ECR tokens in the user's config.
@@ -90,7 +100,7 @@ class AwsRunner(LocalRunner):
 
     def call(self, method, path, body=None):
         try:
-            with httpx.Client(timeout=150 if method == 'DELETE' else 20, trust_env=False) as client:
+            with httpx.Client(timeout=630 if method == 'DELETE' else 20, trust_env=False) as client:
                 response = client.request(method, self.base + path, json=body)
                 response.raise_for_status()
                 return response.json() if response.content else None
