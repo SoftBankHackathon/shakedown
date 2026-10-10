@@ -113,7 +113,8 @@ class AzureRunner(LocalRunner):
             ecr_token = aws.capture(aws.cli('ecr', 'get-login-password'))
             self.capture(['docker', 'login', '--username', 'AWS', '--password-stdin', source_registry], input=ecr_token.encode(), env=env)
             # A registry-to-registry manifest copy keeps the digest; a second docker push may not.
-            self.command(['docker', 'buildx', 'imagetools', 'create', '-t', tag, source_image], 600, env=env)
+            # --prefer-index의 기본값(true)은 단일 manifest를 새 index로 감싸 digest를 바꾸므로 끈다(그대로 복사, gcp_runner와 같음).
+            self.command(['docker', 'buildx', 'imagetools', 'create', '--prefer-index=false', '-t', tag, source_image], 600, env=env)
         copied = self.acr_digest(config, deployment_id)
         if copied != digest:
             raise DeploymentError('ACR image digest differs from the source image; refusing to deploy a different artifact.')

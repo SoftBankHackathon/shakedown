@@ -119,7 +119,7 @@ def test_publish_copies_ecr_digest_into_acr_and_keeps_tokens_off_argv(monkeypatc
     logins = [kw for args, kw in shell.calls if args[:2] == ['docker', 'login']]
     assert [kw['input'] for kw in logins] == [b'ACR_TOKEN_DO_NOT_LOG', b'ECR_TOKEN_DO_NOT_LOG']
     copy = next(args for args, _ in shell.calls if args[:3] == ['docker', 'buildx', 'imagetools'])
-    assert copy == ['docker', 'buildx', 'imagetools', 'create', '-t', ACR + ':dep_test', ECR_IMAGE]
+    assert copy == ['docker', 'buildx', 'imagetools', 'create', '--prefer-index=false', '-t', ACR + ':dep_test', ECR_IMAGE]
     assert not Path(logins[0]['env']['DOCKER_CONFIG']).exists()
 
 
