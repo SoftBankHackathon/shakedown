@@ -58,8 +58,8 @@ HOST=0.0.0.0 PORT=9201 npm start -w @shakedown/shakedown   # 엔진이 다른 PC
 | 순서 | 원인 | 이렇게 보이면 | 수정안(fix) |
 |---|---|---|---|
 | 1 | 접속 불가 | 비교 환경 첫 실패가 연결 오류 | 없음 |
-| 2 | 로그인 풀림 | 기준 환경은 로그인 뒤 페이지, 비교 환경은 로그인 화면으로 되돌아감 | `env SPRING_PROFILES_ACTIVE=demo,session-jdbc` (세션을 공유 DB에) |
-| 3 | 데이터 유실 | 방금 쓴 글이 비교 환경에서만 안 보임 | `code_change` (공유 DB/RDS 연결) |
+| 2 | 로그인 풀림 | 기준 환경은 로그인 뒤 페이지, 비교 환경은 로그인 화면(`/`, `/login…`, 마지막 칸이 `login`·`signin`·`sign_in`인 주소)으로 되돌아감. 비교 환경에서 그 hop이나 그 앞(앞 단계 포함)에 로그인 POST(로그인 화면 주소, 마지막 칸이 `auth`·`session(s)`인 주소)가 있을 때만 | `env SPRING_PROFILES_ACTIVE=demo,session-jdbc` (세션을 공유 DB에) |
+| 3 | 데이터 유실 | 방금 쓴 글이 비교 환경에서만 안 보임 | `code_change` (모든 인스턴스를 env로 공유 관리형 DB(Cloud SQL·RDS·Azure)에 연결) |
 | 4 | 서버 오류 | 비교 환경만 500대 응답 | `code_change` (DB 주소를 환경변수로) |
 | 5 | 그 밖 | 처음 달라진 단계 기준 일반 설명 | 없음 |
 
