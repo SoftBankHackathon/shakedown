@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useT } from "@/components/i18n";
 import { ActionCard } from "@/components/action-card";
 import { api, ApiError, DONE, errorMessage, MOCK, type Deployment, type TargetName } from "@/lib/api";
-import { DEFAULT_TARGETS, TARGETS } from "@/lib/targets";
+import { DEFAULT_TARGETS, pickTarget, TARGETS } from "@/lib/targets";
 
 type ActionRow = { deployment: Deployment; projectName: string };
 type SavedRow = { id: string; projectName: string };
@@ -158,7 +158,7 @@ export default function Home() {
                   onClick={() =>
                     setTargets((cur) =>
                       on ? cur.filter((x) => x !== tg.id)
-                        : TARGETS.map((x) => x.id).filter((id) => id === tg.id || cur.includes(id)),
+                        : MOCK ? TARGETS.map((x) => x.id).filter((id) => id === tg.id || cur.includes(id)) : pickTarget(cur, tg.id),
                     )
                   }
                   className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm transition-colors ${

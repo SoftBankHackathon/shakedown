@@ -1,4 +1,4 @@
-"""Local and pre-provisioned cloud (AWS, Azure) orchestration. Never fabricates a shakedown verdict."""
+"""Local and pre-provisioned cloud (AWS, Azure, GCP) orchestration. Never fabricates a shakedown verdict."""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import json
@@ -19,15 +19,17 @@ from typing import Literal
 
 TERMINAL = {'deployed', 'promoted', 'warned', 'blocked', 'failed'}
 
-# Per-target limits. Clouds are pre-provisioned stacks behind loopback adapters (infra/aws, infra/azure).
+# Per-target limits. Clouds are pre-provisioned stacks behind loopback adapters (infra/aws, infra/azure, infra/gcp).
 # Order matters: the first selected target is the shakedown baseline (local when selected).
 TARGETS = {
     'local': dict(label='Local Docker', replicas=(1,), sticky=False, replicas_default=1, tz='Asia/Seoul'),
     'aws': dict(label='AWS ECS', replicas=(1, 2), sticky=False, replicas_default=2, tz='UTC'),
     # Container Apps ingress affinity is an Azure-native fix for in-memory sessions.
     'azure': dict(label='Azure Container Apps', replicas=(1, 2), sticky=True, replicas_default=2, tz='UTC'),
+    # Cloud Run session affinity is best-effort.
+    'gcp': dict(label='GCP Cloud Run', replicas=(1, 2), sticky=True, replicas_default=2, tz='UTC'),
 }
-CLOUDS = ('aws', 'azure')
+CLOUDS = ('aws', 'azure', 'gcp')
 VERDICT_RANK = ('PASS', 'WARN', 'BLOCKED')
 
 class Endpoint(Model):
@@ -52,7 +54,7 @@ class DeployRequest(Model):
     shakedown: bool = False
     autofix: bool = False
     comparison: Endpoint | None = None
-    targets: list[Literal['local', 'aws', 'azure']] = Field(default_factory=lambda: ['local'], min_length=1, max_length=3)
+    targets: list[Literal['local', 'aws', 'azure', 'gcp']] = Field(default_factory=lambda: ['local'], min_length=1, max_length=3)
     options: dict[str, dict] = Field(default_factory=dict)
 
 class DeploymentError(Exception):
@@ -136,17 +138,19 @@ class ShakedownClient:
             raise DeploymentError('Shakedown request failed; check 127.0.0.1:9201. No PASS was recorded.') from None
 
 class DeploymentStore:
-    def __init__(self, path: Path, runner=None, poll_seconds=1, timeout=300, shakedown=None, shakedown_timeout=180, aws=None, azure=None):
+    def __init__(self, path: Path, runner=None, poll_seconds=1, timeout=300, shakedown=None, shakedown_timeout=180, aws=None, azure=None, gcp=None):
         self.shakedown = shakedown or ShakedownClient()
         self.shakedown_timeout = shakedown_timeout
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self.runner = runner or LocalRunner()
-        # Imported here: both runner modules import this one.
+        # Imported here: the runner modules import this one.
         from engine.aws_runner import AwsRunner
         from engine.azure_runner import AzureRunner
+        from engine.gcp_runner import GcpRunner
         self.aws = aws or AwsRunner()
         self.azure = azure or AzureRunner()
+        self.gcp = gcp or GcpRunner()
         self.poll_seconds, self.timeout = poll_seconds, timeout
         self.pool = ThreadPoolExecutor(max_workers=2)
         with self.connect() as db:
@@ -159,7 +163,7 @@ class DeploymentStore:
                 db.execute('UPDATE deployments SET status=?, payload=? WHERE id=?', ('failed', json.dumps(d), d['id']))
 
     def runner_for(self, target):
-        return {'local': self.runner, 'aws': self.aws, 'azure': self.azure}[target]
+        return {'local': self.runner, 'aws': self.aws, 'azure': self.azure, 'gcp': self.gcp}[target]
 
     @contextmanager
     def connect(self):
@@ -188,6 +192,10 @@ class DeploymentStore:
         targets = [name for name in TARGETS if name in request.targets]
         if len(targets) != len(request.targets):
             raise DeploymentError('Targets must be unique.')
+        clouds = [name for name in targets if name in CLOUDS]
+        if 'gcp' in clouds and len(clouds) > 1:
+            # GCP는 다른 클라우드 저장소로 같은 digest를 복사(publish)하지 않는다. 지금은 Local + GCP만 받는다.
+            raise DeploymentError('GCP cannot be combined with another cloud yet; select Local and GCP only.')
         if request.comparison and (len(targets) != 1 or request.comparison.name in targets):
             raise DeploymentError('An external comparison requires one deployed target and a distinct name.')
         if request.shakedown != (request.comparison is not None or len(targets) >= 2):
@@ -216,7 +224,7 @@ class DeploymentStore:
             if (set(opts) != {'replicas','sticky_sessions','tz'} or type(opts['replicas']) is not int
                     or opts['replicas'] not in spec['replicas'] or type(opts['sticky_sessions']) is not bool
                     or (opts['sticky_sessions'] and not spec['sticky'])):
-                raise DeploymentError('Local supports one replica; AWS and Azure support one or two. Only Azure supports sticky sessions.')
+                raise DeploymentError('Local supports one replica; clouds support one or two. Only Azure and GCP support sticky sessions.')
             if target == 'aws' and architecture:
                 opts['replicas'] = architecture['min_tasks']
             options[target] = opts

@@ -1,4 +1,4 @@
-# Engine — Local / AWS 배포 + HTTP 시운전 연결
+# Engine — Local / AWS / GCP 배포 + HTTP 시운전 연결
 
 Action에서 프로젝트 분석 → Docker 빌드 → Local Target → 공개 URL → 선택적 HTTP 시운전 → 판정/보고서 표시를 실행합니다. 기존 baseline/candidate URL만 비교하는 기능도 있습니다. 김태현님의 PR #6–#9 구현을 호출하며, 엔진에서 별도 판정 로직이나 Playwright 시나리오를 만들지 않습니다.
 
@@ -47,7 +47,7 @@ Windows에서는 `.venv/Scripts/python.exe -m uvicorn`을 사용합니다. AI �
 | `blocked` | BLOCKED 검사 게이트. 기존 URL의 접속을 차단하지 않음 |
 | `failed` | 빌드/인프라/시운전 오류, 기준 환경 실패, 불완전 결과 등. PASS 없음 |
 
-`release_gate`는 passed/review/blocked이며 관리 AWS 대상의 DELETE가 차단을 확인한 경우에만 `traffic_blocked=true`입니다. 정리된 대상은 `status=stopped`, 실패한 정리는 `cleanup=failed`로 표시합니다. `targets[*].status=external`은 사용자가 제공한 기존 환경입니다. 그 환경의 배포·삭제·트래픽 차단은 엔진이 관리하지 않습니다. 자동수정은 거절하며 보고서의 fix는 제안만 표시합니다.
+`release_gate`는 passed/review/blocked이며 관리 클라우드(AWS·GCP) 대상의 DELETE가 차단을 확인한 경우에만 `traffic_blocked=true`입니다. 정리된 대상은 `status=stopped`, 실패한 정리는 `cleanup=failed`로 표시합니다. `targets[*].status=external`은 사용자가 제공한 기존 환경입니다. 그 환경의 배포·삭제·트래픽 차단은 엔진이 관리하지 않습니다. 자동수정은 거절하며 보고서의 fix는 제안만 표시합니다.
 
 **AWS 엔진 연결:** 아래 설정을 준비하면 ECR 업로드/digest 공유 → AWS Target 호출을 실행합니다. 실제 AWS 계정에서의 배포 검증은 아직 수행하지 않았습니다. 스택 생성·DB 초기화·사용자별 AWS 계정 연결은 자동화하지 않습니다.
 
@@ -55,7 +55,7 @@ Windows에서는 `.venv/Scripts/python.exe -m uvicorn`을 사용합니다. AI �
 
 - `POST /api/projects`: repo, 선택적 name/targets로 분석·등록
 - `GET /api/projects`, `GET /api/projects/{id}`: 프로젝트 조회
-- `POST /api/projects/{id}/deployments`: 202 비동기 Local / AWS 배포
+- `POST /api/projects/{id}/deployments`: 202 비동기 Local / AWS / GCP 배포
 - `POST /api/projects/{id}/comparisons`: 202 기존 URL 비교
 - `GET /api/deployments?project_id=...`, `GET /api/deployments/{id}`: 결과/증거 조회
 - `GET /api/deployments/{id}/events`: SSE. 상태 또는 완료 단계 수 변화 후 전체 조회. 재연결 시 현재 상태부터, 과거 이벤트 재생 없음
@@ -73,16 +73,16 @@ Windows에서는 `.venv/Scripts/python.exe -m uvicorn`을 사용합니다. AI �
 {"baseline":{"name":"local","url":"http://127.0.0.1:18080"},"candidate":{"name":"candidate","url":"https://candidate.example.com"}}
 ```
 
-서로 다른 이름/URL이 필요합니다. HTTP(S) origin만 허용하며 자격 증명·경로·쿼리·fragment는 거절합니다. 같은 서비스의 별칭인지까지는 판단하지 않으므로 실제로 독립된 환경인지 확인하세요. 같은 프로젝트에서 배포/비교가 실행 중이면 409입니다. 단일 대상의 shakedown=true는 comparison이 필수이고, Local+AWS는 shakedown=true를 사용하며 autofix=true는 400입니다.
+서로 다른 이름/URL이 필요합니다. HTTP(S) origin만 허용하며 자격 증명·경로·쿼리·fragment는 거절합니다. 같은 서비스의 별칭인지까지는 판단하지 않으므로 실제로 독립된 환경인지 확인하세요. 같은 프로젝트에서 배포/비교가 실행 중이면 409입니다. 단일 대상의 shakedown=true는 comparison이 필수이고, Local+AWS·Local+GCP는 shakedown=true를 사용하며 AWS+GCP 동시 선택과 autofix=true는 400입니다.
 
 ## 배포·장애 처리
 
 - 로컬 경로 또는 공개 GitHub HTTPS 저장소, 분석된 앱 디렉터리의 Dockerfile을 우선 사용하며, 없으면 지원 스택의 규칙 기반 템플릿을 생성합니다. 이 모노레포는 `samples/kty-board` 경로 사용.
 - 실제 checkout을 재분석합니다. Dockerfile 코드를 실행하므로 신뢰하는 저장소만 사용하세요.
 - 로컬 배포는 PostgreSQL 샘플용: replicas=1, sticky_sessions=false. DB 비밀번호는 Local Target의 `db_password` secret reference 사용. 프로파일별 env 자동 전달은 미지원.
-- Local은 배포마다 새 이미지/Compose 스택/볼륨을 만듭니다. AWS는 기존 ECS 서비스와 RDS를 재사용합니다. 기존 DB를 이어 쓰는 업데이트와 성공 배포 자동 정리는 미지원.
+- Local은 배포마다 새 이미지/Compose 스택/볼륨을 만듭니다. AWS는 기존 ECS 서비스와 RDS를, GCP는 기존 Cloud Run 서비스와 Cloud SQL을 재사용합니다. 기존 DB를 이어 쓰는 업데이트와 성공 배포 자동 정리는 미지원.
 - 빌드 900초, Local readiness 300초, 시운전 폴링 180초, 개별 HTTP 요청 20초 제한. 시운전 서비스 자체 마감 시간에는 진행 중 HTTP/접속 재시도를 취소합니다. 이미 접수된 쓰기를 되돌리지는 않습니다.
-- 배포/비교 중 예외가 나면 이번 요청으로 접수한 관리 대상들을 DELETE 시도합니다. 기존 외부 대상은 삭제하지 않습니다. BLOCKED에서는 관리 AWS 대상의 로그를 조회한 뒤 DELETE하여 공개 403/태스크 종료를 확인합니다. Local은 유지하며 WARN은 삭제하지 않습니다. 로그 본문은 엔진에 복제하지 않고 AWS 어댑터 기록에 보존합니다. Local Target DELETE는 진단 로그·DB 볼륨을 보존합니다.
+- 배포/비교 중 예외가 나면 이번 요청으로 접수한 관리 대상들을 DELETE 시도합니다. 기존 외부 대상은 삭제하지 않습니다. BLOCKED에서는 관리 클라우드 대상(AWS 또는 GCP)의 로그를 조회한 뒤 DELETE하여 공개 403/태스크 종료(GCP는 0대)를 확인합니다. Local은 유지하며 WARN은 삭제하지 않습니다. 로그 본문은 엔진에 복제하지 않고 각 클라우드 어댑터 기록에 보존합니다. Local Target DELETE는 진단 로그·DB 볼륨을 보존합니다.
 - 재시작 시 미완료 기록은 failed로 전환. 자동 재실행하지 않습니다. SQLite 기록은 `apps/engine/.data`에 저장됩니다.
 - 엔진/Target/Shakedown 서비스는 loopback에 유지합니다. 엔진은 localhost/127.0.0.1:3700 Origin만 허용하고 내부 호출은 9101/9102/9103(GCP)/9104/9201로 고정됩니다. 이는 프로덕션 인증 체계가 아닙니다.
 
@@ -242,5 +242,30 @@ retain legacy behavior.
 
 - Azure만 선택: linux/amd64로 한 번 빌드해 ACR에 올리고 그 digest로 배포합니다.
 - AWS와 함께 선택: AWS가 ECR에 올린 이미지를 digest 그대로 ACR로 복사합니다(`docker buildx imagetools create`). 복사에는 `HACKATHON_PUBLISH_PROFILE`도 필요합니다.
-- 옵션: replicas 1~2, `sticky_sessions`는 Azure만 허용(Container Apps ingress 세션 고정).
+- 옵션: replicas 1~2, `sticky_sessions`는 Azure·GCP만 허용(Azure는 Container Apps ingress 세션 고정).
 - 시운전: 시운전 API가 비교 대상을 하나씩만 받으므로, 첫 대상(Local 선택 시 Local)을 기준으로 클라우드마다 한 번씩 실행합니다. 결과 행은 `candidate`로 구분되고, 판정은 가장 나쁜 결과(BLOCKED > WARN > PASS)입니다. BLOCKED가 나온 클라우드만 로그 수집 후 DELETE합니다.
+
+## GCP 연결 설정 (infra/gcp)
+
+gcloud CLI, Docker Buildx, Node 24가 필요합니다. `infra/gcp/README.md`의 1회 준비(`scripts/provision.sh`)로 Cloud SQL·Artifact Registry·Secret Manager와 설정 파일(`infra/gcp/.data/config.json`)을 먼저 만듭니다. AWS와 같이 Spring Boot + PostgreSQL 샘플 계약을 대상으로 하며 범용 GCP 프로비저닝 기능이 아닙니다.
+
+1. gcloud에 로그인하고 활성 프로젝트를 설정 파일의 `gcpProject`로 맞춥니다. 엔진은 이 로그인으로 Artifact Registry에 push하고, `gcloud config get project`가 `gcpProject`와 다르면 배포를 거절합니다. GCP 어댑터는 ADC(사용자 로그인)를 씁니다. 키 파일은 쓰지 않습니다.
+
+```sh
+gcloud auth login
+gcloud config set project shakedown-511106
+gcloud auth application-default login
+```
+
+2. `POST /api/projects`로 레포를 등록하고 반환된 `id`를 설정 파일의 `projectId`에 넣은 뒤 GCP 어댑터를 (다시) 시작합니다. 어댑터 상태 DB는 `projectId`에 묶이므로 바꾼 뒤에는 새 파일을 지정합니다(예: `GCP_ADAPTER_DB=infra/gcp/.data/gcp-<projectId>.sqlite3`). 한 Cloud Run 서비스는 한 프로젝트 전용입니다.
+3. 엔진과 GCP 어댑터에 같은 `GCP_ADAPTER_CONFIG` 절대 경로를 지정합니다. GCP 토큰·키를 웹 입력값이나 레포에 넣지 않습니다.
+4. `npm run dev:gcp`(127.0.0.1:9103)와 엔진을 각각 실행합니다. Local을 함께 선택하면 Local 어댑터도 실행합니다.
+5. 첫 화면 또는 프로젝트 화면에서 GCP를 선택합니다. 단독 선택은 배포만, Local+GCP는 같은 digest 이미지로 배포 후 HTTP 비교를 실행합니다. GCP는 다른 클라우드(AWS·Azure)와 함께 선택할 수 없습니다. 다른 클라우드 저장소로 같은 이미지를 복사하는 기능이 GCP에는 아직 없습니다.
+
+```json
+{"targets":["local","gcp"],"shakedown":true,"autofix":false,"options":{"gcp":{"replicas":2,"sticky_sessions":true,"tz":"UTC"}}}
+```
+
+GCP 빌드는 linux/amd64 단일 manifest이며 한 번 빌드해 `imagePrefixes[0]` 저장소의 `kty-board`에 push합니다. digest는 `gcloud artifacts docker images describe`로 레지스트리에서 읽고, 인증 중 로컬 Docker에 pull하여 두 대상에 같은 주소를 전달합니다. `gcloud auth print-access-token` 토큰은 표준입력으로만 넘겨 임시 Docker 설정에 로그인하고 끝나면 지웁니다. GCP 옵션은 replicas 1~2, sticky_sessions(Cloud Run 세션 어피니티, best-effort), tz입니다. 설정·gcloud 프로젝트·프로젝트 ID·포트·DB가 다르면 배포를 거절합니다. GCP 빌드도 Local·AWS와 같은 보안 검사(Security Gate)를 거칩니다. 실행 설정(runtime)을 저장한 프로젝트와 아키텍처 계획(`architecture_plan_id`)은 아직 GCP에서 지원하지 않아 거절합니다.
+
+BLOCKED의 GCP 정리는 서비스를 0대로 내리고, 공개 권한(`allUsers`) 회수는 어댑터가 뒤에서 처리합니다(IAM 반영 수 분). Cloud SQL·Artifact Registry 비용은 남으므로 `infra/gcp/README.md`의 "비용 멈추기"를 따릅니다.
