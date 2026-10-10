@@ -28,7 +28,7 @@ var dbHost = {
 var credentials = '${uriComponent(dbUsername)}:${uriComponent(dbPassword)}'
 var dbUrl = {
   postgres: 'postgresql://${credentials}@${dbHost}:5432/${dbName}?sslmode=require'
-  mysql: 'mysql://${credentials}@${dbHost}:3306/${dbName}?ssl=${uriComponent('{"rejectUnauthorized":true}')}'
+  mysql: 'mysql://${credentials}@${dbHost}:3306/${dbName}?ssl=${uriComponent('{"rejectUnauthorized":true,"verifyIdentity":true}')}'
   mongodb: 'mongodb+srv://${credentials}@${dbHost}/${dbName}?tls=true&authMechanism=SCRAM-SHA-256&authSource=admin&retrywrites=false&maxIdleTimeMS=120000'
 }[databaseEngine]
 var dbDnsZone = {
