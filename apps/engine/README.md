@@ -169,7 +169,7 @@ API:
 
 계획 응답에 `fallback_diagnostic`과 `prompt_version`을 포함해 어떤 진단과 규격으로 생성했는지 확인할 수 있습니다. 프롬프트 본문이나 키를 별도 로그로 저장하지 않습니다.
 
-## AWS 아키텍처 판단 (설계 계획, 배포 적용 전)
+## AWS 아키텍처 판단 및 선택 구성 배포
 
 프로젝트 화면에서 서비스 형태, 피크 RPS, 가용성, 트래픽 변화, 우선순위를 입력해 세 설계안을 비교합니다. 저장소를 다시 분석해 프레임워크/DB/서버 세션/의존성 이름과 README의 제한된 키워드를 추출합니다. README 원문이나 코드·환경값은 API로 전송하지 않습니다. README 키워드는 미검증 힌트이며 실제 기능이나 수요의 증명이 아닙니다.
 
@@ -191,10 +191,12 @@ Claude가 연결되어 있고 `use_ai=true`이면 `aws-architecture.v1` 고정 �
 - GET `/api/projects/{id}/architecture-plans/latest`: 최근 계획 또는 null
 - POST `/api/projects/{id}/architecture-plans/{plan_id}/select`: `{template_id: small|medium|large}`
 
-**선택 저장은 인프라 생성이나 배포 설정 적용이 아닙니다.** `deployment.ready=false`로 반환합니다. 현재 AWS 데모 어댑터는 고정 CPU/메모리, 준비된 ALB/RDS, 최대 2태스크 계약을 사용합니다. 이 계획을 실제 배포하려면 템플릿별 IaC/어댑터 연결, HTTPS·네트워크·DB·부하 검증을 별도로 구현해야 합니다. 기존 Action은 저장된 계획을 적용하지 않습니다. 유료 Claude 호출과 실제 AWS 배포는 테스트 대역으로 대체했으며 실제 검증하지 않았습니다.
+**선택 저장 자체는 AWS를 변경하지 않습니다.** 배포 요청에 `architecture_plan_id`를 전달하면 최신 선택·분석 근거·실행 설정 및 보안 검사를 재검증한 뒤 서버 카탈로그의 ECS 자원·AZ·자동 확장을 적용합니다. 관리형 PostgreSQL에만 RDS 가용성 변경을 적용합니다. 사전 기반 스택이 필요하며 빈 계정 온보딩은 포함하지 않습니다. 기존 medium·large 실측은 게이트·범용 실행 설정 변경 전 결과입니다. 이번 변경의 AWS 재배포는 미검증입니다.
 
 설계 참고: [ECS 목표 추적 확장](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-autoscaling-targettracking.html), [ECS AZ 분산](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-rebalancing.html), [RDS Multi-AZ](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZSingleStandby.html). Multi-AZ DB 인스턴스의 standby는 읽기 트래픽을 처리하지 않습니다.
-### Security Gate prerequisite (#16)
+
+
+### Security Gate prerequisite (#16, updated by #25)
 
 Image planning now scans an isolated repository snapshot using the merged
 `apps/security-gate/main.py --with-gitleaks` (schema 3.0), before rule generation
@@ -207,11 +209,14 @@ request flag or LLM fallback that overrides this gate.
 
 Install the Security Gate's Semgrep/Gitleaks tools as described in
 `apps/security-gate/README.md`; the engine Python environment also needs its
-requirements. The current gate supports Compose privileged checks, limited
-Python patterns and text-secret detection, not all-language vulnerability
-analysis. Missing applicable checks remain REVIEW; unsupported/binary inputs
-can fail scanning. In particular, Java/Gradle samples are not automatically
-approved. Tool installation alone does not make unsupported projects pass.
+requirements. The #25 gate supports limited Python, Java, JavaScript and
+TypeScript patterns, Compose privileged checks and text-secret detection.
+The engine validates the bundled v3 JSON schema. An absent Compose file is
+accepted only as Docker REVIEW/NOT_APPLICABLE with no files/errors, while the
+overall result and both Semgrep/Gitleaks must still be ALLOW/SUCCESS.
+Unsupported source languages, template coverage gaps and scanner failures remain
+blocking. A structurally valid Gradle wrapper JAR can be excluded from text-secret
+scanning; that is not a security review of the binary or dependencies.
 Only a sanitized decision is returned; raw scanner findings/output are not
 sent to the dashboard or LLM. No production security guarantee is implied.
 

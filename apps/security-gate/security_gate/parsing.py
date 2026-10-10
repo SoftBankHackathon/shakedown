@@ -16,7 +16,7 @@ MAX_YAML_TOKENS = 100_000
 MAX_YAML_DEPTH = 64
 
 
-def read_bounded(path, max_bytes):
+def read_bounded_bytes(path, max_bytes):
     before = path.lstat()
     if is_link(before):
         raise ScanError("SYMLINK_OR_REPARSE_POINT")
@@ -34,7 +34,11 @@ def read_bounded(path, max_bytes):
         data = stream.read(max_bytes + 1)
         if len(data) > max_bytes:
             raise ScanError("FILE_SIZE_LIMIT_EXCEEDED")
-    return data.decode("utf-8-sig")
+    return data
+
+
+def read_bounded(path, max_bytes):
+    return read_bounded_bytes(path, max_bytes).decode("utf-8-sig")
 
 
 def parse(source):
