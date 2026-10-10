@@ -232,7 +232,7 @@ def test_real_template_danger_maps_lines_and_preserves_coverage_gaps(tmp_path):
 def test_real_web_cli_schema_exit_and_secrets(tmp_path, scenario, decision, exit_code):
     shutil.copy(FIXTURES / ("javascript_vulnerable" if scenario == "danger" else "javascript_safe") / "sample.js", tmp_path)
     if scenario == "unsupported":
-        (tmp_path / "app.go").write_text("package main", encoding="utf-8")
+        (tmp_path / "app.c").write_text("int value;", encoding="utf-8")
     if scenario == "secret":
         (tmp_path / ".env").write_text("api_token=" + FAKE, encoding="utf-8")
     run = subprocess.run([sys.executable, str(ROOT / "main.py"), str(tmp_path), "--with-gitleaks"],

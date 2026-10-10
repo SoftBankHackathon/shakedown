@@ -14,7 +14,7 @@ pytestmark = pytest.mark.skipif(
     reason='Requires real project-local Semgrep and Gitleaks CLIs (POSIX)')
 
 
-@pytest.mark.parametrize('language', ['java', 'javascript', 'typescript', 'python'])
+@pytest.mark.parametrize('language', ['java', 'javascript', 'typescript', 'python', 'go', 'rust'])
 @pytest.mark.parametrize('safe', [True, False])
 def test_real_scanner_contract(language, safe):
     name = ('safe' if safe else 'vulnerable')
@@ -73,7 +73,7 @@ def test_real_invalid_java_blocks_image_planning(tmp_path):
 @pytest.mark.parametrize('filename,source,decision', [
     ('app.js', 'const value = ;', 'SCAN_FAILED'),
     ('app.ts', 'const value: = ;', 'SCAN_FAILED'),
-    ('main.go', 'package main\nfunc main() {}', 'REVIEW'),
+    ('main.c', 'int main(void) { return 0; }', 'REVIEW'),
     ('main.go', 'package main\nfunc main( {', 'SCAN_FAILED'),
 ])
 def test_real_multilanguage_preflight_blocks_engine(tmp_path, filename, source, decision):

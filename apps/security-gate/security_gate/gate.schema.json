@@ -35,11 +35,11 @@
       "required": ["tool", "rule_id", "severity", "file_path", "line", "decision", "reason_code"],
       "properties": {
         "tool": {"enum": ["docker_compose", "semgrep"]},
-        "rule_id": {"enum": ["DOCKER_COMPOSE_PRIVILEGED", "security-gate-python-eval", "security-gate-python-shell-true", "security-gate-java-runtime-exec", "security-gate-java-process-builder", "security-gate-web-dynamic-eval", "security-gate-web-function-constructor", "security-gate-web-shell-exec"]},
-        "severity": {"enum": ["HIGH", "UNKNOWN"]},
+        "rule_id": {"enum": ["DOCKER_COMPOSE_PRIVILEGED", "security-gate-python-eval", "security-gate-python-shell-true", "security-gate-java-runtime-exec", "security-gate-java-process-builder", "security-gate-web-dynamic-eval", "security-gate-web-function-constructor", "security-gate-web-shell-exec", "go_subproc_rule-subproc", "go_sql_rule-concat-sqli", "panic-in-function-returning-result"]},
+        "severity": {"enum": ["HIGH", "MEDIUM", "UNKNOWN"]},
         "file_path": {"type": "string"}, "line": {"type": "integer", "minimum": 1},
         "decision": {"enum": ["DENY", "REVIEW"]},
-        "reason_code": {"enum": ["PRIVILEGED_ENABLED", "PRIVILEGED_UNRESOLVED", "PYTHON_DYNAMIC_EVAL", "PYTHON_SHELL_EXECUTION", "JAVA_COMMAND_EXECUTION", "JAVA_PROCESS_EXECUTION", "WEB_DYNAMIC_EVAL", "WEB_DYNAMIC_FUNCTION", "WEB_SHELL_EXECUTION"]}
+        "reason_code": {"enum": ["PRIVILEGED_ENABLED", "PRIVILEGED_UNRESOLVED", "PYTHON_DYNAMIC_EVAL", "PYTHON_SHELL_EXECUTION", "JAVA_COMMAND_EXECUTION", "JAVA_PROCESS_EXECUTION", "WEB_DYNAMIC_EVAL", "WEB_DYNAMIC_FUNCTION", "WEB_SHELL_EXECUTION", "GO_DYNAMIC_COMMAND", "GO_CONSTRUCTED_SQL", "RUST_PANIC_IN_RESULT"]}
       }
     },
     "semgrep": {
@@ -53,7 +53,7 @@
         "unscanned_sources": {"type": "integer", "minimum": 0},
         "coverage_gaps": {"type": "array", "uniqueItems": true, "items": {"enum": ["TEMPLATE_EXPRESSION", "EXTERNAL_SCRIPT_REFERENCE", "UNRESOLVED_SCRIPT_REFERENCE", "DYNAMIC_SCRIPT_REFERENCE", "UNSUPPORTED_SCRIPT_TYPE", "MALFORMED_TEMPLATE"]}},
         "scanned_units": {"type": "integer", "minimum": 0},
-        "scanned_languages": {"type": "array", "uniqueItems": true, "items": {"enum": ["python", "java", "javascript", "typescript"]}},
+        "scanned_languages": {"type": "array", "uniqueItems": true, "items": {"enum": ["python", "java", "javascript", "typescript", "go", "rust"]}},
         "target_path": {"type": "string"}, "scan_status": {"enum": ["SUCCESS", "FAILED", "NOT_APPLICABLE"]},
         "decision": {"enum": ["ALLOW", "DENY", "REVIEW", "SCAN_FAILED"]},
         "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},

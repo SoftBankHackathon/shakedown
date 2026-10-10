@@ -12,7 +12,7 @@ from .source_units import MAX_UNITS, SourceUnit, TemplateScripts
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
 # Security-rule coverage only. Syntax-only grammars must not enter this map.
 # extension -> (language, snapshot suffix). JSX/TSX preserve their parser dialect.
-SUPPORTED = {".py": ("python", ".py"), ".java": ("java", ".java"),
+SUPPORTED = {".go": ("go", ".go"), ".rs": ("rust", ".rs"), ".py": ("python", ".py"), ".java": ("java", ".java"),
              ".js": ("javascript", ".js"), ".jsx": ("javascript", ".jsx"),
              ".mjs": ("javascript", ".js"), ".cjs": ("javascript", ".js"),
              ".ts": ("typescript", ".ts"), ".tsx": ("typescript", ".tsx"),
@@ -22,7 +22,7 @@ TEMPLATE_SUFFIXES = frozenset({".html", ".htm", ".svg"})
 UNSUPPORTED = {
     ".vue": "vue", ".svelte": "svelte",
     ".kt": "kotlin", ".kts": "kotlin", ".scala": "scala", ".groovy": "groovy",
-    ".go": "go", ".rs": "rust", ".rb": "ruby", ".php": "php", ".phtml": "php",
+    ".rb": "ruby", ".php": "php", ".phtml": "php",
     ".c": "c", ".h": "c", ".cpp": "cpp", ".cc": "cpp", ".hpp": "cpp",
     ".cxx": "cpp", ".hh": "cpp", ".hxx": "cpp",
     ".cs": "csharp", ".swift": "swift", ".dart": "dart", ".lua": "lua",
@@ -34,7 +34,7 @@ UNSUPPORTED = {
 DATA_SUFFIXES = frozenset({".md", ".txt", ".rst", ".yaml", ".yml", ".json", ".xml",
     ".toml", ".ini", ".cfg", ".conf", ".properties", ".env", ".html", ".htm", ".css",
     ".csv", ".lock", ".gradle", ".jar", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg"})
-DATA_NAMES = frozenset({"Dockerfile", "Makefile", "gradlew", "gradlew.bat", "mvnw", "mvnw.cmd",
+DATA_NAMES = frozenset({"go.mod", "go.sum", "Dockerfile", "Makefile", "gradlew", "gradlew.bat", "mvnw", "mvnw.cmd",
     "README", "LICENSE", "NOTICE", ".gitignore", ".gitattributes", ".dockerignore", ".semgrepignore"})
 
 
