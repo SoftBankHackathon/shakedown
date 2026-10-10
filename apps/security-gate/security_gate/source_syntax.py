@@ -26,20 +26,18 @@ except (MemoryError, RecursionError):
 """
 
 
-def validate_sources(inputs, *, timeout_seconds):
-    """Validate the exact bounded strings later copied to the Semgrep snapshot.
 
-Use the running interpreter's grammar. Newer or otherwise incompatible syntax
-fails closed; this is not a complete Python compilation or semantic check.
-"""
+def _check(sources, program, *, timeout_seconds):
+    if not sources:
+        return
     if timeout_seconds <= 0:
         raise ScanError("SOURCE_SYNTAX_TIMEOUT")
-    payload = json.dumps([source for _, source in inputs], ensure_ascii=False).encode("utf-8")
+    payload = json.dumps(sources, ensure_ascii=False).encode("utf-8")
+    command = [sys.executable, "-I", "-S", "-B", "-c", program]
     try:
         completed = subprocess.run(
-            [sys.executable, "-I", "-S", "-B", "-c", CHECK_PROGRAM], input=payload,
-            cwd=PROJECT_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=timeout_seconds, shell=False,
+            command, input=payload, cwd=PROJECT_ROOT, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=timeout_seconds, shell=False,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
     except subprocess.TimeoutExpired:
@@ -50,3 +48,17 @@ fails closed; this is not a complete Python compilation or semantic check.
         raise ScanError("SOURCE_SYNTAX_INVALID")
     if completed.returncode != 0:
         raise ScanError("SOURCE_SYNTAX_CHECK_FAILED")
+
+
+def validate_sources(inputs, *, timeout_seconds):
+    """Validate the exact bounded strings later copied to the Semgrep snapshot.
+
+Only Python is pre-checked, with the running interpreter's grammar. Newer or
+otherwise incompatible syntax fails closed; this is not a complete Python
+compilation or semantic check. Other languages have no local parser here:
+Semgrep runs with --strict and reports their parse errors as SEMGREP_SCAN_ERRORS.
+"""
+    if timeout_seconds <= 0:
+        raise ScanError("SOURCE_SYNTAX_TIMEOUT")
+    _check([source for path, source in inputs if path.suffix.lower() == ".py"],
+           CHECK_PROGRAM, timeout_seconds=timeout_seconds)

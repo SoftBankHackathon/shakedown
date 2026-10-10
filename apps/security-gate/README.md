@@ -1,6 +1,6 @@
 # Security Gate — 독립 보안 검사 MVP
 
-허가된 로컬 경로의 Docker Compose 위험 설정, Python 취약 코드, 텍스트 Secret 노출을 정적으로 검사합니다. 검사 대상 소스는 실행하지 않습니다. 기존 Engine API 연결, Clone, Docker 실행, 배포 기능은 포함하지 않습니다.
+허가된 로컬 경로의 Docker Compose 위험 설정, Python·Java·JavaScript·TypeScript 취약 코드, 텍스트 Secret 노출을 정적으로 검사합니다. 검사 대상 소스는 실행하지 않습니다. 기존 Engine API 연결, Clone, Docker 실행, 배포 기능은 포함하지 않습니다.
 
 이 README는 **제출본의 현재 설치·실행·연동 인터페이스**입니다. 기존 530줄 README 전문과 STEP별 실험 기록은 [docs/LAB_VALIDATION_HISTORY.md](docs/LAB_VALIDATION_HISTORY.md)에 보존했습니다. 원본 실험의 성공 결과와 제출본에서 새로 수행한 결과를 구분하며, 이번 패키징 검증은 [docs/PACKAGING_VALIDATION.md](docs/PACKAGING_VALIDATION.md)에 기록합니다.
 
@@ -12,8 +12,8 @@
 | --- | --- |
 | main.py, security_gate/__main__.py, cli.py | 로컬 경로·옵션 입력, JSON 출력, 종료 코드 |
 | scanner.py, discovery.py, parsing.py, rules/privileged.py | 제한된 탐색, 안전 YAML 파싱, Docker privileged 검사 |
-| source_targets.py, source_syntax.py | Python 소스 수집, 소스를 실행하지 않는 AST 검증 |
-| semgrep.py, semgrep_rules/python-security.yml | 로컬 규칙 Semgrep 실행, 실패 처리, 결과 정규화 |
+| source_targets.py, source_units.py, source_syntax.py | 다중 언어 수집·템플릿 추출·미검사 범위 식별, Python 전용 AST 검증 |
+| semgrep.py, semgrep_rules/*.yml | 로컬 고정 규칙 Semgrep 실행, 실패 처리, 결과 정규화 |
 | secret_targets.py, gitleaks.py, gitleaks_rules/gitleaks.toml | UTF-8 텍스트 수집, Gitleaks dir 검사, Secret 비노출·정리 |
 | models.py, gate.py, gate3.py | 각각 JSON 1.0, Docker+Semgrep 2.0, 세 검사 3.0 집계 |
 | report.schema.json, gate.schema.json, gate3.schema.json | 버전별 출력 계약, 오프라인 스키마 검증 |
@@ -36,7 +36,9 @@ $env:TMP = $env:TEMP
 .\.venv\Scripts\semgrep.exe --version
 ```
 
-`requirements.txt`는 PyYAML, `requirements-dev.txt`는 pytest·jsonschema, `requirements-semgrep.txt`는 선택적 Semgrep 의존성입니다. 원본에서 검증한 버전은 Python 3.12.10, Semgrep 1.180.0, Gitleaks 8.30.0입니다. 의존성 범위가 완전 고정된 lockfile은 아니므로 설치 버전을 기록하고 실제 테스트를 다시 실행하세요.
+`requirements.txt`는 PyYAML, `requirements-dev.txt`는 pytest·jsonschema, `requirements-semgrep.txt`는 선택적 Semgrep 의존성입니다.
+
+macOS·Linux에서는 임시 폴더가 심볼릭 링크(`/var` → `/private/var`)라 스캔이 `SYMLINK_OR_REPARSE_POINT`로 거부됩니다. 테스트와 실행 전에 `export TMPDIR="$PWD/.tmp"`로 프로젝트 안 `.tmp`를 쓰세요(`.tmp`는 gitignore 대상). 원본에서 검증한 버전은 Python 3.12.10, Semgrep 1.180.0, Gitleaks 8.30.0입니다. 의존성 범위가 완전 고정된 lockfile은 아니므로 설치 버전을 기록하고 실제 테스트를 다시 실행하세요.
 
 Gitleaks는 Python 패키지가 아닌 네이티브 CLI입니다. [공식 Releases](https://github.com/gitleaks/gitleaks/releases)에서 Windows 아키텍처에 맞는 ZIP을 `.tmp/gitleaks.zip`으로 저장하고, 같은 릴리스의 체크섬과 비교한 다음 아래 명령을 실행합니다. 지원 정책은 **8.24.2 이상, 9 미만**입니다.
 
@@ -150,7 +152,9 @@ JSON 3.0 출력 구조를 설명하는 요약 예시입니다. 아래 중첩 객
 
 집계 우선순위는 `SCAN_FAILED > DENY > REVIEW > ALLOW`입니다. 실패를 취약점 미발견으로 취급하지 않습니다. 위험과 실패가 함께 발생하면 전체 SCAN_FAILED로 반환하고 정상화한 기존 위험 근거를 보존합니다. 최상위 `reason_code`는 각각 `ALL_APPLICABLE_CHECKS_PASSED`, `RISK_DETECTED`, `REVIEW_REQUIRED`, `REQUIRED_SCAN_FAILED`입니다. 이 필드는 2.0/3.0에 있으며 1.0에는 추가하지 않습니다.
 
-검사 대상이 없으면 도구별 `NOT_APPLICABLE / REVIEW`가 남습니다. Compose가 없는 Python Repository도 자동 ALLOW되지 않습니다. 2.0/3.0의 최상위 `SUCCESS`는 REVIEW를 승인한다는 뜻이 아니므로 `decision`과 모든 도구 상태를 함께 확인하세요.
+검사 대상이 없으면 도구별 `NOT_APPLICABLE / REVIEW`가 남습니다. 2.0/3.0에서는 **Compose만 해당 없을 때** 이 REVIEW를 집계에서 제외합니다. 지원되는 Python/Java/JavaScript/TypeScript 소스가 하나 이상이고, 모든 제출 단위의 Semgrep 검사와 3.0의 Secret 검사가 성공하며 위험·미지원 소스·미검사 범위가 없으면 ALLOW입니다. 소스 없음, 미지원 소스만 존재, 혼합 프로젝트의 미지원 소스, Secret 검사 대상 없음은 자동 ALLOW하지 않습니다. 1.0 Docker 단독 판정은 유지합니다. 최상위 `SUCCESS`는 REVIEW를 승인한다는 뜻이 아닙니다.
+
+JSON 1.0/2.0/3.0 버전·중첩 구조·종료 코드 0/1/2/3은 유지합니다. 2.0 `scope`는 `docker_compose_privileged_and_semgrep_multilanguage_mvp`, Semgrep `scope`는 `local_multilanguage_mvp_rules`로 확장했습니다. Semgrep의 `detected_languages`와 `unsupported_languages`/`unsupported_files`는 수집 범위, `scanned_languages`/`scanned_units`는 CLI가 보고한 실제 검사 단위, `scanned_files`는 그 원본 파일 수입니다. `coverage_gaps`와 `unscanned_sources`는 미검사 사유와 그 발생 횟수이며, 같은 파일에도 여러 사유가 생길 수 있습니다. Gitleaks의 `excluded_binary_files`는 검증 후 제외한 바이너리 수입니다. 갱신된 스키마는 이전 Python 및 Python/Java scope와 기존 예시도 수용하지만, 구버전의 엄격한 스키마 소비자는 함께 갱신해야 합니다. 새 규칙 근거와 Compose NOT_APPLICABLE 예외도 스키마에 반영했습니다.
 
 기존 위험 근거는 도구별 결과와 최상위 `findings`에 유지합니다. 같은 행이어도 서로 다른 규칙의 근거는 보존하며, 집계 테스트는 중복 추가·누락을 비교합니다. Gitleaks 정리 실패도 근거·버전·파일 수를 보존하고 `GITLEAKS_CLEANUP_FAILED`를 기록합니다.
 
@@ -177,28 +181,41 @@ Semgrep의 native exit 1은 유효한 탐지 결과가 있으면 DENY입니다. 
 
 ### 로컬 규칙과 검사 범위
 
-고정된 `semgrep_rules/python-security.yml`만 `--config`로 전달합니다. Registry, URL, `auto`, 원격 규칙 다운로드를 사용하지 않습니다.
+고정된 `semgrep_rules/python-security.yml`, `semgrep_rules/java-security.yml`, `semgrep_rules/javascript-typescript-security.yml`만 각각 `--config`로 전달합니다. Registry, URL, `auto`, 원격 규칙 다운로드를 사용하지 않습니다.
 
 | 규칙 ID | 패턴 | 위험도 | 판정 / 이유 코드 |
 | --- | --- | --- | --- |
 | security-gate-python-eval | `eval(...)` | HIGH | DENY / PYTHON_DYNAMIC_EVAL |
 | security-gate-python-shell-true | `subprocess.run/call/Popen/check_call/check_output(..., shell=True, ...)` | HIGH | DENY / PYTHON_SHELL_EXECUTION |
+| security-gate-java-runtime-exec | `Runtime.getRuntime().exec(...)`, Runtime 타입 변수의 `exec(...)` | HIGH | DENY / JAVA_COMMAND_EXECUTION |
+| security-gate-java-process-builder | `new ProcessBuilder(...).start()`, ProcessBuilder 타입 변수의 `start()` | HIGH | DENY / JAVA_PROCESS_EXECUTION |
+| security-gate-web-dynamic-eval | `eval(...)`, `window.eval(...)`, `globalThis.eval(...)` | HIGH | DENY / WEB_DYNAMIC_EVAL |
+| security-gate-web-function-constructor | `new Function(...)`, `Function(...)` | HIGH | DENY / WEB_DYNAMIC_FUNCTION |
+| security-gate-web-shell-exec | Node child_process의 직접 `exec`/`execSync`, `require` 호출 패턴 | HIGH | DENY / WEB_SHELL_EXECUTION |
 
 이는 MVP의 직접 호출 패턴 검사입니다. 입력의 실제 신뢰도, 복잡한 별칭·래퍼, 동적으로 계산한 `shell` 값, 다른 언어, 전체 취약점 범주를 판단하지 않습니다.
 `eval`의 상수 입력도 차단할 수 있습니다. 정상 fixture는 `ast.literal_eval`과 `shell=False`를 사용합니다.
-외부 Repository를 새로 가져오지 않고, 허가된 로컬 디렉터리의 `.py` 파일만 읽습니다.
+외부 Repository를 새로 가져오지 않고, 허가된 로컬 디렉터리의 `.py`, `.java`, `.js/.jsx/.mjs/.cjs`, `.ts/.tsx/.mts/.cts`를 수집합니다. 스냅샷에는 해당 언어의 `.py/.java/.js/.jsx/.ts/.tsx` 확장자를 사용하며 AST 사전 검증은 `.py`에만 적용합니다. Java 규칙은 정규화된 타입명도 다루지만 javac 빌드·타입 검증, SQL injection, Spring 인증/인가, XSS, 역직렬화, 파일 간 데이터 흐름은 검사하지 않습니다. 명령이 상수여도 실행 패턴은 차단합니다. 규칙 문법은 [Semgrep 공식 문서](https://semgrep.dev/docs/writing-rules/pattern-syntax)를 따릅니다.
+
+Kotlin, Go, Ruby, PHP, C/C++, C#, Rust, Scala, Swift, Groovy, 셸, Vue/Svelte 전용 파일 등은 미지원으로 REVIEW합니다. 알려지지 않은 확장자·확장자 없는 파일도 명시된 데이터/빌드 파일명이 아니면 `unknown`으로 REVIEW합니다. 언어 추가 시 확장자 분류·고정 규칙·정규화 허용 목록·스키마·실제 CLI fixture를 함께 확장해야 합니다.
+
+HTML/SVG의 인라인 script, `on*`/`th:on*` 이벤트 코드, javascript URL은 별도 JavaScript 단위로 추출합니다. 한 파일의 여러 단위 중 하나라도 `paths.scanned`에서 빠지면 SCAN_FAILED입니다. 근거는 원본 파일·행으로 매핑하며, 이벤트 속성은 해당 속성 시작 행을 가리킵니다. script의 TypeScript MIME도 구분합니다. JSON 데이터 script는 실행 소스 대상이 아니며 Secret 검사는 유지합니다.
+
+로컬 script 참조는 수집된 소스와 대조하고 원격 URL은 내려받지 않습니다. 외부/누락/동적 참조, 알 수 없는 script 타입, 손상·중복 속성 템플릿은 `coverage_gaps`로 REVIEW합니다. Thymeleaf의 알려진 `[[${...}]]`/`[(${...})]` 표현식은 실행하지 않고 고정 식별자로 치환해 나머지 코드만 검사하며, 반드시 `TEMPLATE_EXPRESSION`을 남겨 ALLOW를 금지합니다. 그 외 파서가 처리하지 못하는 구문은 SCAN_FAILED입니다. 전체 브라우저 DOM 또는 템플릿 렌더링 검증은 제공하지 않습니다.
+
+정적 HTML/CSS, 설정·문서, Gradle 빌드 스크립트(`.gradle`, `.gradle.kts`), 명시된 빌드 파일과 wrapper 런처(`gradlew`, `gradlew.bat`, `mvnw`, `mvnw.cmd`)는 애플리케이션 소스 규칙 범위 밖이며 텍스트 Secret 검사만 수행합니다. 정확한 분류 목록은 `source_targets.py`의 상수에 있습니다. 파일 확장자/이름을 위장한 코드를 전부 식별한다고 보장하지 않습니다. 언어 목록은 발견 기준이며 실제 검사 성공 여부는 `scan_status`, `scanned_files`, 미지원 파일 수를 함께 확인합니다.
 `.git`, `.venv`, `venv`, `__pycache__`, `.pytest_cache`, `.pytest-tmp`, `.tmp`, `.pip-cache` 이름은 소스 탐색에서 제외됩니다. 이 제외는 기존 Docker 탐색에는 적용되지 않습니다.
 
 ### 실행 제한과 비밀값 보호
 
-- `.py` 파일 최대 256개, 탐색 항목 10,000개, 깊이 64, 기본 파일당 1 MiB, 누적 UTF-8 내용 8 MiB로 제한합니다. 링크와 reparse point는 제외 디렉터리 밖에서 모두 거부합니다.
+- 지원 소스 및 HTML/SVG 파일 합계 최대 256개, 추출 후 검사 단위 최대 512개, 탐색 항목 10,000개, 깊이 64, 기본 파일/단위당 1 MiB, 원본·추출 내용 각각 누적 8 MiB로 제한합니다. 링크와 reparse point는 제외 디렉터리 이름이어도 거부합니다.
 - 소스를 작업 폴더의 `.tmp/semgrep-*`에 익명 파일명으로 복사합니다. 대상의 `.semgrepignore`, `.semgrep.yml`, `.git` 설정은 복사하거나 사용하지 않습니다. fixture 경로의 소스는 Python으로 import/실행하지 않습니다.
 - `semgrep scan`을 인자 배열과 `shell=False`로 호출합니다. 로컬 빌드, autofix, Pro/Secrets 기능을 활성화하지 않습니다. `--oss-only`, `--metrics off`, `--disable-version-check`, `--no-secrets-validation`을 사용하고 인증·규칙·Python 경로 관련 외부 환경변수는 전달하지 않습니다.
 - [공식 CLI 옵션](https://semgrep.dev/docs/cli-reference)에 따라 `--strict`, `--error`, `--disable-nosem`, `--no-git-ignore`, `--no-rewrite-rule-ids`를 사용합니다. 사용 중인 버전에서 옵션을 지원하지 않으면 실행 실패로 처리합니다.
 - 전체 준비와 CLI 실행의 기본 제한은 30초(최대 120초), Semgrep 규칙/파일당 제한은 5초, 메모리 설정은 256 MiB입니다. 준비 이후 남은 시간을 CLI에 전달합니다. OS I/O·프로세스 시작·결과 정규화와 정리까지의 엄격한 실시간 상한은 보장하지 않습니다.
 - 시간 초과/출력 제한 시 프로세스를 중단합니다. Windows는 `taskkill /T /F`, POSIX는 프로세스 그룹 종료를 사용합니다. 종료·임시 폴더 정리 시간이 추가될 수 있으며 OS 권한 때문에 자식 프로세스 종료가 실패하는 상황까지 보안 격리로 보장하지 않습니다.
 - CLI stdout 8 MiB, stderr 1 MiB, 탐지 결과 1,000개로 제한합니다. raw 출력은 임시 파일에만 보관하고 정리합니다. 보고서에는 `extra.message`, 코드 줄, metavars, trace, stdout/stderr, 예외 원문을 전달하지 않습니다.
-- Semgrep의 `paths.scanned`가 복사한 전체 파일과 일치해야 성공합니다. 누락·범위 밖 경로·알 수 없는 규칙·JSON 구조 오류·파싱 오류·Semgrep 오류는 SCAN_FAILED입니다. 크기 제한 등으로 일부 파일만 검사된 결과를 ALLOW로 처리하지 않습니다.
+- Semgrep의 `paths.scanned`가 복사한 전체 검사 단위와 일치해야 성공합니다. 누락·범위 밖 경로·알 수 없는 규칙·JSON 구조 오류·파싱 오류·Semgrep 오류는 SCAN_FAILED입니다. 동일 원본 파일의 다른 script 단위 누락도 검사합니다.
 - Python 소스는 Semgrep 전에 아래 AST 사전 검증도 통과해야 합니다. `scanned` 포함과 빈 `errors`만으로 Python 문법의 유효성을 판단하지 않습니다.
 - 신뢰된 로컬 규칙과 위 옵션으로 네트워크 동작을 억제합니다. 이 Python 어댑터 자체는 운영체제 수준의 네트워크/파일시스템 샌드박스를 제공하지 않습니다. 소스 동시 변경에 대한 완전한 격리도 보장하지 않습니다.
 
@@ -238,9 +255,10 @@ JSON 1.0/2.0 스키마와 기본 Docker CLI는 변경하지 않았습니다. 기
 내장 규칙은 API key·token 등 알려진 Secret 형식을 찾고, 추가 로컬 규칙 `security-gate-lab-api-token`은 서비스에서 발급하지 않은 `SGLAB_FAKE_TOKEN_` 테스트 네임스페이스만 검사합니다.
 fixture는 실제 유효한 비밀키를 포함하지 않습니다. 실제 엔진 탐지가 검증되지 않은 동안 모의 결과를 실제 성공 사례로 보고하지 않습니다.
 
-- 모든 일반 파일을 UTF-8/UTF-8 BOM 텍스트로 읽습니다. 숨김 파일과 `.env`도 포함됩니다. 파일 256개, 항목 10,000개, 디렉터리 깊이 64, 기본 파일당 1 MiB, 누적 8 MiB를 제한합니다.
+- 명시된 Gradle wrapper JAR 예외 외의 모든 일반 파일을 UTF-8/UTF-8 BOM 텍스트로 읽습니다. 숨김 파일과 `.env`, `.properties`, YAML/JSON/XML, Gradle 스크립트, 소스코드도 포함됩니다. 파일 256개, 항목 10,000개, 디렉터리 깊이 64, 기본 파일당 1 MiB, 누적 원본 바이트 8 MiB를 제한하며 제외 바이너리도 이 제한에 포함합니다.
 - `.git`, `.venv`, `venv`, `node_modules`, `__pycache__`, `.pytest_cache`, `.pytest-tmp`, `.tmp`, `.pip-cache` 디렉터리는 검사 범위에서 제외합니다. 링크/reparse point는 제외 이름이어도 거부합니다.
-- NUL·지원하지 않는 인코딩·파일 크기 초과·특수 파일·읽기 오류를 조용히 건너뛰지 않고 SCAN_FAILED로 처리합니다. 바이너리/아카이브가 포함된 디렉터리는 이 MVP 텍스트 검사 범위로 자동 승인되지 않습니다.
+- `gradle/wrapper/gradle-wrapper.jar` 경로 끝이 정확히 일치하고 ZIP magic, ZIP 구조/CRC, Manifest, GradleWrapperMain.class 및 class magic 검증을 통과한 파일만 제외합니다. 압축 해제 크기 8 MiB·항목 256개를 제한하고 암호화·미지원 압축·중복 이름·경로 이탈·내부 링크를 거부합니다. 검증은 메모리 안에서 수행하며 추출하거나 실행하지 않습니다. 제외 수는 `excluded_binary_files`에 남습니다. 형식 확인은 공급망 신뢰나 내부 Secret 부재의 보증이 아니며, JAR 내부는 Secret 검사 범위 밖입니다.
+- `.jar` 이름의 일반 텍스트는 계속 검사합니다. 다른 JAR·바이너리, NUL, 지원하지 않는 인코딩, 손상된 ZIP/JAR, 크기 초과, 특수 파일, 읽기 오류는 SCAN_FAILED입니다. 광범위한 확장자 기반 바이너리 제외는 하지 않습니다.
 - 기존 안전 읽기의 링크 거부와 파일 열기 전후 식별자 비교를 사용합니다. 검사 대상 소스는 import/실행하지 않습니다. Python 구문 오류 파일도 Secret 검사 자체에서는 텍스트로 검사할 수 있지만, 통합 판정은 기존 AST 실패를 유지합니다.
 - 내용은 `.tmp/gitleaks-*`의 `input` 디렉터리에 익명 `.txt` 파일명으로 복사합니다. 검사 대상의 설정·ignore 파일은 정책으로 사용하지 않고 일반 내용으로만 검사합니다.
 - 고정 `--config`, 빈 별도 `.gitleaksignore`, `--ignore-gitleaks-allow`를 사용하며 외부 `GITLEAKS_CONFIG*`와 PATH를 전달하지 않습니다. 보고서 경로는 `input` 밖에 두어 자기 보고서를 재검사하지 않습니다.
@@ -297,6 +315,8 @@ Semgrep 소스 탐색과 익명 경로의 범위 검사도 별도로 검증하�
 
 ## 테스트 방법과 검증 결과
 
+현재 다중 언어 작업의 실제 결과와 Windows 초기화 오류 진단은 [MULTILANGUAGE_VALIDATION.md](docs/MULTILANGUAGE_VALIDATION.md)에 기록합니다. 아래의 패키징/원본 lab 수치는 과거 실행 기록이며 이번 실제 CLI 통과를 의미하지 않습니다.
+
 ```powershell
 # 전체 회귀: 설치되어 있으면 실제 CLI 검사도 실행
 .\.venv\Scripts\python.exe -m pytest -q -rs
@@ -321,7 +341,7 @@ Semgrep 소스 탐색과 익명 경로의 범위 검사도 별도로 검증하�
 1. Engine이 접근을 허가한 변경되지 않는 로컬 Repository 스냅샷의 **절대 디렉터리 경로**를 준비합니다. URL 입력, 원격 Clone, 대상 소스 실행은 지원하지 않습니다.
 2. `apps/security-gate`를 cwd로 정하고 이 패키지의 Python으로 `main.py <authorized-path> --with-gitleaks`를 인자 배열·shell=False로 호출합니다. stdout은 단일 JSON, 종료 코드는 위 계약입니다. 설치 위치는 이 패키지 내부로 고정되며 검사 대상 경로에서 도구를 로드하지 않습니다.
 3. 또는 `security_gate.gate3.scan_full_repository(target, *, docker_timeout_seconds=5.0, semgrep_timeout_seconds=30.0, gitleaks_timeout_seconds=30.0, max_file_bytes=1048576)`를 호출합니다. 반환값은 JSON 3.0에 해당하는 dict입니다. 모의 테스트용 runner 주입 인자는 외부 요청에 노출하지 마세요.
-4. Engine 측에서 호출 자체의 실패·전체 시간 초과·빈 stdout·JSON/스키마 오류·종료 코드와 판정 불일치를 검사 실패로 처리합니다. JSON 3.0의 **명시적 ALLOW 및 모든 도구 성공**만 승인 조건으로 사용합니다. REVIEW·DENY·SCAN_FAILED는 자동 승인하지 않습니다.
+4. Engine 측에서 호출 자체의 실패·전체 시간 초과·빈 stdout·JSON/스키마 오류·종료 코드와 판정 불일치를 검사 실패로 처리합니다. JSON 3.0의 **명시적 ALLOW, Semgrep·Gitleaks 성공, Docker 성공 또는 NOT_APPLICABLE**을 승인 조건으로 사용합니다. REVIEW·DENY·SCAN_FAILED는 자동 승인하지 않습니다. 이번 변경에서 Engine 코드는 수정하지 않습니다.
 5. 도구별 실패 코드와 위험 근거를 함께 보존합니다. 경로와 서비스명도 공유 메타데이터이므로 Engine 로그 접근 범위를 정하고 raw CLI 출력/원본 보고서를 노출하지 마세요.
 
 도구별 기본 시간 제한은 Docker 5초, Semgrep/AST 30초, Gitleaks 30초입니다. 검사는 순차 실행하므로 전체 호출 예산은 합계에 프로세스 시작·I/O·정리 여유를 더해 별도로 정해야 합니다. 무조건 30초를 전체 호출 제한으로 해석하면 안 됩니다. API 요청/응답 계약, 작업 큐·권한 정책·배포 환경은 향후 Engine 작업에서 결정합니다.
@@ -332,6 +352,8 @@ ALLOW는 선택한 버전의 제한된 규칙 통과이며 전체 보안 보장�
 
 - Docker: privileged 직접 선언만 검사합니다. 환경변수 해석·Compose override/include/extends 병합과 네트워크·볼륨·capabilities 검사는 포함하지 않습니다.
 - Python: 실행 중인 Python 버전의 AST 문법과 두 직접 호출 패턴만 검사합니다. 새 버전 문법·별칭·래퍼·타입/스코프·런타임 검증은 범위 밖입니다.
+- Java: Runtime.exec와 ProcessBuilder.start의 최소 로컬 패턴만 검사합니다. Spring Boot 전체 보안 검증이나 컴파일 검증은 아닙니다.
+- JavaScript/TypeScript: eval, Function 생성, 직접적인 Node shell 실행 패턴을 검사합니다. 별칭/래퍼 전체, 데이터 흐름, XSS, 외부 의존성·CDN 코드, 템플릿 렌더링은 검증하지 않습니다. 지원 언어 검사 성공과 별개로 미검사 범위가 남으면 REVIEW입니다.
 - Gitleaks: UTF-8 텍스트 내용만 검사합니다. Git history, 바이너리, 압축/재귀 디코딩, 원격 Secret 유효성 검증은 수행하지 않습니다. 익명 파일명에 따른 경로 기반 규칙 차이와 파일별 실제 완료 목록의 한계가 있습니다.
 - Windows 심볼릭 링크 3개와 실제 junction 검증은 남아 있습니다. 관리자 권한이나 Windows 설정 변경으로 해결하지 않습니다.
 - 임시 파일 정리는 일반 삭제입니다. Windows ACL은 상속되며 물리적 보안 삭제·백업 삭제를 보장하지 않습니다. 정리 실패 시 임시 자료가 남을 수 있으므로 SCAN_FAILED와 작업 폴더 상태를 확인해야 합니다.
