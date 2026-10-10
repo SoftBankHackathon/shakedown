@@ -1,0 +1,18 @@
+{
+  "gcpProject": "shakedown-511106",
+  "gcpProjectNumber": "700410260240",
+  "region": "asia-northeast3",
+  "projectId": "prj_board",
+  "serviceName": "shakedown-board",
+  "jobName": "shakedown-board-schema",
+  "imagePrefixes": ["asia-northeast3-docker.pkg.dev/shakedown-511106/shakedown/"],
+  "network": "default",
+  "subnetwork": "default",
+  "dbHost": "10.20.0.3",
+  "dbName": "board_db",
+  "dbUsername": "board",
+  "dbPasswordSecret": "shakedown-db-password",
+  "port": 8080,
+  "memory": "1Gi",
+  "cpu": "1"
+}
