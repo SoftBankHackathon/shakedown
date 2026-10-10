@@ -5,3 +5,7 @@ uvicorn>=0.30,<1
 pytest>=8.3,<10
 httpx>=0.27,<1
 jsonschema>=4.23,<5
+
+# Java syntax preflight (Tree-sitter, MIT); pin the validated grammar/runtime.
+tree-sitter==0.25.2
+tree-sitter-java==0.23.5

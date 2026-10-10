@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import sysconfig
+import time
 
 from .models import ScanError
 
@@ -25,6 +27,24 @@ except (MemoryError, RecursionError):
     sys.exit(2)
 """
 
+
+# Only this interpreter's installed packages are added; -S still prevents .pth
+# execution/site initialization and -I excludes the target repo and PYTHONPATH.
+JAVA_CHECK_PROGRAM = (
+    "import sys\nsys.path.extend(" + repr(list(dict.fromkeys(
+        sysconfig.get_path(key) for key in ("purelib", "platlib")))) + ")\n"
+    + """
+import json
+from tree_sitter import Language, Parser
+import tree_sitter_java
+
+parser = Parser(Language(tree_sitter_java.language()))
+for source in json.load(sys.stdin):
+    tree = parser.parse(source.encode("utf-8"))
+    if tree.root_node.has_error:
+        sys.exit(65)
+"""
+)
 
 
 def _check(sources, program, *, timeout_seconds):
@@ -51,14 +71,16 @@ def _check(sources, program, *, timeout_seconds):
 
 
 def validate_sources(inputs, *, timeout_seconds):
-    """Validate the exact bounded strings later copied to the Semgrep snapshot.
+    """Parse the exact strings later scanned, without compiling/executing them.
 
-Only Python is pre-checked, with the running interpreter's grammar. Newer or
-otherwise incompatible syntax fails closed; this is not a complete Python
-compilation or semantic check. Other languages have no local parser here:
-Semgrep runs with --strict and reports their parse errors as SEMGREP_SCAN_ERRORS.
-"""
+    Python uses the interpreter grammar; Java uses pinned Tree-sitter grammar.
+    This is syntax-only, not type checking or a guarantee of build success.
+    Other languages still rely on errors reported by Semgrep, which is not a
+    complete syntax preflight.
+    """
     if timeout_seconds <= 0:
         raise ScanError("SOURCE_SYNTAX_TIMEOUT")
-    _check([source for path, source in inputs if path.suffix.lower() == ".py"],
-           CHECK_PROGRAM, timeout_seconds=timeout_seconds)
+    deadline = time.monotonic() + timeout_seconds
+    for suffix, program in ((".py", CHECK_PROGRAM), (".java", JAVA_CHECK_PROGRAM)):
+        _check([source for path, source in inputs if path.suffix.lower() == suffix],
+               program, timeout_seconds=deadline - time.monotonic())

@@ -38,3 +38,16 @@ def test_real_java_without_compose_reaches_image_plan(tmp_path):
         assert plan['security_gate']['decision'] == 'ALLOW'
     finally:
         builder.close()
+
+
+def test_real_invalid_java_blocks_image_planning(tmp_path):
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'Broken.java').write_text('class Broken { void broken( {')
+    (source / 'Dockerfile').write_text('FROM scratch\nCOPY . /src\n')
+    builder = ImageBuilder(tmp_path / 'plans', None, LocalRunner())
+    try:
+        with pytest.raises(security.SecurityGateError, match='SCAN_FAILED'):
+            builder.plan(SimpleNamespace(id='java-invalid', repo=str(source)), PlanRequest(use_ai=False))
+    finally:
+        builder.close()

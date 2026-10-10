@@ -13,7 +13,7 @@ import jsonschema
 import pytest
 import yaml
 
-from security_gate import cli, gate3, gitleaks, secret_targets, semgrep, source_syntax
+from security_gate import cli, gate3, gitleaks, secret_targets, semgrep
 from security_gate.gate3 import scan_full_repository
 from test_gitleaks import FAKE, runner as secret_runner, validate
 from test_semgrep import output_runner
@@ -59,12 +59,14 @@ def test_java_rules_are_local_fixed_and_known():
     assert all(set(r) <= {"id", "languages", "severity", "message", "pattern-either"} for r in rules)
 
 
-def test_java_skips_syntax_preflight(tmp_path, monkeypatch):
-    # Only Python has a local parser; Java parse errors come back from Semgrep --strict instead.
-    calls = []
-    monkeypatch.setattr(source_syntax.subprocess, "run", lambda command, *a, **k: calls.append(command))
-    assert semgrep.scan_semgrep(java_project(tmp_path), runner=output_runner())["decision"] == "ALLOW"
-    assert calls == []
+def test_java_syntax_preflight_blocks_before_semgrep(tmp_path):
+    java_project(tmp_path)
+    (tmp_path / "Broken.java").write_text("class Broken { void broken( {", encoding="utf-8")
+    def unexpected(*args, **kwargs):
+        pytest.fail("Invalid Java must be blocked before Semgrep")
+    report = semgrep.scan_semgrep(tmp_path, runner=unexpected)
+    assert report["decision"] == "SCAN_FAILED"
+    assert report["errors"] == ["SOURCE_SYNTAX_INVALID"]
 
 
 def test_mixed_snapshot_preserves_both_languages_and_checks_all_files(tmp_path):
