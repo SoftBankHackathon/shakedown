@@ -47,6 +47,14 @@ export function findForm(html: string, action: string): Form | null {
       const name = attr(` ${area[1]}`, "name");
       if (name) fields[name] = decode(area[2]);
     }
+    // select는 브라우저처럼 고른 항목(selected)을, 없으면 첫 항목을 보낸다. 시나리오가 칸을 비워 둬도 서버가 받는 값이 브라우저와 같게 한다.
+    for (const select of m[2].matchAll(/<select\b([^>]*)>([\s\S]*?)<\/select>/gi)) {
+      const name = attr(` ${select[1]}`, "name");
+      if (!name || hasFlag(` ${select[1]}`, "disabled")) continue;
+      const options = [...select[2].matchAll(/<option\b([^>]*)>([^<]*)/gi)];
+      const chosen = options.find((o) => hasFlag(` ${o[1]}`, "selected")) ?? options[0];
+      if (chosen) fields[name] = attr(` ${chosen[1]}`, "value") ?? decode(chosen[2]).trim();
+    }
     return { action, method: (attr(` ${formTag}`, "method") ?? "get").toUpperCase(), fields };
   }
   return null;
@@ -58,6 +66,47 @@ export function findLinkByText(html: string, text: string): string | null {
     if (pageText(m[2]).includes(text)) return attr(` ${m[1]}`, "href");
   }
   return null;
+}
+
+/** 기준 환경을 둘러볼 때 모으는 폼 요약. AI가 submit_form 단계를 쓸 재료라서 값은 담지 않는다. */
+export type FormSummary = { action: string; method: string; inputs: Array<{ name: string; type: string }> };
+
+/** <title>의 글자. 없으면 빈 글자. */
+export function pageTitle(html: string): string {
+  const m = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  return m ? pageText(m[1]) : "";
+}
+
+/** 모든 링크의 href와 보이는 글자. href가 없는 링크(앵커 이름 등)는 뺀다. */
+export function listLinks(html: string): Array<{ href: string; text: string }> {
+  const links: Array<{ href: string; text: string }> = [];
+  for (const m of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)) {
+    const href = attr(` ${m[1]}`, "href");
+    if (href !== null) links.push({ href, text: pageText(m[2]) });
+  }
+  return links;
+}
+
+/**
+ * action이 적힌 폼 목록. 단계는 폼을 action으로만 찾으므로(findForm) action이 없거나 빈 폼(자기 주소로 보냄)은 쓸 수 없어 뺀다.
+ * AI가 빈 form_action을 쓰면 시나리오 검사에서 통째로 버려지므로 처음부터 보여 주지 않는다. 버튼은 입력칸이 아니다.
+ */
+export function listForms(html: string): FormSummary[] {
+  const forms: FormSummary[] = [];
+  for (const m of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/gi)) {
+    const action = attr(` ${m[1]}`, "action");
+    if (!action) continue;
+    const inputs: FormSummary["inputs"] = [];
+    for (const tag of m[2].matchAll(/<(input|textarea|select)\b([^>]*)>/gi)) {
+      const name = attr(` ${tag[2]}`, "name");
+      const kind = tag[1].toLowerCase();
+      const type = kind === "input" ? (attr(` ${tag[2]}`, "type") ?? "text").toLowerCase() : kind;
+      // 숨은 칸은 단계가 폼의 기본값으로 알아서 보낸다(findForm). AI가 그 값을 베껴 덮어쓰지 않게 보여 주지 않는다.
+      if (name && !["submit", "button", "image", "reset", "hidden"].includes(type)) inputs.push({ name, type });
+    }
+    forms.push({ action, method: (attr(` ${m[1]}`, "method") ?? "get").toUpperCase(), inputs });
+  }
+  return forms;
 }
 
 /** 태그를 지운 화면 글자. 공백은 한 칸으로 줄인다. */

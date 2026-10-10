@@ -4,9 +4,12 @@ import type { StepDiff, StepResult } from "@shakedown/contracts";
 
 export type Names = { baseline: string; candidate: string };
 
-/** 글 번호처럼 환경마다 다른 숫자 경로 조각은 같은 것으로 본다. /posts/11 ≡ /posts/6 */
+/**
+ * 글 번호처럼 환경마다 다른 경로 조각은 같은 것으로 본다. /posts/11 ≡ /posts/6
+ * 숫자뿐 아니라 MongoDB ObjectId(24자 hex)와 UUID도 DB가 만드는 번호라서 같이 본다(게시판이 아닌 앱).
+ */
 export function normalizePath(path: string | null): string | null {
-  return path === null ? null : path.replace(/\/\d+(?=\/|\?|$)/g, "/{n}");
+  return path === null ? null : path.replace(/\/(\d+|[0-9a-f]{24}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?=\/|\?|$)/gi, "/{n}");
 }
 
 function classify(b: StepResult, c: StepResult, n: Names): Pick<StepDiff, "kind" | "severity" | "reasons"> {
