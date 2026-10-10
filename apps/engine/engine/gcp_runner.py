@@ -44,9 +44,15 @@ class GcpRunner(LocalRunner):
         config = self.config()
         if project.id != config['projectId']:
             raise DeploymentError(f'GCP service is bound to another project. Set adapter config projectId to {project.id} for this repository and restart the GCP adapter with a new GCP_ADAPTER_DB file (its state DB is bound to projectId).')
-        if getattr(project, 'runtime', None):
-            raise DeploymentError('GCP supports only the PostgreSQL sample contract; saved runtime settings are not supported yet. Clear the runtime or deploy to AWS.')
-        if project.analysis.port != config['port'] or (project.analysis.database_name or 'board_db') != config['dbName']:
+        runtime = getattr(project, 'runtime', None)
+        if runtime:
+            # The adapter offers no database or the prepared Cloud SQL PostgreSQL; the container port is free (Cloud Run sets it per revision).
+            mode = runtime['database']['mode']
+            if mode not in ('none', 'postgres'):
+                raise DeploymentError(f'GCP supports runtime database modes none and postgres only; this project uses {mode}. Deploy it to AWS or Azure.')
+            if mode == 'postgres' and runtime['database']['name'] != config['dbName']:
+                raise DeploymentError('Runtime database name must match the prepared Cloud SQL database (GCP adapter config dbName).')
+        elif project.analysis.port != config['port'] or (project.analysis.database_name or 'board_db') != config['dbName']:
             raise DeploymentError('Application port/database must match the prepared GCP service.')
         try:
             active = self.capture(['gcloud', 'config', 'get', 'project'])
@@ -65,7 +71,8 @@ class GcpRunner(LocalRunner):
         repository = config['imagePrefixes'][0] + 'kty-board'
         tag = repository + ':' + deployment_id
         analysis = self.build(project, tag, platform='linux/amd64')
-        if analysis.port != config['port'] or (analysis.database_name or 'board_db') != config['dbName']:
+        # With a saved runtime, build() takes the port from it and preflight already checked its database name.
+        if not getattr(project, 'runtime', None) and (analysis.port != config['port'] or (analysis.database_name or 'board_db') != config['dbName']):
             raise DeploymentError('Checked-out application no longer matches the GCP service.')
         registry = repository.split('/')[0]
         # A private, temporary Docker config keeps the access token out of the user's Docker config.

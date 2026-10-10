@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { databaseEnvironment, type HttpRuntime } from '../../../packages/contracts/runtime.mjs';
 import { architectures, type Tier } from './architecture.js';
 import type { Config } from './config.js';
 import { validateRequest } from './config.js';
@@ -45,6 +46,7 @@ export class GcpProvider implements Provider {
   private profile(request: DeployRequest) { return request.env.SPRING_PROFILES_ACTIVE ?? 'demo,session-memory'; }
 
   private env(request: DeployRequest, initialize: boolean): RunEnv[] {
+    if (request.runtime) return this.runtimeEnv(request, request.runtime);
     const c = this.config;
     const pool = request.architecture && !initialize ? architectures[request.architecture.template_id].pool : undefined;
     return [
@@ -60,9 +62,28 @@ export class GcpProvider implements Provider {
         ...(pool !== undefined ? { SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE: String(pool) } : {}),
       }).map(([name, value]) => ({ name, value })),
       // 비밀번호 값은 Cloud Run이 Secret Manager에서 직접 꺼낸다. 설정 파일·요청·로그 어디에도 값이 남지 않는다.
-      { name: 'SPRING_DATASOURCE_PASSWORD', valueSource: { secretKeyRef: { secret: c.dbPasswordSecret, version: 'latest' } } },
+      { name: 'SPRING_DATASOURCE_PASSWORD', valueSource: this.dbPassword() },
     ];
   }
+
+  // 범용 런타임: 앱 env + TZ + (postgres면) DB 평문 바인딩(host·port·name·username·jdbc_url). Job도 같은 env를 쓴다.
+  // PORT는 넣지 않는다. Cloud Run이 containerPort 값으로 넣는 예약 이름이다.
+  // ssl:false — 지금 Cloud SQL은 사설 IP의 평문 연결을 받고, 옛 방식의 JDBC URL도 sslmode를 붙이지 않는다.
+  // 비밀은 secret_refs(검증으로 db_password만)와 password 바인딩 둘 다 Secret Manager의 DB 비밀번호를 Cloud Run이 직접 꺼낸다.
+  // 계획 배포여도 Spring 연결 풀 env는 넣지 않는다. runtime 앱의 연결 수는 앱이 정하므로 등급별 연결 예산(architecture.ts) 밖이다.
+  private runtimeEnv(request: DeployRequest, runtime: HttpRuntime): RunEnv[] {
+    const c = this.config;
+    const plain = { ...runtime.env, TZ: request.options.tz,
+      ...(runtime.database.mode === 'postgres' ? databaseEnvironment(runtime, { host: c.dbHost, username: c.dbUsername, ssl: false }) : {}) };
+    const secretNames = [...Object.keys(runtime.secret_refs), ...Object.entries(runtime.database.bindings).filter(([, binding]) => binding === 'password').map(([name]) => name)];
+    return [
+      ...Object.entries(plain).map(([name, value]) => ({ name, value })),
+      ...secretNames.map(name => ({ name, valueSource: this.dbPassword() })),
+    ];
+  }
+
+  // Secret Manager의 DB 비밀번호 참조(최신 버전). 옛 방식과 runtime이 같은 비밀을 읽는다.
+  private dbPassword() { return { secretKeyRef: { secret: this.config.dbPasswordSecret, version: 'latest' } }; }
 
   // 사설 IP의 Cloud SQL에 닿으려고 Direct VPC egress를 쓴다. 사설 대역만 VPC로 보내고 나머지는 그대로 인터넷으로 나간다.
   private vpcAccess(): RunVpcAccess {
@@ -70,9 +91,13 @@ export class GcpProvider implements Provider {
   }
 
   private job(request: DeployRequest): RunJob {
-    const c = this.config;
+    const c = this.config, resources = { limits: { memory: c.memory, cpu: c.cpu } };
+    // 옛 방식은 Spring 샘플의 schema-init 프로필, runtime은 init_command(첫 칸이 실행 파일, 나머지가 인자)를 같은 이미지로 돌린다.
+    const container = request.runtime
+      ? { name: 'init', image: request.image, command: request.runtime.init_command.slice(0, 1), args: request.runtime.init_command.slice(1), env: this.env(request, true), resources }
+      : { name: 'schema-init', image: request.image, env: this.env(request, true), resources };
     return { template: { taskCount: 1, template: {
-      containers: [{ name: 'schema-init', image: request.image, env: this.env(request, true), resources: { limits: { memory: c.memory, cpu: c.cpu } } }],
+      containers: [container],
       // 기본값은 재시도 3회다. 실패를 바로 알려야 270초 안에 원인이 로그에 남는다.
       maxRetries: 0,
       // 기본 600초는 배포 전체 제한(270초)보다 길다. 멈춘 Job은 그 전에 끊는다.
@@ -92,7 +117,8 @@ export class GcpProvider implements Provider {
         containers: [{
           name: 'app', image: request.image,
           // PORT는 넣지 않는다. Cloud Run이 containerPort 값으로 PORT를 넣어 주고, 문서는 직접 넣지 말라고 한다.
-          ports: [{ containerPort: c.port }],
+          // 옛 방식은 검증이 request.port = 설정 포트를 보장하고, runtime은 runtime.port(= request.port)를 그대로 쓴다.
+          ports: [{ containerPort: request.port }],
           env: this.env(request, false),
           // resources를 적으면 cpuIdle 기본값(true)이 꺼진다. 요청 기반 과금을 유지하려고 true를 적는다.
           resources: { limits: { memory: spec?.memory ?? c.memory, cpu: spec?.cpu ?? c.cpu }, cpuIdle: true },
@@ -120,7 +146,16 @@ export class GcpProvider implements Provider {
     const existing = await this.run.getService(signal);
     // IAM 반영은 보통 2분, 길면 7분이다. 서비스가 있으면 맨 앞에서 권한을 줘서 Job·갱신 시간 동안 반영되게 한다.
     if (existing) await phase('grant_public', log, () => this.run.setPublic(true, signal));
-    await phase('schema_job', log, () => this.run.runSchemaJob(this.job(request), signal));
+    // runtime은 init_command가 있을 때만 Job을 돌린다. 없으면 앱이 스스로 스키마를 다루거나 DB를 쓰지 않는다.
+    if (request.runtime && !request.runtime.init_command.length) log('phase=schema_job skipped: runtime has no init_command');
+    else await phase('schema_job', log, () => this.run.runSchemaJob(this.job(request), signal)).catch((error: unknown) => {
+      // 사용자 명령의 출력은 Job 로그에만 있다(앱 리비전이 생기기 전이라 앱 로그는 비어 있다). 볼 곳을 배포 로그에 남긴다.
+      // Job은 매 배포가 다시 쓰므로 이번 실행 이름(오류 문구 끝의 executions/…)도 붙인다. 콘솔에서 그 실행의 Logs 탭으로 간다.
+      // 실행 이름이 없으면 명령이 돌기 전에 실패한 것(Job 갱신 거절 등)이라 볼 Job 로그가 없다. 그때는 남기지 않는다.
+      const execution = error instanceof Error ? /\/executions\/([^\s/]+)/.exec(error.message)?.[1] : undefined;
+      if (request.runtime && execution) log(`init_command failed; read its output in Cloud Logging: resource.type="cloud_run_job" AND resource.labels.job_name="${this.config.jobName}" (this run: execution ${execution})`);
+      throw error;
+    });
     await phase('update_service', log, () => this.run.putService(this.service(request), signal));
     // 첫 배포는 서비스가 없어 권한을 붙일 곳이 없었다. 만든 직후에 준다.
     if (!existing) await phase('grant_public', log, () => this.run.setPublic(true, signal));
@@ -132,8 +167,9 @@ export class GcpProvider implements Provider {
     await phase('public_health', log, () => this.waitHttp(request.health_path, signal));
     log('public health check passed: HTTP 200 without cookies');
     return { url: this.run.serviceUrl(), instances: request.options.replicas, info: {
-      runtime: 'Cloud Run', region: this.config.region, database: 'Cloud SQL PostgreSQL',
-      session: this.profile(request).includes('session-jdbc') ? 'jdbc' : 'memory',
+      // runtime은 앱이 실제로 쓰는 DB만 적는다. 세션도 앱이 정한다(Azure와 같은 값).
+      runtime: 'Cloud Run', region: this.config.region, database: request.runtime?.database.mode === 'none' ? 'none' : 'Cloud SQL PostgreSQL',
+      session: request.runtime ? 'app-defined' : this.profile(request).includes('session-jdbc') ? 'jdbc' : 'memory',
       sticky_sessions: String(request.options.sticky_sessions),
       image_digest: request.image.split('@')[1],
       revision: service.latestReadyRevision?.split('/').pop() ?? 'unknown',

@@ -283,7 +283,7 @@ gcloud auth application-default login
 {"targets":["local","gcp"],"shakedown":true,"autofix":false,"options":{"gcp":{"replicas":2,"sticky_sessions":true,"tz":"UTC"}}}
 ```
 
-GCP 빌드는 linux/amd64 단일 manifest이며 한 번 빌드해 `imagePrefixes[0]` 저장소의 `kty-board`에 push합니다. digest는 `gcloud artifacts docker images describe`로 레지스트리에서 읽고, 인증 중 로컬 Docker에 pull하여 두 대상에 같은 주소를 전달합니다. `gcloud auth print-access-token` 토큰은 표준입력으로만 넘겨 임시 Docker 설정에 로그인하고 끝나면 지웁니다. GCP 옵션은 replicas 1~2, sticky_sessions(Cloud Run 세션 어피니티, best-effort), tz입니다. 설정·gcloud 프로젝트·프로젝트 ID·포트·DB가 다르면 배포를 거절합니다. GCP 빌드도 Local·AWS와 같은 보안 검사(Security Gate)를 거칩니다. 실행 설정(runtime)을 저장한 프로젝트와 아키텍처 계획(`architecture_plan_id`)은 아직 GCP에서 지원하지 않아 거절합니다.
+GCP 빌드는 linux/amd64 단일 manifest이며 한 번 빌드해 `imagePrefixes[0]` 저장소의 `kty-board`에 push합니다. digest는 `gcloud artifacts docker images describe`로 레지스트리에서 읽고, 인증 중 로컬 Docker에 pull하여 두 대상에 같은 주소를 전달합니다. `gcloud auth print-access-token` 토큰은 표준입력으로만 넘겨 임시 Docker 설정에 로그인하고 끝나면 지웁니다. GCP 옵션은 replicas 1~2, sticky_sessions(Cloud Run 세션 어피니티, best-effort), tz입니다. 설정·gcloud 프로젝트·프로젝트 ID·포트·DB가 다르면 배포를 거절합니다. GCP 빌드도 Local·AWS와 같은 보안 검사(Security Gate)를 거칩니다. 실행 설정(runtime)을 저장한 프로젝트는 DB 모드가 `none`·`postgres`일 때만 받습니다(MySQL·MongoDB·외부 DB는 거절, postgres는 DB 이름이 설정 `dbName`과 같아야 함). runtime 프로젝트는 포트를 설정과 비교하지 않고(Cloud Run이 리비전마다 컨테이너 포트를 정함), env 자동 수정 힌트(`can_apply_env`)도 주지 않습니다(수정안이 Spring 샘플 전용). 어댑터 쪽 조건은 `infra/gcp/README.md` "범용 런타임" 절에 있습니다. 아키텍처 계획(`architecture_plan_id`)은 아직 GCP에서 지원하지 않아 거절합니다.
 
 BLOCKED의 GCP 정리는 서비스를 0대로 내리고, 공개 권한(`allUsers`) 회수는 어댑터가 뒤에서 처리합니다(IAM 반영 수 분). Cloud SQL·Artifact Registry 비용은 남으므로 `infra/gcp/README.md`의 "비용 멈추기"를 따릅니다.
 

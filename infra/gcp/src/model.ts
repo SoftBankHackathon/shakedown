@@ -1,8 +1,9 @@
 import { z } from 'zod';
+import { validateRuntime, type HttpRuntime } from '../../../packages/contracts/runtime.mjs';
 import { architectures, GCP_ARCHITECTURE_VERSION } from './architecture.js';
 
 // infra/aws/src/model.ts에서 가져왔다. 엔진은 Local·AWS·GCP에 같은 요청 모양을 보내므로 이름과 모양은 그대로 두고,
-// GCP에서 동작이 달라지는 곳(target 이름, sticky_sessions 허용, 계획 카탈로그 버전)만 바꿨다.
+// GCP에서 동작이 달라지는 곳(target 이름, sticky_sessions 허용, 계획 카탈로그 버전)만 바꿨다. runtime은 infra/azure/src/model.ts와 같다.
 export const requestSchema = z.object({
   deployment_id: z.string().regex(/^dep_[a-z0-9]{1,60}$/),
   project_id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
@@ -12,6 +13,9 @@ export const requestSchema = z.object({
   env: z.record(z.string(), z.string().max(4096)).default({}),
   secret_refs: z.record(z.string(), z.string()).default({}),
   database: z.object({ engine: z.literal('postgres'), name: z.string() }).strict().optional(),
+  // 범용 HTTP 런타임(엔진이 project.runtime을 그대로 보냄). 있으면 database·env·secret_refs 대신 이 값을 쓴다.
+  // 모양은 계약의 validateRuntime이 보고, GCP가 줄 수 있는 것인지는 config.ts validateRequest가 본다.
+  runtime: z.custom<HttpRuntime>(v => { try { validateRuntime(v); return true; } catch { return false; } }).optional(),
   // 계획 배포. AWS와 같은 모양이지만 버전은 GCP 카탈로그만 받는다. 다른 클라우드의 계획이 잘못 오면 400으로 막힌다.
   architecture: z.object({ version: z.literal(GCP_ARCHITECTURE_VERSION), template_id: z.enum(['small', 'medium', 'large']) }).strict().optional(),
   options: z.object({

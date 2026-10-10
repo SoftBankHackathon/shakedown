@@ -11,8 +11,9 @@ const INVOKER = 'roles/run.invoker';
 const PUBLIC = 'allUsers';
 
 export type RunEnv = { name: string; value?: string; valueSource?: { secretKeyRef: { secret: string; version: string } } };
+// command는 이미지의 ENTRYPOINT를, args는 CMD를 대신한다(셸을 거치지 않는다).
 export type RunContainer = {
-  name?: string; image: string; env?: RunEnv[];
+  name?: string; image: string; command?: string[]; args?: string[]; env?: RunEnv[];
   ports?: { containerPort: number }[];
   resources?: { limits?: Record<string, string>; cpuIdle?: boolean };
 };
@@ -104,13 +105,15 @@ export class CloudRun {
     // RunJob 작업의 metadata는 Execution이다(job.proto). 작업이 언제 done이 되는지는 문서에 없어서 Execution을 직접 지켜본다.
     const name = run.metadata?.name;
     if (!name) throw new Error('Cloud Run job run: execution name missing');
+    // 오류는 컨테이너 이름으로 부른다. 옛 방식은 schema-init, runtime의 init_command는 init이다.
+    const label = job.template.template.containers[0]?.name ?? 'Cloud Run';
     while (true) {
       const execution = ok<Execution>(await this.http({ method: 'GET', url: `${RUN}/${name}`, signal }), 'Cloud Run execution get');
       // 재시도 0회로 돌리므로 실패한 task가 하나라도 있으면 끝까지 기다릴 이유가 없다.
-      if (execution.failedCount || execution.cancelledCount) throw new Error(`schema-init job failed: ${name}`);
+      if (execution.failedCount || execution.cancelledCount) throw new Error(`${label} job failed: ${name}`);
       if (execution.completionTime) {
         if ((execution.succeededCount ?? 0) >= (execution.taskCount ?? 1)) return;
-        throw new Error(`schema-init job did not succeed: ${name}`);
+        throw new Error(`${label} job did not succeed: ${name}`);
       }
       await sleep(2_000, undefined, { signal });
     }

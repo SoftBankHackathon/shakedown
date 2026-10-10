@@ -207,7 +207,7 @@ ready 응답 예:
 - 주소: `https://…run.app`을 공개 주소로 받아들입니다.
 - 대기: 배포는 270초 안에 `ready` 또는 `failed`가 됩니다. 엔진의 5분 제한 안입니다.
 - DELETE: 보통 20초 안에 204입니다. 204 뒤 공개 주소는 403이 아니라 503(`Service is disabled`)입니다(아래 "내리기").
-- env는 `SPRING_PROFILES_ACTIVE` 하나, secret_refs는 `SPRING_DATASOURCE_PASSWORD: db_password` 하나만 받습니다. 프로필을 빼면 `demo,session-memory`입니다.
+- env는 `SPRING_PROFILES_ACTIVE` 하나, secret_refs는 `SPRING_DATASOURCE_PASSWORD: db_password` 하나만 받습니다. 프로필을 빼면 `demo,session-memory`입니다. 실행 설정(runtime)을 보내면 아래 "범용 런타임" 절의 규칙을 따릅니다.
 - 계획 배포는 아래 "계획 배포" 절의 모양으로 보냅니다.
 
 ## 계획 배포 (gcp-architecture.v1)
@@ -275,19 +275,64 @@ PR #20 첫 버전은 medium·large에서 미리 고가용성으로 바꿔 둔 Cl
 | large 계획 배포 | min 3, 리비전 max 8, 2/4Gi, pool 2, 기동·첫 DB 연결 시간(Direct VPC) | 통과. 46초(Job 24초·서비스 16초), 서비스 min 3·max 8, 리비전 max 8, 2 vCPU/4Gi, `SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE=2` |
 | 계획 없는 배포로 복귀 | MANUAL 2, 서비스 min/max 없음 | 통과. large가 떠 있는 위에 덮어써 54초, manual 2, min/max 없음, 1/1Gi, 풀 env 없음 |
 
+## 범용 런타임 (http-runtime.v1)
+
+엔진에 실행 설정(`project.runtime`)을 저장한 프로젝트는 Spring 샘플이 아니어도 배포합니다. 엔진은 `runtime`을 그대로 보내고, `database`·`secret_refs`·`env`를 빼고, `port`·`health_path`를 runtime 값으로 맞춥니다. Azure 어댑터와 같은 방식이고, DB는 GCP에 준비된 것만 받습니다.
+
+```json
+{
+  "deployment_id": "dep_demo02", "project_id": "prj_0123456789abcdef", "image": "…/kty-board@sha256:…",
+  "port": 3000, "health_path": "/healthz",
+  "runtime": {
+    "version": "http-runtime.v1", "port": 3000, "health_path": "/healthz",
+    "env": { "NODE_ENV": "production" },
+    "secret_refs": { "APP_DB_PASSWORD": "db_password" },
+    "database": { "mode": "postgres", "name": "board_db", "bindings": { "DB_URL": "jdbc_url", "DB_USER": "username", "DB_PASSWORD": "password" } },
+    "init_command": ["npm", "run", "migrate"]
+  },
+  "options": { "replicas": 2, "sticky_sessions": false, "tz": "UTC" }
+}
+```
+
+| 항목 | GCP에서 받는 것 |
+|---|---|
+| `database.mode` | `none` 또는 `postgres`(설정의 Cloud SQL, 이름은 `dbName`과 같아야 함). `mysql`·`mongodb`·`external`은 400 |
+| `database.bindings` | `host`·`port`·`name`·`username`·`jdbc_url`(평문), `password`(Secret Manager). `postgres_url`은 400: URL에 비밀번호가 들어가는데 어댑터는 Secret Manager 값을 모릅니다 |
+| `secret_refs` | 값은 `db_password`만(Secret Manager의 `dbPasswordSecret`). 다른 비밀 이름은 400. DB가 `none`이면 줄 비밀이 없어 비워야 합니다(최소 권한) |
+| `init_command` | 같은 이미지·같은 env로 schema Job에서 한 번 실행. 첫 칸이 실행 파일(`command`), 나머지가 인자(`args`). 셸을 거치지 않습니다. 비어 있으면 Job을 건너뜁니다 |
+| `port` | 제한 없음. Cloud Run은 리비전마다 `containerPort`를 정합니다. 옛 방식만 설정 `port`에 묶입니다 |
+| 환경변수 이름 | Cloud Run 컨테이너 런타임 계약의 이름(`K_SERVICE`·`K_REVISION`·`K_CONFIGURATION`·`CLOUD_RUN_JOB`·`CLOUD_RUN_EXECUTION`·`CLOUD_RUN_TASK_INDEX`·`CLOUD_RUN_TASK_ATTEMPT`·`CLOUD_RUN_TASK_COUNT`·`CLOUD_RUN_WORKER_POOL`·`CLOUD_RUN_REVISION`)과 `X_GOOGLE_` 접두어는 400(Cloud Run 문서가 예약이라 설정할 수 없다고 함). `PORT`·`TZ`는 계약이 이미 막습니다 |
+
+- 모양 검사(이름 중복, 비밀처럼 보이는 env 값, DB 없음 + init_command 등)는 계약의 `packages/contracts/runtime.mjs` `validateRuntime`이 합니다. 옛 설정(`env`·`secret_refs`·`database`)과 섞거나 `port`·`health_path`가 runtime과 다르면 400입니다.
+- 앱 env: runtime `env` + `TZ` + (postgres면) 평문 바인딩. `jdbc_url`은 `jdbc:postgresql://{dbHost}:5432/{dbName}`이고 `sslmode`를 붙이지 않습니다. 지금 Cloud SQL은 사설 IP의 평문 연결을 받고, 옛 방식의 JDBC URL도 같습니다. `secret_refs`의 키와 `password` 바인딩 키는 Secret Manager 참조(`secretKeyRef`, 버전 latest)라 값이 어댑터·로그에 남지 않습니다. `PORT`는 넣지 않습니다(Cloud Run이 `containerPort`로 넣는 예약 이름).
+- Job: `init_command`가 있을 때만 갱신·실행합니다(컨테이너 이름 `init`, 사양은 설정의 `cpu`·`memory`). 없으면 배포 로그에 `phase=schema_job skipped: runtime has no init_command`를 남기고 건너뜁니다. 명령이 실패하면 오류는 `init job failed: <실행 이름>`이고, 출력은 Job 로그에만 있어서(앱 리비전이 생기기 전) 배포 로그에 Cloud Logging 필터(`resource.type="cloud_run_job"`, 설정의 `jobName`)와 이번 실행 이름을 한 줄 남깁니다.
+- 계획 배포와 함께 오면 등급 사양·확장은 그대로 적용하고, Spring 연결 풀 env와 `demo,session-jdbc` 조건은 적용하지 않습니다(세션은 앱이 정함). `sticky_sessions=true`는 계획 배포와 같이 400입니다. 연결 수도 앱이 정하므로 "최대 대수 × 풀 ≤ 20" 예산 밖입니다. postgres 앱을 medium·large로 배포하면 앱 쪽 풀을 등급에 맞춰(medium 5, large 2 이하) 줄여야 연결 한도(약 22)를 넘지 않습니다.
+- ready info: `database`는 `none` 또는 `Cloud SQL PostgreSQL`, `session`은 `app-defined`(Azure와 같은 값).
+- 엔진 쪽 조건: DB 모드 `none`·`postgres`만, postgres는 DB 이름이 `dbName`과 같아야 함, 포트는 비교하지 않음, env 자동 수정 힌트 없음(`apps/engine/README.md` GCP 절).
+
+### 범용 런타임 실측 (2026-10-10)
+
+어댑터를 직접 불러 확인했습니다. 앱은 `examples/http-node`를 linux/amd64로 빌드해 Artifact Registry `shakedown/http-node`에 올린 이미지입니다(어느 경로든 `{language, database, count}` JSON). 끝난 뒤 서비스는 0대, allUsers 없음.
+
+| 항목 | 기준 | 결과 |
+|---|---|---|
+| DB 없는 앱(runtime `none`, 포트 3000) | ready, Job 건너뜀, `PORT=3000`이 Cloud Run에서 들어옴 | 통과. 배포 10.6초(`phase=schema_job skipped`), 공개 주소 `{"database":false,"count":null}`, info.database `none`·session `app-defined`, DELETE 1.8초 뒤 503 |
+| PostgreSQL 앱 + `init_command` | Job 성공 뒤 ready, `password` 바인딩이 Secret Manager 값으로 들어감 | 통과. `["node","app.mjs","--init"]` Job 18초 → 배포 25.5초, 바인딩 PGHOST·PGPORT·PGDATABASE·PGUSER·PGPASSWORD로 공개 주소 `{"database":true,"count":1}`(Job이 만든 표를 앱이 읽음), DELETE 1.0초 뒤 503 |
+| 옛 방식 배포(회귀) | 54초 안팎, 본문 그대로 | 통과. 54초, "계획 배포 실측" 표의 회귀 줄과 같은 실행 |
+
 ## 상태와 오류 규칙
 
-계약은 `packages/contracts/openapi/target.yaml`(v0.1.3, "GCP 구현 제약" 절)입니다. 여기에는 GCP에서 실제로 무엇을 하는지 적습니다.
+계약은 `packages/contracts/openapi/target.yaml`(v0.1.4, "GCP 구현 제약" 절)입니다. 여기에는 GCP에서 실제로 무엇을 하는지 적습니다.
 
 **받기 (POST)**
 - 202와 `pending`을 바로 주고 배포는 뒤에서 합니다. 상태는 `pending → deploying → ready | failed`.
-- 400: 형식 오류, 모르는 필드, `project_id`·`port`가 설정과 다름, 허용 저장소의 `@sha256:` digest가 아님, `database.name`이 설정과 다름, `SPRING_PROFILES_ACTIVE` 외 env나 허용 안 된 프로필, `SPRING_DATASOURCE_PASSWORD: db_password` 외 secret_refs, replicas가 1~2가 아님(계획 배포는 등급 시작 대수, 그 밖의 계획 조건은 "계획 배포" 절).
+- 400: 형식 오류, 모르는 필드, `project_id`·`port`가 설정과 다름, 허용 저장소의 `@sha256:` digest가 아님, `database.name`이 설정과 다름, `SPRING_PROFILES_ACTIVE` 외 env나 허용 안 된 프로필, `SPRING_DATASOURCE_PASSWORD: db_password` 외 secret_refs, replicas가 1~2가 아님(계획 배포는 등급 시작 대수, 그 밖의 계획 조건은 "계획 배포" 절). runtime 요청은 "범용 런타임" 절의 400 규칙을 따릅니다.
 - 409: 같은 ID에 다른 내용, 삭제됐거나 삭제 중인 ID, 같은 프로젝트의 배포·정리가 진행 중.
 - 같은 ID에 같은 내용이면 새로 만들지 않고 기존 결과를 돌려줍니다(멱등).
 
 **배포 순서** (`GcpProvider.deploy`)
 1. 공개 권한 부여: 서비스 IAM 정책에 `allUsers` → `roles/run.invoker`. IAM 반영이 보통 2분, 길면 7분 이상이라 맨 앞에서 주고 나머지 단계와 겹칩니다. 직전 DELETE의 권한 제거가 아직 돌고 있으면 그것이 끝난 뒤에 줍니다. 서비스가 아직 없는 첫 배포는 붙일 곳이 없어 3 바로 뒤에 줍니다.
-2. schema-init: Cloud Run Job을 같은 이미지로 갱신·실행하고 끝날 때까지 기다립니다(`SPRING_PROFILES_ACTIVE=schema-init`, DDL update). 실패하면 배포 실패입니다.
+2. schema-init: Cloud Run Job을 같은 이미지로 갱신·실행하고 끝날 때까지 기다립니다(`SPRING_PROFILES_ACTIVE=schema-init`, DDL update). 실패하면 배포 실패입니다. runtime은 `init_command`가 있을 때만 그 명령을 같은 env로 돌리고, 없으면 건너뜁니다.
 3. 서비스 갱신: 이미지 digest, env(DB 주소·사용자·DDL validate·프로필·TZ), 비밀번호는 Secret Manager 참조, 사설망, 수동 스케일링 대수(= replicas), 세션 어피니티(= sticky_sessions). 계획 배포는 사양·확장 방식(자동이면 서비스 min/max와 리비전 max)을 카탈로그에서 가져오고 등급별 연결 풀을 더합니다(small 제외). 마스크 없는 전체 교체라 다음 계획 없는 배포는 min/max가 지워진 수동 모드로 돌아갑니다.
 4. 준비 대기: `terminalCondition`이 Ready·성공이고, 진행 중(`reconciling`)이 아니고, 최신 생성 리비전과 최신 준비 리비전이 같고, `observedGeneration`이 `generation`과 같고, 서비스의 이미지가 요청 digest와 같을 때. 옛 digest로 떠 있으면 ready가 아닙니다. 계획 배포는 이어서 `phase=verify_scaling`에서 이때 읽은 실제 min과 max(서비스·리비전 중 작은 값)가 카탈로그와 다르면 실패합니다. 이때 새 리비전은 이미 공개 주소로 답하고 있습니다.
 5. 공개 확인: 쿠키 없이 `{url}{health_path}`가 리다이렉트 없이 200이 될 때까지 1초마다 봅니다. 302(로그인 화면)·500은 성공으로 치지 않습니다.
@@ -330,9 +375,9 @@ npm run test:gcp    # 저장소 루트. 전체 테스트
 |---|---|
 | `test/adapter.test.ts` | 202·멱등·409·삭제 묘비·시간 초과·실패 시 0대·재시작 복구·loopback·비밀 가리기 (가짜 Provider) |
 | `test/architecture.test.ts` | 계획 요청 모양(버전·등급·시작 대수), 계획 없는 요청 파싱 불변, 등급별 쿼터와 DB 연결 풀 계산 |
-| `test/config.test.ts` | 설정 형식과 요청 400 규칙(계획 배포 조건 포함) |
+| `test/config.test.ts` | 설정 형식과 요청 400 규칙(계획 배포·범용 런타임 조건 포함) |
 | `test/cloud-run.test.ts` | Cloud Run·IAM·Job·Logging REST 호출 모양, 내리기 마스크 |
-| `test/gcp-provider.test.ts` | 권한 → schema-init → 서비스 갱신 → 준비 대기 → health 200 순서, 옛 digest·302·500은 실패, 내리기, 로그, 계획 배포(등급별 본문·풀·실제 범위 확인·info), 계획 없는 본문 바이트 불변 |
+| `test/gcp-provider.test.ts` | 권한 → schema-init → 서비스 갱신 → 준비 대기 → health 200 순서, 옛 digest·302·500은 실패, 내리기, 로그, 계획 배포(등급별 본문·풀·실제 범위 확인·info), 범용 런타임(env·Secret Manager 참조·containerPort·init Job·건너뜀·info), 옛 본문 바이트 불변 |
 | `test/scripts.test.ts` | provision.sh·publish-image.sh (가짜 gcloud·docker) |
 
 실제 GCP에서 확인한 결과는 "실측" 절에 있습니다.

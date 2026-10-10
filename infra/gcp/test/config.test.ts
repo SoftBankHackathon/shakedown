@@ -123,3 +123,77 @@ test('rejection messages never echo plaintext secret values', () => {
   assert.throws(() => validateRequest(config, input({ env: { SPRING_DATASOURCE_PASSWORD: 'unsafe' } })),
     (error: unknown) => error instanceof ApiError && error.message.includes('SPRING_DATASOURCE_PASSWORD') && !error.message.includes('unsafe'));
 });
+
+// 범용 런타임(http-runtime.v1): 엔진은 runtime을 보내면 database·secret_refs·env를 빼고 port·health_path를 runtime 값으로 맞춘다.
+type Runtime = { port?: number; health_path?: string; env?: Record<string, string>; secret_refs?: Record<string, string>;
+  database?: { mode: string; name?: string; bindings?: Record<string, string> }; init_command?: string[] };
+const runtime = (patch: Runtime = {}) => ({ version: 'http-runtime.v1', port: 3000, health_path: '/healthz', env: { NODE_ENV: 'production' }, secret_refs: {},
+  database: { mode: 'none', name: 'app', bindings: {} }, init_command: [], ...patch });
+const postgres = (bindings: Record<string, string> = { DB_URL: 'jdbc_url', DB_USER: 'username', DB_PASSWORD: 'password' }) =>
+  ({ database: { mode: 'postgres', name: 'board_db', bindings } });
+const runtimeInput = (r: ReturnType<typeof runtime>, patch: Record<string, unknown> = {}) => requestSchema.parse({
+  deployment_id: 'dep_rt', project_id: 'prj_board', image, port: r.port, health_path: r.health_path, runtime: r, ...patch,
+});
+const rejected = (request: ReturnType<typeof runtimeInput>, label: string, message?: RegExp) =>
+  assert.throws(() => validateRequest(config, request), (error: unknown) => error instanceof ApiError && error.statusCode === 400 && (!message || message.test(error.message)), label);
+
+test('runtime requests with no DB or the prepared PostgreSQL are accepted on any container port', () => {
+  // 옛 방식과 달리 포트는 설정과 같지 않아도 된다(Cloud Run은 리비전마다 containerPort를 정한다).
+  assert.doesNotThrow(() => validateRequest(config, runtimeInput(runtime())));
+  assert.doesNotThrow(() => validateRequest(config, runtimeInput(runtime({ port: 8080 }))));
+  assert.doesNotThrow(() => validateRequest(config, runtimeInput(runtime({ ...postgres(), secret_refs: { APP_DB_PASSWORD: 'db_password' }, init_command: ['npm', 'run', 'migrate'] }))));
+  for (const binding of ['host', 'port', 'name', 'username', 'jdbc_url']) {
+    assert.doesNotThrow(() => validateRequest(config, runtimeInput(runtime(postgres({ DB_VALUE: binding, DB_PASSWORD: 'password' })))), binding);
+  }
+});
+
+test('runtime DB modes other than none and postgres are rejected', () => {
+  rejected(runtimeInput(runtime({ database: { mode: 'mysql', name: 'board_db', bindings: { DB_PASSWORD: 'password' } } })), 'mysql', /none.*postgres/);
+  rejected(runtimeInput(runtime({ database: { mode: 'mongodb', name: 'board_db', bindings: { MONGO_URL: 'mongodb_url' } } })), 'mongodb', /none.*postgres/);
+  rejected(runtimeInput(runtime({ database: { mode: 'external', name: 'app', bindings: {} }, secret_refs: { EXTERNAL_DB_URL: 'db_password' } })), 'external', /none.*postgres/);
+});
+
+test('runtime requests must not mix in legacy settings', () => {
+  const r = runtime(postgres());
+  for (const [label, patch] of [
+    ['other port', { port: 8080 }],
+    ['other health path', { health_path: '/health' }],
+    ['legacy database', { database: { engine: 'postgres', name: 'board_db' } }],
+    ['legacy env', { env: { SPRING_PROFILES_ACTIVE: 'demo,session-jdbc' } }],
+    ['legacy secret_refs', { secret_refs: { SPRING_DATASOURCE_PASSWORD: 'db_password' } }],
+  ] as const) rejected(runtimeInput(r, patch), label, /섞을 수 없습니다/);
+});
+
+test('runtime PostgreSQL must use the prepared DB name, no URL binding and only the db_password secret', () => {
+  rejected(runtimeInput(runtime({ database: { mode: 'postgres', name: 'other_db', bindings: { DB_PASSWORD: 'password' } } })), 'db name', /데이터베이스 이름/);
+  // URL에는 비밀번호가 들어가는데 어댑터는 Secret Manager 값을 모른다.
+  rejected(runtimeInput(runtime(postgres({ DATABASE_URL: 'postgres_url' }))), 'postgres_url', /postgres_url/);
+  rejected(runtimeInput(runtime({ ...postgres(), secret_refs: { API_TOKEN: 'app_token' } })), 'other secret', /db_password/);
+  rejected(runtimeInput(runtime({ secret_refs: { API_TOKEN: 'app_token' } })), 'other secret without DB', /db_password/);
+  // GCP가 줄 수 있는 비밀은 Cloud SQL 비밀번호뿐이다. DB가 없다고 한 앱에는 넣지 않는다(최소 권한).
+  rejected(runtimeInput(runtime({ secret_refs: { APP_DB_PASSWORD: 'db_password' } })), 'db_password without DB', /DB 없는/);
+});
+
+test('runtime names reserved by Cloud Run are rejected wherever they appear', () => {
+  for (const name of ['K_SERVICE', 'K_REVISION', 'K_CONFIGURATION', 'CLOUD_RUN_JOB', 'CLOUD_RUN_EXECUTION', 'CLOUD_RUN_TASK_INDEX',
+    'CLOUD_RUN_TASK_ATTEMPT', 'CLOUD_RUN_TASK_COUNT', 'CLOUD_RUN_WORKER_POOL', 'CLOUD_RUN_REVISION', 'X_GOOGLE_FEATURE']) {
+    rejected(runtimeInput(runtime({ env: { [name]: 'x' } })), `env ${name}`, new RegExp(name));
+    rejected(runtimeInput(runtime({ ...postgres(), secret_refs: { [name]: 'db_password' } })), `secret ${name}`, new RegExp(name));
+    rejected(runtimeInput(runtime(postgres({ [name]: 'host', DB_PASSWORD: 'password' }))), `binding ${name}`, new RegExp(name));
+  }
+});
+
+test('a plan with a runtime needs no Spring profile but still refuses sticky sessions', () => {
+  const plan = { architecture: { version: 'gcp-architecture.v1', template_id: 'medium' }, options: { replicas: 2 } };
+  assert.doesNotThrow(() => validateRequest(config, runtimeInput(runtime(postgres()), plan)));
+  // runtime 앱에는 JDBC 세션이 없을 수 있다. 따라 할 수 없는 해결책(JDBC)을 안내하지 않는다.
+  rejected(runtimeInput(runtime(postgres()), { ...plan, options: { replicas: 2, sticky_sessions: true } }), 'sticky', /^(?!.*JDBC).*sticky_sessions/);
+});
+
+test('a malformed runtime fails request parsing before validation', () => {
+  // 모양 검사는 계약의 validateRuntime(packages/contracts/runtime.mjs)이 한다. PORT·TZ 이름, 비밀 같은 env, init_command와 DB 없음 등.
+  for (const bad of [runtime({ env: { PORT: '3000' } }), runtime({ env: { DB_PASSWORD: 'unsafe' } }), runtime({ init_command: ['migrate'] }),
+    runtime({ database: { mode: 'postgres', name: 'board_db', bindings: { DB_HOST: 'host' } } })]) {
+    assert.throws(() => runtimeInput(bad), z.ZodError, JSON.stringify(bad));
+  }
+});

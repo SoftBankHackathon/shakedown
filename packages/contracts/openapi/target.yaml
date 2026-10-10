@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Target API
-  version: 0.1.3
+  version: 0.1.4
   description: |
-    > **상태: 초안 (v0.1.3, 2026-10-10)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 초안 (v0.1.4, 2026-10-10)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     배포 대상(인프라)이 구현하는 API. 엔진(apps/engine)이 호출합니다.
@@ -31,14 +31,15 @@ info:
     - 삭제된 ID 재사용, 같은 ID의 다른 요청, 동일 프로젝트 동시 변경은 409
     - 재시작 시 미완료 배포는 공개 차단 후 failed. 새 ID로 재시도
 
-    GCP 구현 제약 (v0.1.2 제안, v0.1.3에 계획 배포 추가, infra/gcp)
+    GCP 구현 제약 (v0.1.2 제안, v0.1.3에 계획 배포·v0.1.4에 범용 런타임 추가, infra/gcp)
     - 미리 준비한 Cloud Run 서비스 1개(서울 asia-northeast3)와 Cloud SQL PostgreSQL. database.engine은 postgres만, 이름은 설정값만
     - replicas 1~2. Cloud Run 수동 스케일링(scalingMode=MANUAL, manualInstanceCount=replicas). 3 이상은 400(계획 배포는 아래 줄)
     - 계획 배포(architecture.version=gcp-architecture.v1, v0.1.3): CPU·메모리·대수·자동 확장만 적용(small 1 vCPU/1Gi 수동 1대, medium 1 vCPU/2Gi 자동 2~4대, large 2 vCPU/4Gi 자동 3~8대). DB 고가용성은 계획만 있고 적용하지 않음. SPRING_PROFILES_ACTIVE=demo,session-jdbc 필수, sticky_sessions=true는 400. 앱 DB 연결 풀은 등급별(medium 5, large 2, small은 앱 기본값)이라 최대 대수까지 늘어도 지금 DB 연결 한도 안. info.architecture는 등급(계획이 없으면 legacy), info.scaling은 다시 읽은 실제 확장 범위
     - sticky_sessions=true면 Cloud Run 세션 어피니티를 켬. 보장이 아닌 best-effort(쿠키 기반. 인스턴스가 꺼지거나 바쁘면 다른 인스턴스로 감)
     - 허용 저장소(설정의 이미지 접두어)의 image@sha256:digest 필수. linux/amd64 이미지
-    - 환경변수는 SPRING_PROFILES_ACTIVE=demo,session-memory 또는 demo,session-jdbc만 허용. secret_refs는 SPRING_DATASOURCE_PASSWORD=db_password만(Secret Manager에서 꺼냄)
-    - 매 배포마다 schema-init(Cloud Run Job)을 실행하고 끝난 뒤 앱을 갱신. 앱은 DDL validate로 기동
+    - runtime이 없으면 환경변수는 SPRING_PROFILES_ACTIVE=demo,session-memory 또는 demo,session-jdbc만 허용. secret_refs는 SPRING_DATASOURCE_PASSWORD=db_password만(Secret Manager에서 꺼냄)
+    - 범용 런타임(runtime=http-runtime.v1, v0.1.4): database.mode는 none·postgres만(postgres는 준비된 DB 이름만). init_command는 같은 이미지·env의 Cloud Run Job으로 실행하고 없으면 건너뜀. postgres_url 바인딩은 미지원(jdbc_url·host·port·name·username·password 사용), secret_refs 값은 db_password만(DB가 none이면 비움). 포트는 자유(containerPort=runtime.port). Cloud Run 예약 환경변수 이름(K_SERVICE 등 컨테이너 런타임 계약의 이름, X_GOOGLE_ 접두어)과 옛 설정(env·secret_refs·database)을 섞은 요청은 400. 계획 배포와 함께 오면 사양·확장만 적용하고 session-jdbc 조건·등급별 연결 풀은 적용하지 않음(연결 수는 앱이 정하므로 위 연결 한도 보장 밖). info.session은 app-defined
+    - runtime이 없으면 매 배포마다 schema-init(Cloud Run Job)을 실행하고 끝난 뒤 앱을 갱신. 앱은 DDL validate로 기동
     - url은 https://{서비스 이름}-{프로젝트 번호}.asia-northeast3.run.app 고정
     - DELETE는 최신 배포를 0대로 내리고 공개 주소가 4xx·5xx를 주는 것을 확인한 뒤(최대 15초) 204. 0대인 동안 공개 주소는 403이 아니라 503(Service is disabled)을 줌. 공개 권한(allUsers) 제거는 IAM 반영(보통 2분, 길면 7분 이상)을 기다리지 않고 뒤에서 하는 두 번째 잠금
     - 이전 배포 DELETE는 현재 서비스에 영향 없음. 삭제 후 GET은 404, 로그는 조회 가능
