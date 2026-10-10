@@ -13,7 +13,7 @@ import jsonschema
 import pytest
 import yaml
 
-from security_gate import cli, gate3, gitleaks, secret_targets, semgrep, source_syntax
+from security_gate import cli, gate3, gitleaks, secret_targets, semgrep
 from security_gate.gate3 import scan_full_repository
 from test_gitleaks import FAKE, runner as secret_runner, validate
 from test_semgrep import output_runner
@@ -59,12 +59,14 @@ def test_java_rules_are_local_fixed_and_known():
     assert all(set(r) <= {"id", "languages", "severity", "message", "pattern-either"} for r in rules)
 
 
-def test_java_skips_syntax_preflight(tmp_path, monkeypatch):
-    # Only Python has a local parser; Java parse errors come back from Semgrep --strict instead.
-    calls = []
-    monkeypatch.setattr(source_syntax.subprocess, "run", lambda command, *a, **k: calls.append(command))
-    assert semgrep.scan_semgrep(java_project(tmp_path), runner=output_runner())["decision"] == "ALLOW"
-    assert calls == []
+def test_java_syntax_preflight_blocks_before_semgrep(tmp_path):
+    java_project(tmp_path)
+    (tmp_path / "Broken.java").write_text("class Broken { void broken( {", encoding="utf-8")
+    def unexpected(*args, **kwargs):
+        pytest.fail("Invalid Java must be blocked before Semgrep")
+    report = semgrep.scan_semgrep(tmp_path, runner=unexpected)
+    assert report["decision"] == "SCAN_FAILED"
+    assert report["errors"] == ["SOURCE_SYNTAX_INVALID"]
 
 
 def test_mixed_snapshot_preserves_both_languages_and_checks_all_files(tmp_path):
@@ -78,7 +80,7 @@ def test_mixed_snapshot_preserves_both_languages_and_checks_all_files(tmp_path):
     command = calls[0][0]
     assert {Path(p).suffix for p in command[command.index("--") + 1:]} == {".py", ".java"}
     assert [command[i + 1] for i, arg in enumerate(command) if arg == "--config"] == [
-        str(semgrep.RULE_FILE), str(semgrep.JAVA_RULE_FILE), str(semgrep.WEB_RULE_FILE)]
+        str(rule) for rule in semgrep.RULE_FILES]
     report = semgrep.scan_semgrep(tmp_path, runner=output_runner(
         edit=lambda p: p["paths"]["scanned"].pop()))
     assert report["decision"] == "SCAN_FAILED"
@@ -87,13 +89,14 @@ def test_mixed_snapshot_preserves_both_languages_and_checks_all_files(tmp_path):
 
 @pytest.mark.parametrize("filename,language", [
     ("app.vue", "vue"), ("app.svelte", "svelte"), ("App.kt", "kotlin"),
-    ("app.go", "go"), ("app.cs", "csharp"), ("app.rb", "ruby"),
+    ("app.c", "c"), ("app.cs", "csharp"), ("app.rb", "ruby"),
     ("app.mystery", "unknown"), ("executable", "unknown")])
 @pytest.mark.parametrize("with_java", [False, True])
 def test_unsupported_sources_block_allow(tmp_path, filename, language, with_java):
     if with_java:
         java_project(tmp_path)
-    (tmp_path / filename).write_text("unscanned code", encoding="utf-8")
+    source = {"c": "int main(void) { return 0; }", "csharp": "class App {}", "ruby": "puts 1"}.get(language, "unscanned code")
+    (tmp_path / filename).write_text(source, encoding="utf-8")
     report = mock_scan(tmp_path)
     assert report["decision"] == "REVIEW"
     assert report["semgrep"]["unsupported_languages"] == [language]
@@ -103,7 +106,7 @@ def test_unsupported_sources_block_allow(tmp_path, filename, language, with_java
 
 def test_unsupported_sources_do_not_hide_secret_denial(tmp_path):
     java_project(tmp_path)
-    (tmp_path / "app.go").write_text("package main", encoding="utf-8")
+    (tmp_path / "app.c").write_text("int value;", encoding="utf-8")
     report = validate(scan_full_repository(tmp_path, semgrep_runner=output_runner(),
                                           gitleaks_runner=secret_runner(secret=True)))
     assert report["decision"] == "DENY"

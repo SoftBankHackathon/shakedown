@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ImageBuilder } from "@/components/image-builder";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useT } from "@/components/i18n";
@@ -203,6 +204,8 @@ export default function ProjectPage() {
           </Section>
         </div>
       </div>
+
+      <ImageBuilder projectId={id} />
 
       <Section title={t("project.deployments")}>
         {deps.length === 0 && <p className="text-sm text-muted">{t("project.noDeployments")}</p>}

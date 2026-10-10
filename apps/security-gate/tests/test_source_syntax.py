@@ -148,3 +148,47 @@ def test_integrated_syntax_failure_never_allows(tmp_path):
     gate_schema = json.loads((schemas / "gate.schema.json").read_text(encoding="utf-8"))
     registry = Registry().with_resource("urn:security-gate:docker-report:v1", Resource.from_contents(docker_schema))
     jsonschema.Draft202012Validator(gate_schema, registry=registry).validate(report)
+
+
+@pytest.mark.parametrize("source", [
+    "class Broken { void broken( {",
+    "class Broken { void broken() { int x = 1;",
+    "class Broken { void broken() { int x = ; } }",
+])
+def test_java_tree_sitter_rejects_syntax_errors_without_security_keywords(source):
+    with pytest.raises(ScanError, match="^SOURCE_SYNTAX_INVALID$"):
+        source_syntax.validate_sources([(Path("Broken.java"), source)], timeout_seconds=5)
+
+
+@pytest.mark.parametrize("source", [
+    'package demo; import missing.Dependency; class App { Dependency value; }',
+    'record Item(String name, int count) {}',
+    'sealed interface Shape permits Circle {} final class Circle implements Shape {}',
+    'class App { String label(int x) { return switch(x) { case 1 -> "one"; default -> "other"; }; } }',
+])
+def test_java_syntax_does_not_require_classpath_or_reject_modern_constructs(source):
+    source_syntax.validate_sources([(Path("App.java"), source)], timeout_seconds=5)
+
+
+def test_java_parser_never_executes_static_initializers(tmp_path):
+    marker = tmp_path / "executed"
+    source = 'class App { static { new java.io.File(' + json.dumps(str(marker)) + ').mkdir(); } }'
+    source_syntax.validate_sources([(Path("App.java"), source)], timeout_seconds=5)
+    assert not marker.exists()
+
+
+def test_java_parser_missing_dependency_fails_closed(monkeypatch):
+    # Keep stdlib but remove installed packages from the real isolated worker.
+    program = 'import sys\n' + source_syntax.TREE_SITTER_CHECK_PROGRAM.split('\n', 2)[2]
+    monkeypatch.setattr(source_syntax, "TREE_SITTER_CHECK_PROGRAM", program)
+    with pytest.raises(ScanError, match="^SOURCE_SYNTAX_CHECK_FAILED$"):
+        source_syntax.validate_sources([(Path("App.java"), "class App {}")], timeout_seconds=5)
+
+
+def test_mixed_language_parsers_share_one_timeout_budget(monkeypatch):
+    calls = []
+    times = iter([10, 11, 14])
+    monkeypatch.setattr(source_syntax.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(source_syntax, "_check", lambda sources, program, **kw: calls.append(kw["timeout_seconds"]))
+    source_syntax.validate_sources([(Path("App.java"), "class App {}"), (Path("app.py"), "pass")], timeout_seconds=5)
+    assert calls == [4, 1]

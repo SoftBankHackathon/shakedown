@@ -74,3 +74,34 @@ def test_real_java_parse_error_is_scan_failed(tmp_path):
     (tmp_path / "Broken.java").write_text("class Broken { void broken( {", encoding="utf-8")
     report = scan_semgrep(tmp_path)
     assert report["decision"] == "SCAN_FAILED", report
+
+
+@pytest.mark.parametrize('language', ['go', 'rust'])
+@pytest.mark.parametrize('kind,decision', [('safe', 'ALLOW'), ('vulnerable', 'DENY')])
+def test_real_go_rust_vendored_rules(language, kind, decision):
+    from test_final_integration import validate
+    from security_gate.gate3 import scan_full_repository
+    report = validate(scan_full_repository(FIXTURES / f'{language}_{kind}'))
+    assert report['decision'] == decision, report
+    assert report['semgrep']['scanned_languages'] == [language]
+    assert report['semgrep']['unsupported_files'] == 0
+
+
+def test_real_go_constructed_sql_and_parameterized_query(tmp_path):
+    (tmp_path / 'query.go').write_text('''package app
+import "database/sql"
+func query(db *sql.DB, input string) {
+    db.Query("SELECT * FROM users WHERE name='" + input + "'")
+    db.Query("SELECT * FROM users WHERE name=$1", input)
+}
+''')
+    report = scan_semgrep(tmp_path)
+    assert report['decision'] == 'DENY', report
+    assert [(f['rule_id'], f['line']) for f in report['findings']] == [('go_sql_rule-concat-sqli', 4)]
+
+
+def test_go_module_files_are_data_not_unsupported_sources(tmp_path):
+    (tmp_path / 'go.mod').write_text('module example.invalid/app\n\ngo 1.23\n')
+    (tmp_path / 'go.sum').write_text('')
+    (tmp_path / 'main.go').write_text('package main\nfunc main() {}\n')
+    assert scan_semgrep(tmp_path)['decision'] == 'ALLOW'

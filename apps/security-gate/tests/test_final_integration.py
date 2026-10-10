@@ -131,7 +131,7 @@ def test_missing_target_and_read_errors_never_allow(tmp_path, monkeypatch):
     assert report["decision"] == "SCAN_FAILED"
     assert all(report[tool]["decision"] == "SCAN_FAILED" for tool in ("docker_compose", "semgrep", "gitleaks"))
     validate(report)
-    def unreadable(*args):
+    def unreadable(*args, **kwargs):
         raise PermissionError(FAKE)
     monkeypatch.setattr(semgrep, "sources", unreadable)
     report = scan_full_repository(COMBINED, semgrep_runner=output_runner(), gitleaks_runner=secret_runner(secret=True))

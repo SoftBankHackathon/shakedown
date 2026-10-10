@@ -147,7 +147,7 @@ export type DeployEvent = { ts: number; kind: string; [k: string]: unknown };
 export const TERMINAL_STATUSES: ReadonlySet<Deployment["status"]> = new Set(["warned", "deployed", "promoted", "blocked", "failed"]);
 
 /** Body of POST /api/projects (engine.yaml). */
-export type CreateProjectRequest = { repo: string; name?: string; targets: TargetName[] };
+export type CreateProjectRequest = { repo: string; name?: string; image_only?: boolean; targets: TargetName[] };
 
 /** Body of POST /api/projects/{id}/deployments — the Action button (engine.yaml). */
 export type ComparisonEndpoint = { name: string; url: string };
@@ -189,3 +189,35 @@ export type TargetDeployment = {
   commands?: string[];
 };
 export type TargetLogLine = { ts: string; source: "deploy" | "app" | "db"; line: string };
+
+/** Engine-scoped Claude connection. API keys are write-only and never returned. */
+export type LlmConnectionStatus = {
+  provider: "anthropic";
+  configured: boolean;
+  model: string;
+  verified: boolean;
+  source: "none" | "environment" | "memory";
+};
+export type ImagePlan = {
+  id: string;
+  project_id: string;
+  source: "existing" | "rule" | "ai-fallback";
+  template: string;
+  fallback_reason?: string;
+  fallback_diagnostic?: { code: string; stage: "rule_generation"; message: string; details: Record<string, unknown> };
+  prompt_version?: string;
+  dockerfile: string;
+  runtime?: string;
+  entrypoint?: string;
+  port: number;
+  warnings: string[];
+  build_status: "not_built";
+};
+export type ImageBuild = {
+  id: string;
+  project_id: string;
+  status: "queued" | "building" | "built" | "failed";
+  image: string;
+  source: ImagePlan["source"];
+  error?: string;
+};

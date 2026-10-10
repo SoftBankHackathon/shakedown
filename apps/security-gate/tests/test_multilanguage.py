@@ -33,11 +33,7 @@ def test_bundled_web_rules_use_both_languages_and_known_ids():
 @pytest.mark.parametrize("suffix,language", [(".js", "javascript"), (".jsx", "javascript"),
     (".mjs", "javascript"), (".cjs", "javascript"), (".ts", "typescript"), (".tsx", "typescript"),
     (".mts", "typescript"), (".cts", "typescript")])
-def test_web_extensions_are_submitted_without_python_ast(tmp_path, monkeypatch, suffix, language):
-    from security_gate import source_syntax
-    def unexpected(*args, **kwargs):
-        pytest.fail("Non-Python source must not start the Python AST process")
-    monkeypatch.setattr(source_syntax.subprocess, "run", unexpected)
+def test_web_extensions_pass_real_syntax_preflight(tmp_path, suffix, language):
     (tmp_path / ("app" + suffix)).write_text("const value = 1;", encoding="utf-8")
     report = semgrep.scan_semgrep(tmp_path, runner=output_runner())
     assert report["decision"] == "ALLOW"
@@ -115,7 +111,13 @@ def test_uninspected_template_content_never_allows(tmp_path, source, gap):
     (tmp_path / "safe.js").write_text("const value = 1;", encoding="utf-8")
     (tmp_path / "page.html").write_text(source, encoding="utf-8")
     report = scan(tmp_path)
-    assert report["decision"] == "REVIEW"
+    # An unresolved server-side expression is not valid JavaScript. The new
+    # parser fails closed; the coverage gap must still be preserved.
+    if source == '<button th:onclick="${handler}">go</button>':
+        assert report["decision"] == "SCAN_FAILED"
+        assert report["semgrep"]["errors"] == ["SOURCE_SYNTAX_INVALID"]
+    else:
+        assert report["decision"] == "REVIEW"
     assert gap in report["semgrep"]["coverage_gaps"]
     assert report["semgrep"]["unscanned_sources"] >= 1
 
@@ -230,7 +232,7 @@ def test_real_template_danger_maps_lines_and_preserves_coverage_gaps(tmp_path):
 def test_real_web_cli_schema_exit_and_secrets(tmp_path, scenario, decision, exit_code):
     shutil.copy(FIXTURES / ("javascript_vulnerable" if scenario == "danger" else "javascript_safe") / "sample.js", tmp_path)
     if scenario == "unsupported":
-        (tmp_path / "app.go").write_text("package main", encoding="utf-8")
+        (tmp_path / "app.c").write_text("int value;", encoding="utf-8")
     if scenario == "secret":
         (tmp_path / ".env").write_text("api_token=" + FAKE, encoding="utf-8")
     run = subprocess.run([sys.executable, str(ROOT / "main.py"), str(tmp_path), "--with-gitleaks"],

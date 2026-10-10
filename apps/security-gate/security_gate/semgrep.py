@@ -21,8 +21,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RULE_FILE = PROJECT_ROOT / "semgrep_rules" / "python-security.yml"
 JAVA_RULE_FILE = PROJECT_ROOT / "semgrep_rules" / "java-security.yml"
 WEB_RULE_FILE = PROJECT_ROOT / "semgrep_rules" / "javascript-typescript-security.yml"
-RULE_FILES = (RULE_FILE, JAVA_RULE_FILE, WEB_RULE_FILE)
+GO_RULE_FILES = tuple(PROJECT_ROOT / "semgrep_rules/vendor/patched-codes" / name
+                      for name in ("rule-subproc.yml", "rule-concat-sqli.yml"))
+RUST_RULE_FILE = PROJECT_ROOT / "semgrep_rules/vendor/trailofbits/panic-in-function-returning-result.yaml"
+RULE_FILES = (RULE_FILE, JAVA_RULE_FILE, WEB_RULE_FILE, *GO_RULE_FILES, RUST_RULE_FILE)
 RULES = {
+    "go_subproc_rule-subproc": ("HIGH", "GO_DYNAMIC_COMMAND"),
+    "go_sql_rule-concat-sqli": ("HIGH", "GO_CONSTRUCTED_SQL"),
+    "panic-in-function-returning-result": ("MEDIUM", "RUST_PANIC_IN_RESULT"),
     "security-gate-python-eval": ("HIGH", "PYTHON_DYNAMIC_EVAL"),
     "security-gate-python-shell-true": ("HIGH", "PYTHON_SHELL_EXECUTION"),
     "security-gate-java-runtime-exec": ("HIGH", "JAVA_COMMAND_EXECUTION"),
@@ -230,14 +236,15 @@ def scan_semgrep(target, *, timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
     deadline = time.monotonic() + timeout_seconds
     coverage = empty_coverage()
     try:
-        root, inputs = sources(target, max_file_bytes, coverage)
+        syntax_only = []
+        root, inputs = sources(target, max_file_bytes, coverage, syntax_only=syntax_only)
+        validate_sources([*inputs, *syntax_only], timeout_seconds=deadline - time.monotonic())
         done = partial(result, root, coverage=coverage)
         if not inputs:
             return done(applicable=False)
         executable = find_executable()
         if executable is None and runner is None:
             return done(error="SEMGREP_NOT_INSTALLED")
-        validate_sources(inputs, timeout_seconds=deadline - time.monotonic())
         for rule_file in RULE_FILES:
             validate_target(rule_file)
             read_bounded(rule_file, 64 * 1024)
