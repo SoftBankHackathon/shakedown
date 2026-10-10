@@ -10,7 +10,7 @@ import jsonschema
 import pytest
 from referencing import Registry, Resource
 
-from security_gate import gitleaks, secret_targets
+from security_gate import discovery, gitleaks, secret_targets
 from security_gate.gate3 import scan_full_repository
 from security_gate.models import ScanError
 
@@ -228,7 +228,7 @@ def test_unsupported_or_oversized_targets_fail_closed(tmp_path, source, limit, e
 
 
 def test_link_branch_rejects_before_copy(monkeypatch):
-    monkeypatch.setattr(secret_targets, "is_link", lambda metadata: True)
+    monkeypatch.setattr(discovery, "is_link", lambda metadata: True)
     report = gitleaks.scan_gitleaks(FIXTURES / "safe", runner=runner())
     assert report["errors"] == ["SYMLINK_OR_REPARSE_POINT"]
 
@@ -263,10 +263,11 @@ def test_docker_risk_and_secret_findings_are_kept_together(tmp_path):
     assert {f["tool"] for f in report["findings"]} == {"docker_compose", "gitleaks"}
 
 
-def test_missing_compose_keeps_review(tmp_path):
+def test_missing_compose_allows_successful_source_and_secrets(tmp_path):
     (tmp_path / "sample.py").write_text("pass", encoding="utf-8")
     report = validate(scan_full_repository(tmp_path, semgrep_runner=semgrep_runner(), gitleaks_runner=runner()))
-    assert report["decision"] == "REVIEW"
+    assert report["decision"] == "ALLOW"
+    assert report["docker_compose"]["scan_status"] == "NOT_APPLICABLE"
 
 
 def test_v3_cli_activates_all_checks_with_mock_adapters(monkeypatch, capsys):
