@@ -74,6 +74,8 @@ Windows에서는 `.venv/Scripts/python.exe -m uvicorn`을 사용합니다. AI �
 {"baseline":{"name":"local","url":"http://127.0.0.1:18080"},"candidate":{"name":"candidate","url":"https://candidate.example.com"}}
 ```
 
+배포·비교 요청의 선택 칸 `lang`(`ko`·`en`·`ja`, 기본 `en`)은 시운전 원인 보고서 언어입니다. 배포 기록에 저장되고, 그 배포의 모든 시운전(비교 대상마다, 수정 적용 뒤 2회차 포함)에 같은 값을 넘깁니다. 목록 밖 값은 400입니다.
+
 서로 다른 이름/URL이 필요합니다. HTTP(S) origin만 허용하며 자격 증명·경로·쿼리·fragment는 거절합니다. 같은 서비스의 별칭인지까지는 판단하지 않으므로 실제로 독립된 환경인지 확인하세요. 같은 프로젝트에서 배포/비교가 실행 중이면 409입니다. 단일 대상의 shakedown=true는 comparison이 필수이고, Local+AWS·Local+GCP·Local+AWS+GCP처럼 두 대상 이상은 shakedown=true를 사용하며 autofix=true는 400입니다. 대상은 Local과 세 클라우드까지 최대 4개입니다.
 
 ## 차단 뒤 수정 적용

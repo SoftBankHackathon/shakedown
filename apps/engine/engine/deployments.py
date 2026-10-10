@@ -60,9 +60,13 @@ class Endpoint(Model):
             raise ValueError('Use an HTTP(S) origin without credentials, path, query or fragment.')
         return value.rstrip('/')
 
+# 시운전 원인 보고서 언어. 시운전 요청에 그대로 넘긴다(shakedown.yaml ShakedownRequest.lang).
+ReportLang = Literal['ko', 'en', 'ja']
+
 class CompareRequest(Model):
     baseline: Endpoint
     candidate: Endpoint
+    lang: ReportLang = 'en'
 
 
 class DeployRequest(Model):
@@ -73,6 +77,7 @@ class DeployRequest(Model):
     # Local과 세 클라우드를 한 번에 고를 수 있다. 빌드는 첫 클라우드에서 한 번, 나머지는 같은 digest를 복사한다.
     targets: list[Literal['local', 'aws', 'azure', 'gcp']] = Field(default_factory=lambda: ['local'], min_length=1, max_length=4)
     options: dict[str, dict] = Field(default_factory=dict)
+    lang: ReportLang = 'en'
 
 class DeploymentError(Exception):
     pass
@@ -275,7 +280,8 @@ class DeploymentStore:
         if architecture: self.aws.validate_architecture(architecture, project)
         d = dict(id='dep_' + uuid.uuid4().hex, project_id=project.id, created=time.time(), status='queued',
                  shakedown=request.shakedown, autofix=False, options=options, targets={name: {'status':'pending','label': TARGETS[name]['label']} for name in targets},
-                 architecture=architecture, architecture_plan_id=request.architecture_plan_id, attempts=[], timings={}, ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0))
+                 architecture=architecture, architecture_plan_id=request.architecture_plan_id, attempts=[], timings={}, ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0),
+                 lang=request.lang)
         try:
             with self.connect() as db:
                 db.execute('INSERT INTO deployments VALUES (?,?,?,?)', (d['id'], project.id, d['status'], json.dumps(d)))
@@ -483,7 +489,7 @@ class DeploymentStore:
             raise DeploymentError('Use two distinct environments with distinct names.')
         d = dict(id='dep_' + uuid.uuid4().hex, project_id=project.id, created=time.time(), status='queued',
                  shakedown=True, autofix=False, options={}, targets={}, attempts=[], timings={},
-                 ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0), mode='comparison')
+                 ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0), mode='comparison', lang=request.lang)
         try:
             with self.connect() as db:
                 db.execute('INSERT INTO deployments VALUES (?,?,?,?)', (d['id'], project.id, d['status'], json.dumps(d)))
@@ -539,8 +545,9 @@ class DeploymentStore:
         if can_apply_env:
             # 시운전은 이 힌트가 있을 때만 env 수정안을 자동 적용 가능(auto_applicable)으로 표시한다.
             hints['can_apply_env'] = True
+        # 수정 적용 뒤 2회차도 배포 기록의 같은 언어로 보고한다. lang이 생기기 전에 저장된 기록은 영어.
         body = dict(deployment_id=d['id'], project_id=project.id, baseline=baseline.model_dump(),
-                    candidates=[candidate.model_dump()], hints=hints)
+                    candidates=[candidate.model_dump()], hints=hints, lang=d.get('lang', 'en'))
         started = time.monotonic()
         state = self.shakedown.call('POST', '/shakedowns', body)
         id = state.get('shakedown_id', '')
