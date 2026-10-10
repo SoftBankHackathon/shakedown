@@ -4,18 +4,21 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes } from "node:crypto";
 import type { CostLedger, Report, Scenario, StepDiff } from "@shakedown/contracts";
 import { runShakedown, type ShakedownInput, type Target } from "./shakedown.ts";
-import { defaultScenario, isScenario } from "./scenario.ts";
+import { isScenario } from "./scenario.ts";
 import type { Verdict } from "./verdict.ts";
 import { waitUntilReachable } from "./preflight.ts";
 import { ruleReport } from "./report.ts";
-import { aiOptionsFromEnv, aiReport, type AiOptions } from "./ai-report.ts";
+import { aiOptionsFromEnv, aiReport, noCost, type AiOptions } from "./ai-report.ts";
+import { aiScenarioOptionsFromEnv } from "./ai-scenario.ts";
+import { chooseScenario, type Choice } from "./choose.ts";
 
 /** GET /shakedowns/{id} 응답. 실행 중에는 verdict와 report가 없다. */
 export type Shakedown = {
   shakedown_id: string;
   status: "running" | "done" | "failed";
-  scenario: Scenario;
-  scenario_source: "saved" | "fallback";
+  /** 요청에 시나리오가 없으면 시운전이 기준 환경을 보고 고른 뒤에 채운다. 그 전 응답(202 포함)에는 없다. */
+  scenario?: Scenario;
+  scenario_source?: "ai" | "saved" | "fallback";
   steps: StepDiff[];
   verdict?: Verdict;
   /** BLOCKED일 때만 채운다. PASS/WARN이면 null. */
@@ -24,7 +27,7 @@ export type Shakedown = {
   error?: string;
 };
 
-type Job = Pick<ShakedownInput, "baseline" | "candidate" | "scenario"> & { hints?: Record<string, unknown> };
+type Job = Pick<ShakedownInput, "baseline" | "candidate" | "scenario"> & { deploymentId: string; hints?: Record<string, unknown> };
 
 // 엔진은 3분 안에 done이 안 되면 실패로 본다. 보고서 작성까지 넣어도 그보다 먼저 끝내서 이유를 남긴다.
 const DEFAULT_DEADLINE_MS = 150_000;
@@ -74,10 +77,27 @@ function parseRequest(body: unknown): Job | [number, string] {
   if (b.scenario != null && !isScenario(b.scenario)) return [400, "scenario must have steps with a title and a known action"];
   // hints는 엔진이 레포 분석 결과를 그대로 넘기는 자유 형식이라 모양을 검사하지 않는다.
   const hints = typeof b.hints === "object" && b.hints !== null && !Array.isArray(b.hints) ? (b.hints as Record<string, unknown>) : undefined;
-  return { baseline: b.baseline, candidate: b.candidates[0], scenario: (b.scenario ?? undefined) as Scenario | undefined, hints };
+  return { deploymentId: b.deployment_id, baseline: b.baseline, candidate: b.candidates[0], scenario: (b.scenario ?? undefined) as Scenario | undefined, hints };
 }
 
-type Settings = { deadlineMs: number; reachWaitMs: number; ai: AiOptions };
+type Settings = {
+  deadlineMs: number;
+  reachWaitMs: number;
+  ai: AiOptions;
+  aiScenario: AiOptions;
+  /** 배포마다 처음 고른 시나리오. 키는 "deployment_id 기준 환경 주소". 기록(store)처럼 메모리에만 둔다. */
+  chosen: Map<string, Choice>;
+};
+
+// AI 시나리오 비용과 AI 보고서 비용을 합친다. 원화는 더한 뒤에도 소수 둘째 자리로 맞춘다(0.1+0.2가 0.30000000000000004가 되지 않게).
+function addCost(a: CostLedger, b: CostLedger): CostLedger {
+  return {
+    calls: a.calls + b.calls,
+    input_tokens: a.input_tokens + b.input_tokens,
+    output_tokens: a.output_tokens + b.output_tokens,
+    krw: Math.round((a.krw + b.krw) * 100) / 100,
+  };
+}
 
 /** 뒤에서 시운전을 돌리고 결과를 record에 채운다. 마감 시간을 넘기면 failed로 끝낸다. */
 async function run(record: Shakedown, job: Job, settings: Settings): Promise<void> {
@@ -108,18 +128,46 @@ async function run(record: Shakedown, job: Job, settings: Settings): Promise<voi
 }
 
 /**
- * 접속 확인 → 시운전 → 원인 보고서. 기준 환경이 닿지 않거나 시나리오를 통과하지 못하면 비교할 수 없으니 오류로 끝낸다.
+ * 접속 확인 → (시나리오가 없으면) 시나리오 고르기 → 시운전 → 원인 보고서.
+ * 기준 환경이 닿지 않거나 시나리오를 통과하지 못하면 비교할 수 없으니 오류로 끝낸다.
  * 보고서는 규칙으로 먼저 만들고, AI가 켜져 있으면 AI 보고서로 바꾼다(실패하면 규칙 보고서 그대로).
  */
-async function execute(record: Shakedown, job: Job, { reachWaitMs, ai }: Settings, deadlineAt: number, signal: AbortSignal) {
+async function execute(record: Shakedown, job: Job, { reachWaitMs, ai, aiScenario, chosen }: Settings, deadlineAt: number, signal: AbortSignal) {
   const [baselineUp] = await Promise.all([
     waitUntilReachable(job.baseline.url, { waitMs: reachWaitMs, signal }),
     waitUntilReachable(job.candidate.url, { waitMs: reachWaitMs, signal }),
   ]);
   if (!baselineUp) throw new Error(`baseline ${job.baseline.name} is not reachable: ${job.baseline.url}`);
 
+  let scenario = job.scenario;
+  let spent = noCost();
+  // 엔진은 한 배포(같은 deployment_id) 안에서 비교 대상마다, 수정 적용 뒤 2회차마다 시운전을 따로 부른다.
+  // 같은 배포는 같은 시나리오로 돌려야 회차끼리 맞댈 수 있다(2회차가 더 약한 둘러보기로 바뀌면 고쳐지지 않은 버그도 PASS가 된다).
+  // 그래서 처음 고른 시나리오와 출처를 다시 쓰고, 이번에 부르지 않은 AI 비용은 0으로 둔다(엔진이 회차마다 더한다).
+  const key = `${job.deploymentId} ${job.baseline.url}`;
+  let choice: Choice | undefined;
+  if (!scenario) {
+    const reused = chosen.get(key);
+    // 고르는 시간도 마감 안에 든다. 엔진은 폴링 때마다 scenario를 복사하고 끝나면 steps 수와 비교하므로,
+    // 고른 시나리오는 단계를 돌리기 전에 기록에 채운다. AI 시나리오 비용도 이때 남겨 뒤 단계가 실패해도 보이게 한다.
+    const onSpent = (cost: CostLedger) => {
+      if (record.status === "running") record.ai_cost = cost;
+    };
+    // 고른 시나리오의 본 실행은 AI 보고서 몫을 남기고 끝나야 한다.
+    const runDeadlineAt = deadlineAt - AI_TIMEOUT_MS - AI_MARGIN_MS;
+    choice = reused ? { ...reused, cost: spent } : await chooseScenario(job.baseline, { hints: job.hints, ai: aiScenario, deadlineAt: runDeadlineAt, signal, onSpent });
+    scenario = choice.scenario;
+    spent = choice.cost;
+    if (record.status === "running") {
+      record.scenario = choice.scenario;
+      record.scenario_source = choice.source;
+      record.ai_cost = spent;
+    }
+  }
+
   const result = await runShakedown({
     ...job,
+    scenario,
     signal,
     // 마감 때 HTTP 요청을 취소하고 이미 끝난 기록은 덮어쓰지 않는다.
     onProgress: (steps) => {
@@ -130,8 +178,12 @@ async function execute(record: Shakedown, job: Job, { reachWaitMs, ai }: Setting
   const broken = result.steps.find((d) => d.local.status !== "passed");
   if (broken) {
     if (record.status === "running") record.steps = result.steps;
+    // 다시 쓴 시나리오가 이번에 실패했으면 버린다. 붙잡고 있으면 다음 회차도 같은 자리에서 실패한다.
+    if (choice) chosen.delete(key);
     throw new Error(`baseline ${job.baseline.name} failed at step ${broken.index} (${broken.title}): ${broken.local.error ?? "no error message"}`);
   }
+  // 기준 환경이 끝까지 통과한 시나리오만 이 배포의 다음 시운전에 다시 쓴다.
+  if (choice) chosen.set(key, choice);
   // 엔진만 이 비교 대상의 env를 바꿔 다시 배포할 수 있는지 안다. 정확히 true일 때만 자동 적용 가능으로 표시한다.
   const canApplyEnv = job.hints?.can_apply_env === true;
   const rule = result.verdict.status === "BLOCKED" ? ruleReport(result.steps, result.verdict, { canApplyEnv }) : null;
@@ -139,14 +191,16 @@ async function execute(record: Shakedown, job: Job, { reachWaitMs, ai }: Setting
   const left = deadlineAt - Date.now() - AI_MARGIN_MS;
   const aiOptions = left < AI_MIN_MS ? {} : { ...ai, timeoutMs: Math.min(ai.timeoutMs ?? AI_TIMEOUT_MS, left) };
   const { report, cost } = await aiReport({ diffs: result.steps, verdict: result.verdict, fallback: rule, hints: job.hints }, aiOptions);
-  return { result, report, cost };
+  return { result, report, cost: addCost(spent, cost) };
 }
 
-export function createShakedownServer(options: { deadlineMs?: number; reachWaitMs?: number; ai?: AiOptions } = {}) {
+export function createShakedownServer(options: { deadlineMs?: number; reachWaitMs?: number; ai?: AiOptions; aiScenario?: AiOptions } = {}) {
   const settings: Settings = {
     deadlineMs: options.deadlineMs ?? DEFAULT_DEADLINE_MS,
     reachWaitMs: options.reachWaitMs ?? DEFAULT_REACH_WAIT_MS,
     ai: options.ai ?? aiOptionsFromEnv(),
+    aiScenario: options.aiScenario ?? aiScenarioOptionsFromEnv(),
+    chosen: new Map(),
   };
   const store = new Map<string, Shakedown>();
 
@@ -162,13 +216,13 @@ export function createShakedownServer(options: { deadlineMs?: number; reachWaitM
     // 오류 모양은 target.yaml과 같은 {error, detail}. 엔진이 같은 처리 코드를 쓸 수 있다.
     if (Array.isArray(job)) return send(res, job[0], { error: job[0] === 422 ? "unsupported request" : "invalid request", detail: job[1] });
 
+    // 저장된 시나리오(saved)는 지금처럼 바로 쓴다. 없으면 기준 환경을 본 뒤에 고르므로 아직 비워 둔다.
     const record: Shakedown = {
       shakedown_id: `sd_${randomBytes(5).toString("hex")}`,
       status: "running",
-      scenario: job.scenario ?? defaultScenario,
-      scenario_source: job.scenario ? "saved" : "fallback",
+      ...(job.scenario ? { scenario: job.scenario, scenario_source: "saved" as const } : {}),
       steps: [],
-      ai_cost: { calls: 0, input_tokens: 0, output_tokens: 0, krw: 0 },
+      ai_cost: noCost(),
     };
     store.set(record.shakedown_id, record);
     send(res, 202, record);
