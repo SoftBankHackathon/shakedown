@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 from .models import ScanError
 
@@ -25,15 +26,29 @@ except (MemoryError, RecursionError):
     sys.exit(2)
 """
 
+JAVA_CHECK_PROGRAM = """
+import json
+import sys
+from tree_sitter import Language, Parser
+import tree_sitter_java
+
+parser = Parser(Language(tree_sitter_java.language()))
+for source in json.load(sys.stdin.buffer):
+    if parser.parse(source.encode("utf-8")).root_node.has_error:
+        sys.exit(65)
+"""
 
 
-def _check(sources, program, *, timeout_seconds):
+def _check(sources, program, *, timeout_seconds, include_site_packages):
     if not sources:
         return
     if timeout_seconds <= 0:
         raise ScanError("SOURCE_SYNTAX_TIMEOUT")
     payload = json.dumps(sources, ensure_ascii=False).encode("utf-8")
-    command = [sys.executable, "-I", "-S", "-B", "-c", program]
+    command = [sys.executable, "-I"]
+    if not include_site_packages:
+        command.append("-S")
+    command.extend(["-B", "-c", program])
     try:
         completed = subprocess.run(
             command, input=payload, cwd=PROJECT_ROOT, stdout=subprocess.DEVNULL,
@@ -53,12 +68,15 @@ def _check(sources, program, *, timeout_seconds):
 def validate_sources(inputs, *, timeout_seconds):
     """Validate the exact bounded strings later copied to the Semgrep snapshot.
 
-Only Python is pre-checked, with the running interpreter's grammar. Newer or
-otherwise incompatible syntax fails closed; this is not a complete Python
-compilation or semantic check. Other languages have no local parser here:
-Semgrep runs with --strict and reports their parse errors as SEMGREP_SCAN_ERRORS.
+Use the running interpreter's grammar. Newer or otherwise incompatible syntax
+fails closed; this is not a complete Python compilation or semantic check.
 """
     if timeout_seconds <= 0:
         raise ScanError("SOURCE_SYNTAX_TIMEOUT")
-    _check([source for path, source in inputs if path.suffix.lower() == ".py"],
-           CHECK_PROGRAM, timeout_seconds=timeout_seconds)
+    deadline = time.monotonic() + timeout_seconds
+    python_sources = [source for path, source in inputs if path.suffix.lower() == ".py"]
+    java_sources = [source for path, source in inputs if path.suffix.lower() == ".java"]
+    _check(python_sources, CHECK_PROGRAM, timeout_seconds=deadline - time.monotonic(),
+           include_site_packages=False)
+    _check(java_sources, JAVA_CHECK_PROGRAM, timeout_seconds=deadline - time.monotonic(),
+           include_site_packages=True)
