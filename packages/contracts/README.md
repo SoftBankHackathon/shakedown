@@ -23,7 +23,7 @@
 
 ## 상태: 초안
 
-Target API는 **v0.1.2 통합 제안**, Engine API는 **v0.1.5 통합 제안**, Shakedown API는 **v0.1.1 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
+Target API는 **v0.1.3 제안**, Engine API는 **v0.1.5 통합 제안**, Shakedown API는 **v0.1.1 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
 
 바뀔 가능성이 있는 것
 - 상태 확인 방식: 지금은 GET 폴링(2~3초 간격). 콜백(`callback_url`) 방식이 추가될 수 있음
@@ -39,6 +39,7 @@ Target API는 **v0.1.2 통합 제안**, Engine API는 **v0.1.5 통합 제안**, 
 
 ## 변경 이력
 
+- **Target v0.1.3 (2026-10-10, 제안. 팀 채널 공유 TBD)**: `DeployRequest.architecture`를 AWS 전용에서 클라우드별 실행 카탈로그로. `version` enum에 `gcp-architecture.v1`·`azure-architecture.v1` 추가(각 어댑터는 자기 버전만 받고 다른 버전은 400, Local에는 보내지 않음). GCP 구현 제약에 계획 배포 줄 추가: CPU·메모리·대수·자동 확장만 적용, DB 고가용성은 계획만, session-jdbc 필수, sticky 금지, 등급별 DB 연결 풀. 타입은 `TargetDeployRequest.architecture.version`만 넓힘. `infra/gcp/README.md` "계획 배포" 절 참고.
 - **Engine v0.1.5 (2026-10-10, 제안. 팀 채널 공유·담당자 확인 TBD)**: `POST /api/deployments/{id}/fix`(operationId applyFix, 본문 없음) 추가. blocked 배포의 자동 적용 가능 env 수정안을 한 번 적용해 클라우드만 같은 digest·같은 본문에 env를 더해 새 배포 ID로 다시 배포하고 2회차 시운전(blocked → fixing → 결과). 지금은 엔진이 배포한 Local+GCP만, AWS는 실계정 검증 전이라 400. 최신 배포가 아니거나 blocked가 아니면 409. `TargetState`에 `deployment_id`(Target API에 실제로 쓴 ID)와 `request`(받아들여진 Target API 본문) 추가, 1회차의 `applied_fix` 기록, `ai_cost`는 회차 합. fixture에 `targets.*.deployment_id`·`request` 예시 추가. blocked는 더 이상 완전한 종료 상태가 아님(`TERMINAL_STATUSES` 주석).
 - **Shakedown v0.1.1 (2026-10-09, 제안. 팀 채널 공유·담당자 확인 TBD)**: `Report.fix.option`에 `env` 추가(value는 `KEY=VALUE` 한 개, 같은 이미지에 env만 더해 재배포). 로그인 풀림 규칙 수정안을 스티키 세션에서 `SPRING_PROFILES_ACTIVE=demo,session-jdbc`(세션을 공유 DB에)로 바꿈. 요청 `hints`에 알려진 키 `can_apply_env` 추가: true일 때만 그 수정안이 `auto_applicable: true`이고, AI 보고서도 그 fix를 바꾸지 않음. 요청·응답 형식은 그대로.
 - **fixture `deployment-blocked-then-fixed.json` (2026-10-09)**: 1회차 수정안·applied_fix를 위 env 수정안으로 교체하고, 비교 대상을 엔진이 실제로 env 수정을 적용하는 gcp로 바꿈(키 `aws`→`gcp`, 라벨 `GCP Cloud Run`, `project.json`의 ports·targets도 같이). 2회차가 스티키를 켜지 않도록 `sticky_sessions`를 모두 false로, `targets.gcp.info.session`을 `jdbc`로, `autofix`를 false(사용자가 수정 적용을 누르는 흐름)로 맞추고, 엔진이 남기는 `deployment_id`·`request`를 넣음. 단계·판정·원인 문장은 그대로(시뮬레이션 기록이라 URL은 localhost).

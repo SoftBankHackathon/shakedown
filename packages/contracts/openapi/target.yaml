@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Target API
-  version: 0.1.2
+  version: 0.1.3
   description: |
-    > **상태: 초안 (v0.1.2, 2026-10-09)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 초안 (v0.1.3, 2026-10-10)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     배포 대상(인프라)이 구현하는 API. 엔진(apps/engine)이 호출합니다.
@@ -31,9 +31,10 @@ info:
     - 삭제된 ID 재사용, 같은 ID의 다른 요청, 동일 프로젝트 동시 변경은 409
     - 재시작 시 미완료 배포는 공개 차단 후 failed. 새 ID로 재시도
 
-    GCP 구현 제약 (v0.1.2 제안, infra/gcp)
+    GCP 구현 제약 (v0.1.2 제안, v0.1.3에 계획 배포 추가, infra/gcp)
     - 미리 준비한 Cloud Run 서비스 1개(서울 asia-northeast3)와 Cloud SQL PostgreSQL. database.engine은 postgres만, 이름은 설정값만
-    - replicas 1~2. Cloud Run 수동 스케일링(scalingMode=MANUAL, manualInstanceCount=replicas). 3 이상은 400
+    - replicas 1~2. Cloud Run 수동 스케일링(scalingMode=MANUAL, manualInstanceCount=replicas). 3 이상은 400(계획 배포는 아래 줄)
+    - 계획 배포(architecture.version=gcp-architecture.v1, v0.1.3): CPU·메모리·대수·자동 확장만 적용(small 1 vCPU/1Gi 수동 1대, medium 1 vCPU/2Gi 자동 2~4대, large 2 vCPU/4Gi 자동 3~8대). DB 고가용성은 계획만 있고 적용하지 않음. SPRING_PROFILES_ACTIVE=demo,session-jdbc 필수, sticky_sessions=true는 400. 앱 DB 연결 풀은 등급별(medium 5, large 2, small은 앱 기본값)이라 최대 대수까지 늘어도 지금 DB 연결 한도 안. info.architecture는 등급(계획이 없으면 legacy), info.scaling은 다시 읽은 실제 확장 범위
     - sticky_sessions=true면 Cloud Run 세션 어피니티를 켬. 보장이 아닌 best-effort(쿠키 기반. 인스턴스가 꺼지거나 바쁘면 다른 인스턴스로 감)
     - 허용 저장소(설정의 이미지 접두어)의 image@sha256:digest 필수. linux/amd64 이미지
     - 환경변수는 SPRING_PROFILES_ACTIVE=demo,session-memory 또는 demo,session-jdbc만 허용. secret_refs는 SPRING_DATASOURCE_PASSWORD=db_password만(Secret Manager에서 꺼냄)
@@ -226,9 +227,9 @@ components:
           type: object
           additionalProperties: false
           required: [version, template_id]
-          description: "AWS 전용 실행 카탈로그. replicas는 small=1, medium=2, large=3. Local에는 보내지 않음."
+          description: "클라우드별 실행 카탈로그. 각 어댑터는 자기 버전만 받고 다른 버전은 400. Local에는 보내지 않음. replicas는 그 클라우드 카탈로그의 시작 대수(aws·gcp·azure 모두 small=1, medium=2, large=3)."
           properties:
-            version: {const: aws-architecture.v1}
+            version: {type: string, enum: [aws-architecture.v1, gcp-architecture.v1, azure-architecture.v1]}
             template_id: {type: string, enum: [small, medium, large]}
         options: { $ref: "#/components/schemas/TargetOptions" }
     TargetOptions:

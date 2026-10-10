@@ -174,7 +174,7 @@ export type DeployRequest = {
 /** Target API v0.1.1 proposal — distinct from the engine's DeployRequest. */
 export type TargetDeployRequest = {
   runtime?: HttpRuntime;
-  architecture?: {version: "aws-architecture.v1"; template_id: ArchitectureTier};
+  architecture?: {version: "aws-architecture.v1" | "gcp-architecture.v1" | "azure-architecture.v1"; template_id: ArchitectureTier};
   deployment_id: string;
   project_id: string;
   image: string;
