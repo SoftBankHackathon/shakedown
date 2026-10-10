@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# 온프레미스 호스트 무인 설치 (docs/terraform-migration-aws-gcp.md 3절). 2026-10-10 EC2 실측과 같은 구성:
+# Docker(dnf) + Compose v${compose_version} + Node v${node_version}, /opt/shakedown, systemd shakedown-local, 로컬 어댑터 direct 모드.
+# 비밀번호는 여기 없다. 부팅 때 SSM SecureString에서 읽어 root 0600 파일에만 쓴다.
+set -euo pipefail
+exec > >(tee -a /var/log/shakedown-bootstrap.log) 2>&1
+echo "==> $(date -Is) bootstrap start"
+
+dnf install -y docker tar xz ${length(ecr_registries) > 0 ? "amazon-ecr-credential-helper" : ""}
+systemctl enable --now docker
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+echo '==> Docker Compose (체크섬 확인)'
+compose_url="https://github.com/docker/compose/releases/download/v${compose_version}/docker-compose-linux-x86_64"
+curl -fsSL -o "$work/docker-compose" "$compose_url"
+# .sha256 파일은 "<해시> *docker-compose-linux-x86_64" 형식이다 (실측 때 이 '*' 형식 때문에 한 번 멈췄다). 첫 칸만 쓴다.
+expected="$(curl -fsSL "$compose_url.sha256" | awk '{print $1}')"
+echo "$expected  $work/docker-compose" | sha256sum -c -
+install -D -m 0755 "$work/docker-compose" /usr/local/lib/docker/cli-plugins/docker-compose
+docker compose version
+
+echo '==> Node.js (체크섬 확인)'
+node_file="node-v${node_version}-linux-x64.tar.xz"
+curl -fsSL -o "$work/$node_file" "https://nodejs.org/dist/v${node_version}/$node_file"
+curl -fsSL -o "$work/SHASUMS256.txt" "https://nodejs.org/dist/v${node_version}/SHASUMS256.txt"
+(cd "$work" && grep " $node_file\$" SHASUMS256.txt | sha256sum -c -)
+tar -xJf "$work/$node_file" -C /usr/local --strip-components=1
+node --version
+
+echo '==> 설정 /etc/shakedown-local.env (root 0600)'
+umask 077
+password="$(aws ssm get-parameter --region '${region}' --name '${password_param}' --with-decryption --query Parameter.Value --output text)"
+cat > /etc/shakedown-local.env <<ENV
+LOCAL_DB_PASSWORD=$password
+PORT=9101
+LOCAL_DATA_DIR=/var/lib/shakedown-local
+${delivery_env}LOCAL_BIND_ADDRESS=0.0.0.0
+LOCAL_APP_PORT=${app_port}
+ENV
+password=''
+chmod 0600 /etc/shakedown-local.env
+mkdir -p /var/lib/shakedown-local && chmod 0700 /var/lib/shakedown-local
+
+%{ if length(ecr_registries) > 0 ~}
+echo '==> ECR 자격 도우미 (이 레지스트리만)'
+mkdir -p /root/.docker
+cat > /root/.docker/config.json <<'JSON'
+${jsonencode({ credHelpers = { for r in ecr_registries : r => "ecr-login" } })}
+JSON
+chmod 0600 /root/.docker/config.json
+%{ endif ~}
+
+# 코드 설치는 첫 부팅과 래퍼의 update가 같은 스크립트를 쓴다 (systemd 유닛이 바뀌어도 update로 반영된다).
+cat > /usr/local/sbin/shakedown-install-bundle <<'INSTALL'
+#!/usr/bin/env bash
+# S3 묶음(infra/local + packages/contracts)을 /opt/shakedown에 교체 설치하고 로컬 어댑터를 다시 띄운다. 상태·env는 건드리지 않는다.
+set -euo pipefail
+t="$(mktemp -d)"; trap 'rm -rf "$t"' EXIT
+aws s3 cp "${bundle_s3_uri}" "$t/b.tgz" --region '${region}' --only-show-errors
+mkdir "$t/new" && tar -xzf "$t/b.tgz" -C "$t/new"
+test -f "$t/new/infra/local/server.mjs"
+rm -rf /opt/shakedown.old; [ -d /opt/shakedown ] && mv /opt/shakedown /opt/shakedown.old
+mv "$t/new" /opt/shakedown
+install -m 0644 /opt/shakedown/infra/local/systemd/shakedown-local.service /etc/systemd/system/shakedown-local.service
+systemctl daemon-reload
+systemctl enable shakedown-local
+systemctl restart shakedown-local
+for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:9101/health >/dev/null && exit 0; sleep 2; done
+echo 'shakedown-local health 실패' >&2; exit 1
+INSTALL
+chmod 0700 /usr/local/sbin/shakedown-install-bundle
+/usr/local/sbin/shakedown-install-bundle
+touch /var/lib/shakedown-local/.bootstrap-done
+echo "==> $(date -Is) bootstrap done"
