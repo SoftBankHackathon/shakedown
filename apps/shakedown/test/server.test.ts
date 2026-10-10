@@ -95,7 +95,19 @@ test("비교 환경이 서버 2대면 BLOCKED, 4단계에서 갈라진다", asyn
   });
   assert.equal(done.report?.headline, "Login is lost on aws: requests land on different instances");
   assert.equal(done.report?.by, "rule");
-  assert.equal(done.report?.fix?.option, "sticky_sessions");
+  assert.equal(done.report?.fix?.option, "env");
+  // 엔진이 env를 바꿀 수 있다고 알려 주지 않았으니(hints 없음) 제안만 한다.
+  assert.equal(done.report?.fix?.auto_applicable, false);
+});
+
+test("hints.can_apply_env=true면 로그인 풀림 수정안이 자동 적용 가능", async () => {
+  const base = await api();
+  const { body } = await post(base, request(await board(), await board({ instances: 2 }), { hints: { can_apply_env: true } }));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.verdict?.status, "BLOCKED");
+  assert.equal(done.report?.fix?.option, "env");
+  assert.equal(done.report?.fix?.value, "SPRING_PROFILES_ACTIVE=demo,session-jdbc");
+  assert.equal(done.report?.fix?.auto_applicable, true);
 });
 
 test("비교 환경이 꺼져 있으면 BLOCKED와 접속 불가 보고서", async () => {

@@ -47,7 +47,7 @@ Windows에서는 `.venv/Scripts/python.exe -m uvicorn`을 사용합니다. AI �
 | `blocked` | BLOCKED 검사 게이트. 기존 URL의 접속을 차단하지 않음 |
 | `failed` | 빌드/인프라/시운전 오류, 기준 환경 실패, 불완전 결과 등. PASS 없음 |
 
-`release_gate`는 passed/review/blocked이며 관리 클라우드(AWS·GCP) 대상의 DELETE가 차단을 확인한 경우에만 `traffic_blocked=true`입니다. 정리된 대상은 `status=stopped`, 실패한 정리는 `cleanup=failed`로 표시합니다. `targets[*].status=external`은 사용자가 제공한 기존 환경입니다. 그 환경의 배포·삭제·트래픽 차단은 엔진이 관리하지 않습니다. 자동수정은 거절하며 보고서의 fix는 제안만 표시합니다.
+`release_gate`는 passed/review/blocked이며 관리 클라우드(AWS·GCP) 대상의 DELETE가 차단을 확인한 경우에만 `traffic_blocked=true`입니다. 정리된 대상은 `status=stopped`, 실패한 정리는 `cleanup=failed`로 표시합니다. `targets[*].status=external`은 사용자가 제공한 기존 환경입니다. 그 환경의 배포·삭제·트래픽 차단은 엔진이 관리하지 않습니다. 배포 요청의 autofix=true는 거절합니다. 대신 BLOCKED 뒤 보고서의 fix가 자동 적용 가능(`auto_applicable: true`, 지금은 엔진이 배포한 Local+GCP의 `SPRING_PROFILES_ACTIVE=demo,session-jdbc`)이면 `POST /api/deployments/{id}/fix`로 한 번 적용할 수 있습니다. 그 밖의 fix는 제안만 표시합니다.
 
 **AWS 엔진 연결:** 아래 설정을 준비하면 ECR 업로드/digest 공유 → AWS Target 호출을 실행합니다. 실제 AWS 계정에서의 배포 검증은 아직 수행하지 않았습니다. 스택 생성·DB 초기화·사용자별 AWS 계정 연결은 자동화하지 않습니다.
 
@@ -58,6 +58,7 @@ Windows에서는 `.venv/Scripts/python.exe -m uvicorn`을 사용합니다. AI �
 - `POST /api/projects/{id}/deployments`: 202 비동기 Local / AWS / GCP 배포
 - `POST /api/projects/{id}/comparisons`: 202 기존 URL 비교
 - `GET /api/deployments?project_id=...`, `GET /api/deployments/{id}`: 결과/증거 조회
+- `POST /api/deployments/{id}/fix`: 202 차단된 배포에 수정안 적용 후 2회차 시운전(아래 "차단 뒤 수정 적용")
 - `GET /api/deployments/{id}/events`: SSE. 상태 또는 완료 단계 수 변화 후 전체 조회. 재연결 시 현재 상태부터, 과거 이벤트 재생 없음
 - `GET /api/health`: 엔진 상태
 
@@ -74,6 +75,22 @@ Windows에서는 `.venv/Scripts/python.exe -m uvicorn`을 사용합니다. AI �
 ```
 
 서로 다른 이름/URL이 필요합니다. HTTP(S) origin만 허용하며 자격 증명·경로·쿼리·fragment는 거절합니다. 같은 서비스의 별칭인지까지는 판단하지 않으므로 실제로 독립된 환경인지 확인하세요. 같은 프로젝트에서 배포/비교가 실행 중이면 409입니다. 단일 대상의 shakedown=true는 comparison이 필수이고, Local+AWS·Local+GCP는 shakedown=true를 사용하며 AWS+GCP 동시 선택과 autofix=true는 400입니다.
+
+## 차단 뒤 수정 적용
+
+Local+GCP 배포가 로그인 풀림으로 BLOCKED이면 원인 보고서의 수정안이 `env SPRING_PROFILES_ACTIVE=demo,session-jdbc`(세션을 Cloud SQL의 `spring_session` 테이블에 저장)이고 자동 적용 가능으로 표시됩니다. 대시보드의 **수정 적용하고 다시 시운전** 버튼이나 아래 요청으로 적용합니다.
+
+```sh
+curl -X POST http://127.0.0.1:8700/api/deployments/<id>/fix
+```
+
+- 상태는 blocked → fixing → shakedown → promoted/warned/blocked/failed로 갑니다. 진행 상황은 events를 다시 구독해 받습니다.
+- 빌드하지 않습니다. 1회차와 같은 이미지 digest·같은 Target API 본문에 `env`만 더해 GCP만 새 배포 ID(`dep_` + 32자리 hex)로 다시 배포합니다. 새 ID는 `targets.gcp.deployment_id`에 남고 그 뒤 조회·로그·DELETE는 이 ID로 합니다. Local은 다시 배포하지 않습니다.
+- 적용한 수정안은 `attempts[0].applied_fix`, 2회차 결과는 `attempts[1]`에 남고 `ai_cost`는 두 회차의 합입니다.
+- `timings.total_s`는 1회차 총시간에 2회차 작업 시간(재배포·시운전)만 더합니다. 차단 뒤 버튼을 누르기까지 기다린 시간은 넣지 않고, 수정 중에는 비웁니다. `deploy_s`에는 GCP 재배포 시간을 더하고, 다시 빌드하지 않으므로 `build_s`는 그대로입니다.
+- 배포당 1번이고 프로젝트의 최신 배포만 됩니다(아니면 409). 1회차 GCP 정리를 확인하지 못했거나, 비교 모드·외부 URL·AWS 배포이거나, 수정안이 자동 적용 가능이 아니면 400입니다. AWS는 같은 코드 경로를 타지만 실계정 재배포 검증 전이라 막아 두었습니다.
+- 2회차도 BLOCKED이면 새 GCP 배포를 로그 확인 뒤 DELETE합니다. 재배포 POST가 실패하면 failed로 끝나며 Local을 정리합니다. 이때 어댑터에 새 ID를 물어 모르는 ID(404, 거절됨)면 1회차 정리 기록을 그대로 두고, 응답만 잃었을 수 있으면(시간 초과·연결 끊김) 새 ID도 로그 확인 뒤 DELETE합니다.
+- PASS 뒤에도 GCP 2대는 켜져 있습니다. 데모가 끝나면 `infra/gcp/README.md`의 "비용 멈추기"를 따릅니다.
 
 ## 배포·장애 처리
 

@@ -94,17 +94,44 @@ async function fake(t: TestContext, reply: Reply) {
   return { baseURL: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, seen };
 }
 
+// 규칙 수정안이 제안만인 경우(엔진이 적용할 수 없는 대상). 이때는 AI의 수정안을 그대로 쓴다.
+const manual = { ...input, fallback: { ...rule, fix: { ...rule.fix!, auto_applicable: false } } };
+
 test("올바른 구조화 응답이면 by ai 보고서와 토큰 비용을 돌려준다", async (t) => {
   const f = await fake(t, json(200, answered(answer)));
-  const result = await aiReport(input, { apiKey: KEY, baseURL: f.baseURL });
+  const result = await aiReport(manual, { apiKey: KEY, baseURL: f.baseURL });
   // AI가 auto_applicable을 true로 보내도 사람이 확인하도록 false로 바꾼다.
   assert.deepEqual(result, { report: { ...answer, fix: { ...answer.fix, auto_applicable: false }, by: "ai" }, cost: billed });
 });
 
 test("fix가 null인 응답도 받아들인다", async (t) => {
   const f = await fake(t, json(200, answered({ ...answer, fix: null })));
-  const { report } = await aiReport(input, { apiKey: KEY, baseURL: f.baseURL });
+  const { report } = await aiReport(manual, { apiKey: KEY, baseURL: f.baseURL });
   assert.deepEqual(report, { ...answer, fix: null, by: "ai" });
+});
+
+test("규칙 fix가 auto_applicable이면 AI 문장은 쓰되 fix는 규칙 것을 그대로 둔다", async (t) => {
+  // fixture의 규칙 수정안은 엔진이 자동으로 적용할 수 있는 env 변경이다.
+  assert.equal(rule.fix?.auto_applicable, true);
+  for (const fix of [answer.fix, null]) {
+    const f = await fake(t, json(200, answered({ ...answer, fix })));
+    const result = await aiReport(input, { apiKey: KEY, baseURL: f.baseURL });
+    assert.deepEqual(result, { report: { ...answer, fix: rule.fix, by: "ai" }, cost: billed });
+  }
+});
+
+test("규칙 fix를 고정해도 confidence는 AI 것을 쓴다(AI 자신의 원인 설명에 대한 확신이라서)", async (t) => {
+  // 규칙과 같은 값이면 어느 쪽을 썼는지 구분되지 않으므로 규칙(high)과 다른 값으로 확인한다.
+  assert.equal(rule.confidence, "high");
+  const f = await fake(t, json(200, answered({ ...answer, confidence: "low" })));
+  const { report } = await aiReport(input, { apiKey: KEY, baseURL: f.baseURL });
+  assert.deepEqual(report, { ...answer, confidence: "low", fix: rule.fix, by: "ai" });
+});
+
+test("규칙 수정안이 그대로 적용된다는 것을 AI에게 알려 원인 문장이 그 수정안과 어긋나지 않게 한다", async (t) => {
+  const f = await fake(t, json(200, answered(answer)));
+  await aiReport(input, { apiKey: KEY, baseURL: f.baseURL });
+  assert.match(f.seen[0].body.system, /If rule_report\.fix\.auto_applicable is true, that fix is applied as is/);
 });
 
 test("요청: POST /v1/messages, claude-opus-5-5, output_config.format, fallback 베타 헤더와 fallbacks default", async (t) => {

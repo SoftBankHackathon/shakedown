@@ -8,7 +8,7 @@ import tempfile
 
 import httpx
 
-from engine.deployments import DeploymentError, LocalRunner
+from engine.deployments import DeploymentError, LocalRunner, NotFound
 
 
 class GcpRunner(LocalRunner):
@@ -96,5 +96,9 @@ class GcpRunner(LocalRunner):
                 response = client.request(method, self.base + path, json=body)
                 response.raise_for_status()
                 return response.json() if response.content else None
+        except httpx.HTTPStatusError as error:
+            # 404는 어댑터가 그 배포 ID를 모른다는 답이다. 수정 재배포 POST가 거절됐는지 확인하는 데 쓰므로 따로 알린다.
+            kind = NotFound if error.response.status_code == 404 else DeploymentError
+            raise kind('GCP Target request failed; inspect the adapter on 127.0.0.1:9103 and its deployment logs.') from None
         except (httpx.HTTPError, ValueError):
             raise DeploymentError('GCP Target request failed; inspect the adapter on 127.0.0.1:9103 and its deployment logs.') from None

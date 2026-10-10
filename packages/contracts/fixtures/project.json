@@ -223,7 +223,7 @@
   },
   "ports": {
     "local": 18081,
-    "aws": 18082
+    "gcp": 18082
   },
   "secrets": [
     {
@@ -234,7 +234,7 @@
   "last_deployment": null,
   "targets": [
     "local",
-    "aws"
+    "gcp"
   ],
   "runtime": null
 }

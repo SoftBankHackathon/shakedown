@@ -58,12 +58,12 @@ HOST=0.0.0.0 PORT=9201 npm start -w @shakedown/shakedown   # 엔진이 다른 PC
 | 순서 | 원인 | 이렇게 보이면 | 수정안(fix) |
 |---|---|---|---|
 | 1 | 접속 불가 | 비교 환경 첫 실패가 연결 오류 | 없음 |
-| 2 | 로그인 풀림 | 기준 환경은 로그인 뒤 페이지, 비교 환경은 로그인 화면으로 되돌아감 | `sticky_sessions=true` |
+| 2 | 로그인 풀림 | 기준 환경은 로그인 뒤 페이지, 비교 환경은 로그인 화면으로 되돌아감 | `env SPRING_PROFILES_ACTIVE=demo,session-jdbc` (세션을 공유 DB에) |
 | 3 | 데이터 유실 | 방금 쓴 글이 비교 환경에서만 안 보임 | `code_change` (공유 DB/RDS 연결) |
 | 4 | 서버 오류 | 비교 환경만 500대 응답 | `code_change` (DB 주소를 환경변수로) |
 | 5 | 그 밖 | 처음 달라진 단계 기준 일반 설명 | 없음 |
 
-- `auto_applicable`은 모두 false입니다. 아직 어느 대상도 이 설정을 자동으로 적용하지 못하기 때문입니다
+- `auto_applicable`은 로그인 풀림 수정안만, 엔진이 요청에 `hints.can_apply_env: true`를 보냈을 때 true입니다(엔진이 env를 바꿔 같은 이미지로 다시 배포할 수 있는 대상, 지금은 엔진이 관리하는 GCP). 나머지는 모두 false(사람이 확인 후 적용)
 - `hop.instance`는 응답의 `X-Instance-Id`를 기록하며 헤더가 없으면 null입니다. 규칙 보고서의 세션 원인은 휴리스틱 추정이므로 hop 증거와 실제 인프라 설정을 함께 확인해야 합니다.
 
 ### AI 보고서 (Claude)
@@ -82,7 +82,7 @@ npm start -w @shakedown/shakedown                     # .env를 자동으로 읽
 
 - 구조화 출력(JSON 스키마)으로 받고 다시 검사합니다. 형식이 틀리거나, 거절되거나, 20초 안에 답이 없으면 규칙 보고서를 그대로 씁니다(재시도 없음)
 - 거절 시 다른 모델이 대신 답하는 서버 측 fallbacks를 켜 두었습니다
-- AI가 낸 수정안도 `auto_applicable: false`입니다. 사람이 확인한 뒤 적용합니다
+- AI가 낸 수정안은 `auto_applicable: false`입니다. 사람이 확인한 뒤 적용합니다. 단 규칙 수정안이 자동 적용 가능이면 fix만 규칙 것을 그대로 둡니다(엔진이 적용할 값을 AI가 바꾸지 못하게). headline·cause·evidence·confidence는 AI 것입니다
 - 비용은 `ai_cost`(호출 수, 토큰, 원화)에 기록합니다. 실측: 보고서 1건 약 7초, 입력 1,889·출력 435 토큰, 약 23원
 
 시운전 마감 시간에는 진행 중인 HTTP 요청과 접속 재시도를 취소합니다. 이미 서버가 접수한 쓰기를 되돌리지는 않으므로 테스트 전용 환경을 사용하세요.

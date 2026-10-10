@@ -109,7 +109,10 @@ export function DeployReport({ dep }: { dep: Deployment }) {
               </>
             ) : (
               <span className="text-muted">
-                {blocked.report?.fix?.description ? t("report.manual", { what: blocked.report.fix.description }) : t("report.noFix")}
+                {/* 엔진이 적용할 수 있는 수정안이면 아직 적용 전이라는 뜻이므로 버튼을 가리킨다. */}
+                {blocked.report?.fix?.description
+                  ? t(blocked.report.fix.auto_applicable ? "report.fixReady" : "report.manual", { what: blocked.report.fix.description })
+                  : t("report.noFix")}
               </span>
             )}
           </Row>

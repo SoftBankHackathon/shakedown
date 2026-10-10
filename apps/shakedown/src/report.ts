@@ -58,7 +58,7 @@ function lostWrite(r: StepResult): boolean {
   return textMissing || linkMissing || recordMissing;
 }
 
-export function ruleReport(diffs: StepDiff[], verdict: Verdict): Report | null {
+export function ruleReport(diffs: StepDiff[], verdict: Verdict, { canApplyEnv = false }: { canApplyEnv?: boolean } = {}): Report | null {
   if (verdict.status !== "BLOCKED") return null;
   const first = diffs.find((d) => d.index === verdict.first_divergence)!;
   const failed = diffs.find((d) => d.cloud.status === "failed");
@@ -103,13 +103,14 @@ export function ruleReport(diffs: StepDiff[], verdict: Verdict): Report | null {
       ],
       {
         target: cand,
-        option: "sticky_sessions",
-        value: "true",
-        description: "Pin each user to one instance (session affinity).",
-        native: "nginx upstream ip_hash (on AWS: ALB target-group stickiness, or App Runner auto scaling max size 1 since it has no stickiness; on Cloud Run: --session-affinity)",
-        // 아직 어느 대상도 이 옵션을 실제로 적용하지 못한다(infra/local은 받기만 함, aws는 미확인).
-        // true로 두면 엔진이 자동 수정을 시도하고 "자동 수정 후에도 차단"이 뜬다.
-        auto_applicable: false,
+        // 세션을 서버 메모리 대신 공유 DB(Spring Session JDBC)에 두면 몇 대로 늘려도 로그인이 유지된다.
+        // 같은 이미지에 프로필 env만 바꾸면 되고, 세 어댑터(local·aws·gcp)가 이 값을 이미 받는다.
+        option: "env",
+        value: "SPRING_PROFILES_ACTIVE=demo,session-jdbc",
+        description: "Keep the login in the shared database (Spring Session JDBC) so every instance sees it.",
+        native: "Cloud Run / ECS env SPRING_PROFILES_ACTIVE=demo,session-jdbc (sessions in the spring_session table of Cloud SQL / RDS)",
+        // env를 바꿔 다시 배포할 수 있는 대상인지는 엔진만 안다(hints.can_apply_env). 모르면 제안만 한다.
+        auto_applicable: canApplyEnv,
       },
       "high",
     );

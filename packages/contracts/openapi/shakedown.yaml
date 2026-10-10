@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Runner API
-  version: 0.1.0
+  version: 0.1.1
   description: |
-    > **상태: 초안 (v0.1.0, 2026-10-08)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 초안 (v0.1.1, 2026-10-09)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     AI 시운전 서비스가 구현하는 API (apps/shakedown, 김태현). 엔진이 호출합니다.
@@ -93,7 +93,11 @@ components:
           $ref: "#/components/schemas/Scenario"
         hints:
           type: object
-          description: 엔진의 레포 분석 결과 중 시나리오 작성에 도움이 되는 정보 (비밀값 금지)
+          description: |
+            엔진의 레포 분석 결과 중 시나리오 작성에 도움이 되는 정보 (비밀값 금지). 알려진 키:
+            - `uses_server_session` (boolean): 앱이 서버 세션(HttpSession)을 쓰는지
+            - `can_apply_env` (boolean): true면 엔진이 이 candidate의 env를 바꿔 같은 이미지로 다시 배포할 수 있음.
+              이때만 규칙 보고서의 env 수정안이 `auto_applicable: true`가 됨
           additionalProperties: true
     Shakedown:
       type: object
@@ -203,11 +207,11 @@ components:
           type: [object, "null"]
           properties:
             target: { type: string }
-            option: { type: string, description: "sticky_sessions | tz | code_change | none" }
-            value: { type: string }
+            option: { type: string, description: "sticky_sessions | tz | env | code_change | none" }
+            value: { type: string, description: "option=env면 KEY=VALUE 한 개(비밀이 아닌 환경변수). 같은 이미지에 이 env만 더해 다시 배포함. 예 SPRING_PROFILES_ACTIVE=demo,session-jdbc" }
             description: { type: string }
             native: { type: string, description: 대상 환경에서의 실제 설정 이름 }
-            auto_applicable: { type: boolean }
+            auto_applicable: { type: boolean, description: "true면 엔진이 이 수정안을 그대로 적용할 수 있음(hints.can_apply_env=true인 env 수정안만). AI 보고서도 이 fix는 바꾸지 않음" }
         confidence: { type: string, enum: [high, medium, low] }
         by: { type: string, enum: [rule, ai] }
     CostLedger:

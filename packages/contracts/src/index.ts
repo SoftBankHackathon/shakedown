@@ -80,6 +80,10 @@ export type TargetState = {
   logs_collected?: boolean;
   commands?: string[];
   error?: string | null;
+  /** Target API에 실제로 쓴(받아들여진) 배포 ID. 차단 뒤 수정 재배포를 하면 새 ID로 바뀌고, 그 뒤 조회·DELETE는 이 ID로 한다. */
+  deployment_id?: string;
+  /** 받아들여진 Target API 본문(deployment_id 제외). 수정 재배포는 이 본문에 env만 더해 같은 이미지로 다시 보낸다. */
+  request?: Omit<TargetDeployRequest, "deployment_id">;
 };
 
 export type Step = {
@@ -120,6 +124,7 @@ export type StepDiff = {
 };
 export type Fix = {
   target: string;
+  /** sticky_sessions | tz | env | code_change | none. env면 value는 KEY=VALUE 한 개이고, 같은 이미지에 그 env만 더해 다시 배포한다. */
   option: string;
   value: string;
   description: string;
@@ -146,7 +151,7 @@ export type Attempt = {
 
 export type DeployEvent = { ts: number; kind: string; [k: string]: unknown };
 
-/** Statuses after which a deployment never changes again. */
+/** 엔진이 스스로는 더 진행하지 않는 상태. blocked는 POST /api/deployments/{id}/fix로 한 번 fixing으로 재개될 수 있다. */
 export const TERMINAL_STATUSES: ReadonlySet<Deployment["status"]> = new Set(["warned", "deployed", "promoted", "blocked", "failed"]);
 
 /** Body of POST /api/projects (engine.yaml). */
