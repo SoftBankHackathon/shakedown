@@ -101,6 +101,24 @@ test('requests outside the prepared GCP resources are rejected with 400', () => 
   }
 });
 
+// 계획 배포 요청: medium(시작 2대), JDBC 세션 프로필. compute만 적용하므로 설정에 따로 더할 것은 없다.
+const medium = { architecture: { version: 'gcp-architecture.v1', template_id: 'medium' }, options: { replicas: 2 }, env: { SPRING_PROFILES_ACTIVE: 'demo,session-jdbc' } };
+
+test('a plan request needs the JDBC session profile and no sticky sessions', () => {
+  assert.doesNotThrow(() => validateRequest(config, input(medium)));
+  for (const [label, patch] of [
+    ['memory sessions', { ...medium, env: { SPRING_PROFILES_ACTIVE: 'demo,session-memory' } }],
+    ['no profile', { ...medium, env: {} }],
+    ['sticky sessions', { ...medium, options: { replicas: 2, sticky_sessions: true } }],
+  ] as const) {
+    assert.throws(() => validateRequest(config, input(patch)), (error: unknown) => error instanceof ApiError && error.statusCode === 400, label);
+  }
+});
+
+test('a request without a plan keeps sticky sessions', () => {
+  assert.doesNotThrow(() => validateRequest(config, input({ options: { replicas: 2, sticky_sessions: true } })));
+});
+
 test('rejection messages never echo plaintext secret values', () => {
   assert.throws(() => validateRequest(config, input({ env: { SPRING_DATASOURCE_PASSWORD: 'unsafe' } })),
     (error: unknown) => error instanceof ApiError && error.message.includes('SPRING_DATASOURCE_PASSWORD') && !error.message.includes('unsafe'));

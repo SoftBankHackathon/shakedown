@@ -8,7 +8,7 @@
 flowchart LR
   Engine[배포 엔진] -->|HTTP 9103, loopback| Adapter[GCP 배포 API]
   Adapter --> Job[schema-init Job]
-  Adapter --> Run[Cloud Run 서비스 수동 1~2대]
+  Adapter --> Run[Cloud Run 서비스 수동 1~2대 / 계획 배포 시 등급별]
   AR[Artifact Registry shakedown] --> Run
   AR --> Job
   Secret[Secret Manager shakedown-db-password] --> Run
@@ -100,7 +100,7 @@ bash infra/gcp/scripts/spike.sh "$(cat infra/gcp/.data/image.txt)"
 flowchart LR
   Engine[엔진] -->|HTTP 9103, loopback| Adapter[GCP 배포 API]
   Adapter --> State[(로컬 SQLite 실행 기록)]
-  Adapter -->|REST, 사용자 ADC| Run[Cloud Run 서비스 1~2대]
+  Adapter -->|REST, 사용자 ADC| Run[Cloud Run 서비스 1~2대 / 계획 배포 시 등급별]
   Adapter -->|배포마다 1회| Job[schema-init Job]
   Run -->|Direct VPC egress, 사설 IP| SQL[(Cloud SQL PostgreSQL)]
   Job --> SQL
@@ -197,7 +197,7 @@ ready 응답 예:
   "info": {
     "runtime": "Cloud Run", "region": "asia-northeast3", "database": "Cloud SQL PostgreSQL",
     "session": "memory", "sticky_sessions": "false", "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "revision": "shakedown-board-322d173852dd", "scaling": "manual"
+    "revision": "shakedown-board-322d173852dd", "scaling": "manual", "architecture": "legacy"
   }
 }
 ```
@@ -208,31 +208,98 @@ ready 응답 예:
 - 대기: 배포는 270초 안에 `ready` 또는 `failed`가 됩니다. 엔진의 5분 제한 안입니다.
 - DELETE: 보통 20초 안에 204입니다. 204 뒤 공개 주소는 403이 아니라 503(`Service is disabled`)입니다(아래 "내리기").
 - env는 `SPRING_PROFILES_ACTIVE` 하나, secret_refs는 `SPRING_DATASOURCE_PASSWORD: db_password` 하나만 받습니다. 프로필을 빼면 `demo,session-memory`입니다.
+- 계획 배포는 아래 "계획 배포" 절의 모양으로 보냅니다.
+
+## 계획 배포 (gcp-architecture.v1)
+
+엔진의 아키텍처 판단(소·중·대) 결과를 붙여 보내면 그 등급의 CPU·메모리·대수·자동 확장으로 Cloud Run을 띄웁니다. 요청은 버전과 등급 이름만 담고, 사양은 `src/architecture.ts`의 서버 카탈로그가 정합니다(AWS 어댑터와 같은 원칙). `architecture`가 없는 요청은 이 기능 전과 같은 본문으로 배포합니다(테스트가 PATCH 본문을 바이트 단위로 비교).
+
+지금 엔진은 계획을 AWS에만 보냅니다. GCP로도 보내는 일은 엔진 플래너 일반화(서동옥 님 "작업 2", `infra/azure/README.md` 12절)에서 합니다. 그 전까지 이 경로는 어댑터를 직접 불러야만 탑니다.
+
+**해커톤 범위: compute만 적용, DB 고가용성은 계획만.** Azure(`infra/azure/README.md` 12절)와 같은 방식입니다. Cloud SQL은 어느 등급이든 지금 그대로(PostgreSQL 17, db-f1-micro, 단일 영역)이고 어댑터는 Cloud SQL을 읽지도 바꾸지도 않습니다. 고가용성(REGIONAL·전용 코어)으로 바꾸려면 재시작, 최대 1시간, 비용, 승인이 필요해 데모 전에 맞추기 어렵습니다. 그래서 엔진 계획서에만 "운영 전환 때 필요"로 남깁니다(아래 "접은 계획").
+
+요청에서 달라지는 칸:
+
+```json
+{
+  "architecture": { "version": "gcp-architecture.v1", "template_id": "medium" },
+  "env": { "SPRING_PROFILES_ACTIVE": "demo,session-jdbc" },
+  "options": { "replicas": 2, "sticky_sessions": false, "tz": "UTC" }
+}
+```
+
+| 등급 | Cloud Run (인스턴스당) | 확장 | 앱 DB 연결 풀 (인스턴스당) | DB 고가용성 |
+|---|---|---|---|---|
+| small | 1 vCPU / 1Gi | 수동 1대 | 앱 기본값(10) | 계획만 |
+| medium | 1 vCPU / 2Gi | 자동 2~4대 | 5 | 계획만 |
+| large | 2 vCPU / 4Gi | 자동 3~8대 | 2 | 계획만 |
+
+- small은 1 vCPU입니다. Cloud Run은 1 vCPU 미만이면 동시 요청 1개를 강제해 Local과의 비교가 틀어집니다.
+- large 최대 8대: 서울 리전 Cloud Run 쿼터가 CPU 20 vCPU, 메모리 40 GiB입니다(2026-10-09 Service Usage 조회). 2 vCPU·4Gi면 10대가 상한이고, schema-init Job(1 vCPU / 1Gi)과 롤아웃 중 새 인스턴스 1대 몫을 남겼습니다(8 × 2 + 1 + 2 = 19 vCPU). 최대 대수로 늘어난 채 다시 배포하면 새 리비전 min 3대가 다 들어가지 못합니다(아래 데모 체크리스트 1). 무료 체험 계정은 쿼터 상향을 요청할 수 없습니다. `test/architecture.test.ts`가 모든 등급이 쿼터 안인지 확인합니다.
+- 같은 이름이라도 AWS와 사양이 다릅니다(AWS small 0.5 vCPU, large 3~12대).
+- 자동 확장은 서비스 수준 min/max와 리비전 수준 max를 같은 값으로 적습니다. 서버가 리비전 max를 따로 채우는 경우가 있어서입니다(2026-10-09 v2 GET에서 `template.scaling.maxInstanceCount=3` 확인). 실제 상한은 둘 중 작은 값이라, 준비 뒤 서비스를 다시 읽어(`phase=verify_scaling`) 범위가 카탈로그와 다르면 공개 확인(`public_health`) 전에 실패하고 0대로 내립니다. "공개 전"은 아닙니다. 이미 있는 서비스는 공개 권한을 맨 앞에서 주므로, 이때 새 리비전은 이미 공개 주소로 답하고 있습니다.
+- 연결 풀: 지금 Cloud SQL(db-f1-micro)은 `max_connections`가 25이고 관리용 예약 몇 개를 빼면 앱 몫은 약 22개입니다. 자동 확장으로 최대 대수까지 늘어도 넘치지 않게 "최대 대수 × 인스턴스당 풀"을 20 이하로 둡니다. medium 4 × 5 = 20, large 8 × 2 = 16, small 1 × 10 = 10. 계획 배포 앱에만 `SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE`로 넣고(small은 넣지 않음), schema-init Job(앱 갱신 전에 끝남)과 계획 없는 배포는 기본값 그대로입니다. `test/architecture.test.ts`가 이 계산을 지킵니다. schema-init Job의 연결(기본 10)과 롤아웃 중 이전 리비전의 연결은 이 예산 밖입니다. 겹침까지 넣으면 large 풀이 1이 되어 인스턴스마다 DB 작업이 한 번에 하나씩만 돕니다. 대신 계획 배포 전에 이전 배포를 DELETE합니다(데모 체크리스트 1). 엔진의 수정 적용 재배포는 1회차 정리 확인(0대) 뒤에만 돌아서 겹치지 않습니다.
+- 제한 시간은 계획 배포도 270초입니다.
+
+**400 (받기 전에 거절)**: 다른 카탈로그 버전(`aws-architecture.v1` 등)이나 모르는 등급·칸, `replicas`가 등급 시작 대수(small 1, medium 2, large 3)와 다름, 프로필이 `demo,session-jdbc`가 아님(자동 확장으로 대수가 바뀌면 메모리 세션은 로그인이 풀림), `sticky_sessions=true`(세션 어피니티는 자동 확장 중에 끊길 수 있어 AWS 계획 배포와 같은 규칙). 계획 없는 요청은 지금처럼 replicas 1~2, 스티키 허용입니다.
+
+**ready 응답 info**: `architecture`(등급, 계획 없는 배포는 AWS·Azure와 같이 `legacy`), `scaling`(다시 읽은 실제 범위 `automatic 2-4`, small과 계획 없는 배포는 `manual`). `instances`는 시작 대수(min)입니다. DB 등급·고가용성은 적용하지 않으므로 적지 않습니다. Cloud Run은 인스턴스가 어느 영역에 놓이는지 보장하지 않아 영역 수도 적지 않습니다.
+
+**계약**: `target.yaml` v0.1.3(제안, 팀 채널 공유 TBD)의 `DeployRequest.architecture`와 "GCP 구현 제약" 절의 계획 배포 줄입니다.
+
+### 데모 체크리스트
+
+1. 계획 배포 전에는 이전 배포를 DELETE합니다. 이전 배포가 떠 있으면 schema-init Job(연결 10)과 롤아웃 동안 이전 리비전의 DB 연결(수동 2대면 최대 20, medium이 4대로 늘었으면 20)·CPU 쿼터가 겹쳐 연결 한도나 쿼터를 넘을 수 있습니다.
+2. 끝나면 최신 배포를 DELETE합니다(수동 0대, 자동 확장 min/max도 지움. 아래 "내리기").
+
+### 접은 계획: DB 고가용성 2단계 (2026-10-10)
+
+PR #20 첫 버전은 medium·large에서 미리 고가용성으로 바꿔 둔 Cloud SQL(REGIONAL·`db-custom-1-3840`)을 요구했습니다. 배포 전에 Cloud SQL Admin API로 등급·상태·진행 중 작업을 읽어 확인하고(`phase=check_database`), 전환은 데모 1시간 전에 `scripts/database.sh ha --yes`로 하는 2단계였습니다. 전환이 재시작·최대 1시간·비용·승인을 요구해 데모 전에 맞추기 어려워 접었고, 그 코드(DB 확인, `database.sh`, 설정의 `dbInstance`)는 이 모듈에 없습니다. 운영 전환 때 다시 볼 것:
+
+- Cloud SQL REGIONAL + 전용 코어(`db-custom-1-3840`, 연결 100). HA는 백업·PITR이 먼저 켜져 있어야 합니다.
+- 연결 풀을 새 연결 한도에 맞춰 다시 계산합니다.
+- 비용(2026-10-09 서울 단가, 계산 비용만): db-f1-micro ZONAL 약 $0.0137/h, db-custom-1-3840 REGIONAL 약 $0.1757/h. HA를 한 달 켜 두면 약 $128 이상이라 월 예산 알림(₩70,000)을 넘습니다.
+
+### 계획 배포 실측 (2026-10-10)
+
+어댑터를 직접 불러 실제 서비스(shakedown-board, Cloud SQL db-f1-micro ZONAL)에서 확인했습니다. 설정 값은 `gcloud run services describe`로 다시 읽었습니다. 끝난 뒤 서비스는 0대, allUsers 없음.
+
+| 항목 | 기준 | 결과 |
+|---|---|---|
+| `validateOnly=true`로 medium·large 본문(GA) 수락, 서버가 채우는 값 | 수락, 리비전 max가 요청과 같음 | 생략. 아래 실제 배포로 같은 본문이 수락되고 리비전 max가 요청과 같음을 확인 |
+| `validateOnly=true`로 내리기 마스크(MANUAL 0 + min/max 지움) 수락 | 수락 | 생략. 아래 medium DELETE로 확인 |
+| 계획 없는 배포(회귀) | 54초 안팎, MANUAL, 1/1Gi | 통과. POST→ready 54초(Job 25초·서비스 23초), info.architecture=legacy, DELETE 2.1초 뒤 503 |
+| small 계획 배포 | ready, info.architecture=small, scaling manual, 풀 env 없음 | 통과. 54초, DELETE 1.9초 뒤 503 |
+| medium 계획 배포 | ready, AUTOMATIC 2~4, 리비전 max 4, 1/2Gi, pool 5, POST→ready 시간 | 통과. 54초(Job 26초·서비스 25초), 서비스 automatic min 2·max 4, 리비전 max 4, 1 vCPU/2Gi, info.scaling `automatic 2-4` |
+| medium DELETE | 20초 안 204, MANUAL 0, 서비스 min/max 없음, 503 | 통과. 3초, manual 0, min/max 없음, 503 |
+| large 계획 배포 | min 3, 리비전 max 8, 2/4Gi, pool 2, 기동·첫 DB 연결 시간(Direct VPC) | 통과. 46초(Job 24초·서비스 16초), 서비스 min 3·max 8, 리비전 max 8, 2 vCPU/4Gi, `SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE=2` |
+| 계획 없는 배포로 복귀 | MANUAL 2, 서비스 min/max 없음 | 통과. large가 떠 있는 위에 덮어써 54초, manual 2, min/max 없음, 1/1Gi, 풀 env 없음 |
 
 ## 상태와 오류 규칙
 
-계약은 `packages/contracts/openapi/target.yaml`(v0.1.2, "GCP 구현 제약" 절)입니다. 여기에는 GCP에서 실제로 무엇을 하는지 적습니다.
+계약은 `packages/contracts/openapi/target.yaml`(v0.1.3, "GCP 구현 제약" 절)입니다. 여기에는 GCP에서 실제로 무엇을 하는지 적습니다.
 
 **받기 (POST)**
 - 202와 `pending`을 바로 주고 배포는 뒤에서 합니다. 상태는 `pending → deploying → ready | failed`.
-- 400: 형식 오류, 모르는 필드, `project_id`·`port`가 설정과 다름, 허용 저장소의 `@sha256:` digest가 아님, `database.name`이 설정과 다름, `SPRING_PROFILES_ACTIVE` 외 env나 허용 안 된 프로필, `SPRING_DATASOURCE_PASSWORD: db_password` 외 secret_refs, replicas가 1~2가 아님.
+- 400: 형식 오류, 모르는 필드, `project_id`·`port`가 설정과 다름, 허용 저장소의 `@sha256:` digest가 아님, `database.name`이 설정과 다름, `SPRING_PROFILES_ACTIVE` 외 env나 허용 안 된 프로필, `SPRING_DATASOURCE_PASSWORD: db_password` 외 secret_refs, replicas가 1~2가 아님(계획 배포는 등급 시작 대수, 그 밖의 계획 조건은 "계획 배포" 절).
 - 409: 같은 ID에 다른 내용, 삭제됐거나 삭제 중인 ID, 같은 프로젝트의 배포·정리가 진행 중.
 - 같은 ID에 같은 내용이면 새로 만들지 않고 기존 결과를 돌려줍니다(멱등).
 
 **배포 순서** (`GcpProvider.deploy`)
 1. 공개 권한 부여: 서비스 IAM 정책에 `allUsers` → `roles/run.invoker`. IAM 반영이 보통 2분, 길면 7분 이상이라 맨 앞에서 주고 나머지 단계와 겹칩니다. 직전 DELETE의 권한 제거가 아직 돌고 있으면 그것이 끝난 뒤에 줍니다. 서비스가 아직 없는 첫 배포는 붙일 곳이 없어 3 바로 뒤에 줍니다.
 2. schema-init: Cloud Run Job을 같은 이미지로 갱신·실행하고 끝날 때까지 기다립니다(`SPRING_PROFILES_ACTIVE=schema-init`, DDL update). 실패하면 배포 실패입니다.
-3. 서비스 갱신: 이미지 digest, env(DB 주소·사용자·DDL validate·프로필·TZ), 비밀번호는 Secret Manager 참조, 사설망, 수동 스케일링 대수(= replicas), 세션 어피니티(= sticky_sessions).
-4. 준비 대기: `terminalCondition`이 Ready·성공이고, 진행 중(`reconciling`)이 아니고, 최신 생성 리비전과 최신 준비 리비전이 같고, `observedGeneration`이 `generation`과 같고, 서비스의 이미지가 요청 digest와 같을 때. 옛 digest로 떠 있으면 ready가 아닙니다.
+3. 서비스 갱신: 이미지 digest, env(DB 주소·사용자·DDL validate·프로필·TZ), 비밀번호는 Secret Manager 참조, 사설망, 수동 스케일링 대수(= replicas), 세션 어피니티(= sticky_sessions). 계획 배포는 사양·확장 방식(자동이면 서비스 min/max와 리비전 max)을 카탈로그에서 가져오고 등급별 연결 풀을 더합니다(small 제외). 마스크 없는 전체 교체라 다음 계획 없는 배포는 min/max가 지워진 수동 모드로 돌아갑니다.
+4. 준비 대기: `terminalCondition`이 Ready·성공이고, 진행 중(`reconciling`)이 아니고, 최신 생성 리비전과 최신 준비 리비전이 같고, `observedGeneration`이 `generation`과 같고, 서비스의 이미지가 요청 digest와 같을 때. 옛 digest로 떠 있으면 ready가 아닙니다. 계획 배포는 이어서 `phase=verify_scaling`에서 이때 읽은 실제 min과 max(서비스·리비전 중 작은 값)가 카탈로그와 다르면 실패합니다. 이때 새 리비전은 이미 공개 주소로 답하고 있습니다.
 5. 공개 확인: 쿠키 없이 `{url}{health_path}`가 리다이렉트 없이 200이 될 때까지 1초마다 봅니다. 302(로그인 화면)·500은 성공으로 치지 않습니다.
 - 전체 270초 제한. 넘거나 중간에 실패하면 서비스를 0대로 내리고 `failed`로 둡니다. 내리기까지 실패하면 프로젝트를 잠그고(새 배포 409) DELETE 재시도를 기다립니다.
 
 **내리기 (DELETE)**
-- 최신 배포면: 수동 스케일링 대수를 0으로 바꾸고, 공개 주소가 4xx·5xx를 줄 때까지 확인한 뒤(최대 15초) 204를 줍니다. 2xx·3xx는 앱이 아직 답한다는 뜻이라 닫힌 것으로 보지 않습니다. 15초 안에 닫히지 않으면 502이고 프로젝트는 잠긴 채로 DELETE 재시도를 기다립니다.
+- 최신 배포면: 서비스를 0대로 바꾸고, 공개 주소가 4xx·5xx를 줄 때까지 확인한 뒤(최대 15초) 204를 줍니다. 모드 전환과 대수 변경은 새 리비전을 만들지 않습니다. 2xx·3xx는 앱이 아직 답한다는 뜻이라 닫힌 것으로 보지 않습니다. 15초 안에 닫히지 않으면 502이고 프로젝트는 잠긴 채로 DELETE 재시도를 기다립니다.
+- 0대로 바꾸는 PATCH는 지금 서비스 모양에 따라 다릅니다. 서비스가 이미 수동 모드면(계획 없는 배포·small) 2026-10-09에 실측한 그대로 마스크 `scaling.manualInstanceCount`로 대수만 바꿉니다. 자동 확장(medium·large)이거나 모드를 알 수 없으면(API 기본값 AUTOMATIC) 마스크 `scaling.scalingMode,scaling.manualInstanceCount,scaling.minInstanceCount,scaling.maxInstanceCount`에 본문은 MANUAL·0만 보내 min/max도 지웁니다(API 문서가 MANUAL을 "min 대수로 정확히 맞춤"이라고도 설명해서). 넓은 마스크는 2026-10-10 medium 내리기로 실측했습니다(3초, min/max 지워짐, 503). 수동 서비스는 바뀌는 범위를 줄이려고 2026-10-09에 실측한 좁은 마스크를 그대로 씁니다.
 - 공개 권한(`allUsers`) 제거는 204를 기다리게 하지 않고 뒤에서 합니다. 엔진의 DELETE 대기(20초)가 IAM 반영(2~7분 이상)보다 짧아서입니다. 0대인 동안 공개 주소는 503(`Service is disabled`)을 주고, 권한을 뺀 뒤에도 403으로 바뀌지 않습니다(2026-10-09 실측, 10분 관찰). 권한 제거는 누가 대수를 다시 올려도 공개되지 않게 하는 두 번째 잠금입니다. 제거가 실패하면 그 배포의 로그에 남습니다.
 - 이전 배포면 기록만 삭제로 표시하고 현재 서비스는 건드리지 않습니다.
 - 이미 삭제된 ID도 204, 삭제 후 GET은 404, 같은 ID 재사용은 409. 로그는 계속 조회됩니다.
-- GCP 호출이 실패하면 502입니다. 실패했는데 204를 주지 않으니 DELETE를 다시 부릅니다.
+- GCP 호출이 실패하면 502입니다. 실패했는데 204를 주지 않으니 DELETE를 다시 부릅니다. 0대로 바꾸는 PATCH가 실패하면 그 배포 로그에 손으로 내리는 방법(아래 "비용 멈추기" 1)을 한 줄 남깁니다.
 - Cloud SQL 데이터, 로그, 서비스 설정은 남습니다.
 
 **로그 (`GET /deployments/{id}/logs`)**
@@ -262,9 +329,10 @@ npm run test:gcp    # 저장소 루트. 전체 테스트
 | 파일 | 확인하는 것 |
 |---|---|
 | `test/adapter.test.ts` | 202·멱등·409·삭제 묘비·시간 초과·실패 시 0대·재시작 복구·loopback·비밀 가리기 (가짜 Provider) |
-| `test/config.test.ts` | 설정 형식과 요청 400 규칙 |
-| `test/cloud-run.test.ts` | Cloud Run·IAM·Job·Logging REST 호출 모양 |
-| `test/gcp-provider.test.ts` | 권한 → schema-init → 서비스 갱신 → 준비 대기 → health 200 순서, 옛 digest·302·500은 실패, 내리기, 로그 |
+| `test/architecture.test.ts` | 계획 요청 모양(버전·등급·시작 대수), 계획 없는 요청 파싱 불변, 등급별 쿼터와 DB 연결 풀 계산 |
+| `test/config.test.ts` | 설정 형식과 요청 400 규칙(계획 배포 조건 포함) |
+| `test/cloud-run.test.ts` | Cloud Run·IAM·Job·Logging REST 호출 모양, 내리기 마스크 |
+| `test/gcp-provider.test.ts` | 권한 → schema-init → 서비스 갱신 → 준비 대기 → health 200 순서, 옛 digest·302·500은 실패, 내리기, 로그, 계획 배포(등급별 본문·풀·실제 범위 확인·info), 계획 없는 본문 바이트 불변 |
 | `test/scripts.test.ts` | provision.sh·publish-image.sh (가짜 gcloud·docker) |
 
 실제 GCP에서 확인한 결과는 "실측" 절에 있습니다.
@@ -295,7 +363,7 @@ gcloud run services update "$SERVICE" --region=asia-northeast3 --project=shakedo
 gcloud run services remove-iam-policy-binding "$SERVICE" --region=asia-northeast3 --project=shakedown-511106 --member=allUsers --role=roles/run.invoker
 ```
 
-gcloud 레퍼런스는 `--scaling`에 양의 정수라고 적었지만, 수동 스케일링 문서는 0으로 서비스를 끈다고 합니다. 거절되면 콘솔의 **Number of instances**에 0을 넣습니다.
+gcloud 레퍼런스는 `--scaling`에 양의 정수라고 적었지만, 수동 스케일링 문서는 0으로 서비스를 끈다고 합니다. 거절되면 콘솔의 **Number of instances**에 0을 넣습니다. gcloud 소스는 0을 받고 음수만 거절합니다. 계획 배포(자동 확장)로 떠 있을 때도 이 명령은 서비스 min/max(`run.googleapis.com/minScale`·`maxScale` 주석)를 지우고 수동 모드·대수를 넣습니다. 둘 다 Google Cloud SDK 588.0.0의 `lib/googlecloudsdk/command_lib/run/flags.py`(`ScalingValue`, `_GetServiceScalingChanges`)를 읽어 확인했고, 실제 GCP에서 돌려 본 것은 아닙니다.
 
 2) 0대 확인(`infra/gcp`에서): `run.googleapis.com/scalingMode: manual`이고 `run.googleapis.com/manualInstanceCount` 값이 0이어야 합니다. 0일 때 이 줄이 빠져 보이면 공개 주소가 200을 주지 않는지로 확인합니다.
 
