@@ -34,6 +34,6 @@ export function databaseUrl({host, username, password, name, ssl, mode}) {
   url.pathname='/'+encodeURIComponent(name);
   if(mode==='postgres')url.searchParams.set('sslmode',ssl?'require':'disable');
   if(mode==='mongodb'){url.searchParams.set('authSource',name);if(ssl)url.searchParams.set('tls','true');}
-  if(mode==='mysql'&&ssl)url.searchParams.set('ssl',JSON.stringify({rejectUnauthorized:true}));
+  if(mode==='mysql'&&ssl)url.searchParams.set('ssl',JSON.stringify({rejectUnauthorized:true,verifyIdentity:true}));
   return url.href;
 }

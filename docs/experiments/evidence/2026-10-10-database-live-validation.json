@@ -1,0 +1,94 @@
+{
+  "date": "2026-10-10",
+  "base_commit": "3ffbcb046ea50676e3031e2ff5bd24296e360ef3",
+  "mysql": {
+    "initial": {
+      "ok": true,
+      "tlsCipher": "TLS_AES_256_GCM_SHA384",
+      "host": "ip-172-23-0-197",
+      "id": "f450f64d-113b-453d-8a90-cde287dc101a"
+    },
+    "hostname_negative": {
+      "hostnameMismatchRejected": true,
+      "code": "HANDSHAKE_SSL_ERROR"
+    },
+    "backup_retention_days": 1,
+    "latest_restorable_time": "2026-10-10T04:21:26+00:00",
+    "snapshot_available": true,
+    "restored_verification": {
+      "ok": true,
+      "tlsCipher": "TLS_AES_256_GCM_SHA384",
+      "host": "ip-172-23-0-57",
+      "id": "f450f64d-113b-453d-8a90-cde287dc101a",
+      "found": true
+    },
+    "restored_write": {
+      "ok": true,
+      "tlsCipher": "TLS_AES_256_GCM_SHA384",
+      "host": "ip-172-23-0-57",
+      "id": "622278a7-b091-46c8-a0fd-55b6afae11e4"
+    },
+    "restore_passed": true
+  },
+  "rds_automatic_backup": {
+    "automated_snapshots": [
+      {
+        "status": "available",
+        "encrypted": true,
+        "engine": "mysql"
+      }
+    ]
+  },
+  "mongodb": {
+    "fresh_stack_bootstrap": true,
+    "source_document": "97357202-ae54-4abc-a978-5309f24f74f0",
+    "secondary_verified": true,
+    "automatic_backup": "blocked_by_organization_scp",
+    "method": "manual EBS snapshot of cleanly stopped secondary; isolated standalone recovery",
+    "source_volume": "vol-07511292d3d088ae0",
+    "snapshot": "snap-0897324af904a99aa",
+    "restored_volume": "vol-0887bd7a03a50ca95",
+    "restored_document_and_write": true,
+    "restore_resources_deleted": true,
+    "ssm_verification": [
+      {
+        "command_id": "fca6ab3f-0600-475f-ac31-772b58ff0827",
+        "status": "Success",
+        "output": "RESTORED_DOCUMENT_AND_WRITE_OK\n"
+      }
+    ]
+  },
+  "validation": {
+    "aws_tests": 45,
+    "local_tests": 12,
+    "aws_typescript": true,
+    "probe_syntax": true,
+    "mysql2_version": "3.24.5",
+    "npm_audit_vulnerabilities": 0,
+    "retested_base_commit": "2d4829e"
+  },
+  "limitations": [
+    "Mongo automated backup schedule denied by organization SCP",
+    "Mongo single-member standalone recovery only, not full replica-set reseeding",
+    "MySQL small/mysql2 path; other drivers and multi-AZ failover not tested here",
+    "No PITR/long-term retention/load test/full scanner-LLM-browser E2E"
+  ],
+  "cleanup": {
+    "mongodb": {
+      "errors": [],
+      "completed": true
+    },
+    "mysql": {
+      "errors": [],
+      "completed": true
+    },
+    "independent_verification": {
+      "both_stacks_delete_complete": true,
+      "original_and_restored_rds_absent": true,
+      "manual_and_automated_rds_snapshots_absent": true,
+      "retained_automated_backups_absent": true,
+      "both_ecr_repositories_absent": true,
+      "all_six_retained_secrets_absent": true
+    }
+  }
+}

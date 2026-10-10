@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {synchronizeDatabaseUrl} from '../src/database-url.js';
-import {postgresUrl} from '../../../packages/contracts/runtime.mjs';
+import {postgresUrl,databaseUrl} from '../../../packages/contracts/runtime.mjs';
 import type {Config} from '../src/config.js';
 import type {SecretsManagerClient} from '@aws-sdk/client-secrets-manager';
 
@@ -33,4 +33,10 @@ test('URL helper preserves percent signs and Unicode through decoding',()=>{
     const u=new URL(postgresUrl({host:'db.internal',username:'user@name',password,name:'app',ssl:true}));
     assert.equal(decodeURIComponent(u.password),password);assert.equal(decodeURIComponent(u.username),'user@name');
   }
+});
+
+test('AWS MySQL URL requires certificate and hostname verification',()=>{
+ const u=new URL(databaseUrl({mode:'mysql',host:'db.rds.amazonaws.com',username:'app',password:'@%한글',name:'app',ssl:true}));
+ assert.deepEqual(JSON.parse(u.searchParams.get('ssl')!),{rejectUnauthorized:true,verifyIdentity:true});
+ assert.equal(decodeURIComponent(u.password),'@%한글');
 });

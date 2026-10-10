@@ -1,5 +1,10 @@
 # MongoDB TLS and automatic failover — 2026-10-10
 
+> Follow-up: [database live validation](2026-10-10-database-live-validation.md)
+> subsequently verified fresh-stack bootstrap and manual Mongo EBS recovery.
+> The untested-backup statements below describe this earlier failover run;
+> automated backup scheduling remains blocked.
+
 ## Scope and result
 
 A dedicated AWS experiment deployed three EC2 MongoDB 8.0 members across three
