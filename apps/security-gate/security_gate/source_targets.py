@@ -28,14 +28,21 @@ UNSUPPORTED = {
     ".cs": "csharp", ".swift": "swift", ".dart": "dart", ".lua": "lua",
     ".sh": "shell", ".bash": "shell", ".ps1": "powershell", ".pl": "perl",
     ".r": "r", ".ex": "elixir", ".exs": "elixir", ".clj": "clojure",
-    ".jsp": "jsp", ".sql": "sql", ".fs": "fsharp", ".vb": "visualbasic",
+    ".jsp": "jsp", ".fs": "fsharp", ".vb": "visualbasic",
 }
 # Explicit non-application-source scope. These still go through secret scanning.
-DATA_SUFFIXES = frozenset({".md", ".txt", ".rst", ".yaml", ".yml", ".json", ".xml",
+# .sql은 스키마·마이그레이션 데이터로 본다 (Spring schema.sql, Flyway).
+DATA_SUFFIXES = frozenset({".md", ".txt", ".rst", ".yaml", ".yml", ".json", ".xml", ".sql",
     ".toml", ".ini", ".cfg", ".conf", ".properties", ".env", ".html", ".htm", ".css",
     ".csv", ".lock", ".gradle", ".jar", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg"})
 DATA_NAMES = frozenset({"go.mod", "go.sum", "Dockerfile", "Makefile", "gradlew", "gradlew.bat", "mvnw", "mvnw.cmd",
     "README", "LICENSE", "NOTICE", ".gitignore", ".gitattributes", ".dockerignore", ".semgrepignore"})
+
+
+# 못 본 범위 중 보고만 하고 막지 않는 것: 템플릿 값, 외부·누락·동적 script 참조.
+# 그 밖의 gap(깨진 템플릿, 미지원 script 타입, 새로 생길 gap)은 막는다. gate.schema.json의 ALLOW 조건과 같아야 한다.
+REPORTED_GAPS = frozenset({"TEMPLATE_EXPRESSION", "EXTERNAL_SCRIPT_REFERENCE",
+                           "UNRESOLVED_SCRIPT_REFERENCE", "DYNAMIC_SCRIPT_REFERENCE"})
 
 
 def source_language(path):
@@ -46,7 +53,8 @@ def source_language(path):
         return None
     if suffix in UNSUPPORTED:
         return UNSUPPORTED[suffix]
-    if path.name in DATA_NAMES or path.name.startswith(".env"):
+    # 확장자 없는 점 파일(.editorconfig, .nvmrc 등)은 도구 설정이다.
+    if path.name in DATA_NAMES or path.name.startswith(".env") or (path.name.startswith(".") and not suffix):
         return None
     return None if suffix in DATA_SUFFIXES else "unknown"
 

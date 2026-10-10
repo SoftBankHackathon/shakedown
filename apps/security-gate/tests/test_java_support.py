@@ -98,7 +98,7 @@ def test_unsupported_sources_block_allow(tmp_path, filename, language, with_java
     source = {"c": "int main(void) { return 0; }", "csharp": "class App {}", "ruby": "puts 1"}.get(language, "unscanned code")
     (tmp_path / filename).write_text(source, encoding="utf-8")
     report = mock_scan(tmp_path)
-    assert report["decision"] == "REVIEW"
+    assert (report["decision"], report["reason_code"]) == ("DENY", "UNSUPPORTED_SOURCE")
     assert report["semgrep"]["unsupported_languages"] == [language]
     assert report["semgrep"]["unsupported_files"] == 1
     assert report["semgrep"]["scanned_files"] == int(with_java)
@@ -112,16 +112,17 @@ def test_unsupported_sources_do_not_hide_secret_denial(tmp_path):
     assert report["decision"] == "DENY"
 
 
-@pytest.mark.parametrize("content,decision,units", [("<script>alert(1)</script>", "ALLOW", 2),
-    ('<script src="remote.js"></script>', "REVIEW", 1),
-    ('<button onclick="run()">go</button>', "ALLOW", 2), ('<a href="javascript:run()">go</a>', "ALLOW", 2)])
-def test_embedded_javascript_is_scanned_or_explicitly_incomplete(tmp_path, content, decision, units):
+@pytest.mark.parametrize("content,units,unscanned", [("<script>alert(1)</script>", 2, 0),
+    ('<script src="remote.js"></script>', 1, 1),
+    ('<button onclick="run()">go</button>', 2, 0), ('<a href="javascript:run()">go</a>', 2, 0)])
+def test_embedded_javascript_is_scanned_or_explicitly_incomplete(tmp_path, content, units, unscanned):
     java_project(tmp_path)
     (tmp_path / "index.html").write_text(content, encoding="utf-8")
     report = mock_scan(tmp_path)
-    assert report["decision"] == decision
+    # 못 본 범위는 막지 않고 unscanned_sources·coverage_gaps로 남긴다.
+    assert report["decision"] == "ALLOW"
     assert report["semgrep"]["scanned_units"] == units
-    assert report["semgrep"]["unscanned_sources"] == int(decision == "REVIEW")
+    assert report["semgrep"]["unscanned_sources"] == unscanned
 
 
 def test_static_html_does_not_require_source_rules(tmp_path):
@@ -134,7 +135,8 @@ def test_static_html_does_not_require_source_rules(tmp_path):
 def test_no_supported_source_cannot_allow(tmp_path, filename):
     if filename:
         (tmp_path / filename).write_text("services:\n  app:\n    image: sample\n", encoding="utf-8")
-    assert mock_scan(tmp_path)["decision"] == "REVIEW"
+    report = mock_scan(tmp_path)
+    assert (report["decision"], report["reason_code"]) == ("DENY", "UNSUPPORTED_SOURCE")
 
 
 @pytest.mark.parametrize("tool", ["semgrep", "gitleaks"])
@@ -184,7 +186,7 @@ def test_java_wrapper_full_allow(tmp_path):
 def test_wrapper_only_is_not_automatically_allowed(tmp_path):
     put_wrapper(tmp_path)
     report = mock_scan(tmp_path)
-    assert report["decision"] == "REVIEW"
+    assert (report["decision"], report["reason_code"]) == ("DENY", "UNSUPPORTED_SOURCE")
     assert report["gitleaks"]["scan_status"] == "NOT_APPLICABLE"
     assert report["gitleaks"]["excluded_binary_files"] == 1
 
@@ -243,9 +245,10 @@ def test_schema_rejects_forged_allow_for_unsupported_or_required_na(tmp_path):
     java_project(tmp_path)
     report = mock_scan(tmp_path)
     assert report["decision"] == "ALLOW"
-    for tool in ("semgrep", "gitleaks"):
+    # 검사할 소스가 없으면 Semgrep은 DENY, 비밀 검사 대상이 없으면 전체 ALLOW가 될 수 없다.
+    for tool, decision in (("semgrep", "DENY"), ("gitleaks", "ALLOW")):
         changed = copy.deepcopy(report)
-        changed[tool].update(scan_status="NOT_APPLICABLE", decision="REVIEW", scanned_files=0)
+        changed[tool].update(scan_status="NOT_APPLICABLE", decision=decision, scanned_files=0)
         with pytest.raises(jsonschema.ValidationError):
             validate(changed)
     changed = copy.deepcopy(report)
@@ -282,7 +285,7 @@ def test_real_wrapper_does_not_hide_text_secrets(tmp_path, filename, capsys):
                     reason="Requires real local Semgrep and Gitleaks CLIs")
 @pytest.mark.parametrize("scenario,decision,exit_code", [
     ("safe", "ALLOW", 0), ("danger", "DENY", 1), ("wrapper", "ALLOW", 0),
-    ("secret", "DENY", 1), ("unsupported", "REVIEW", 2), ("invalid", "SCAN_FAILED", 3)])
+    ("secret", "DENY", 1), ("unsupported", "DENY", 1), ("invalid", "SCAN_FAILED", 3)])
 def test_real_java_cli_scenarios(tmp_path, scenario, decision, exit_code):
     java_project(tmp_path)
     if scenario == "danger":
@@ -302,6 +305,8 @@ def test_real_java_cli_scenarios(tmp_path, scenario, decision, exit_code):
     report = validate(json.loads(completed.stdout))
     assert completed.returncode == exit_code, report
     assert report["decision"] == decision, report
+    if scenario == "unsupported":
+        assert report["reason_code"] == "UNSUPPORTED_SOURCE" and report["semgrep"]["unsupported_languages"] == ["kotlin"]
     assert report["docker_compose"]["scan_status"] == "NOT_APPLICABLE"
     if scenario == "wrapper":
         assert report["gitleaks"]["excluded_binary_files"] == 1

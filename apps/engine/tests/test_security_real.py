@@ -73,7 +73,7 @@ def test_real_invalid_java_blocks_image_planning(tmp_path):
 @pytest.mark.parametrize('filename,source,decision', [
     ('app.js', 'const value = ;', 'SCAN_FAILED'),
     ('app.ts', 'const value: = ;', 'SCAN_FAILED'),
-    ('main.c', 'int main(void) { return 0; }', 'REVIEW'),
+    ('main.c', 'int main(void) { return 0; }', r'DENY\. 검사할 소스가 없습니다\. 검사할 수 없는 언어가 있습니다\(c\)'),
     ('main.go', 'package main\nfunc main( {', 'SCAN_FAILED'),
 ])
 def test_real_multilanguage_preflight_blocks_engine(tmp_path, filename, source, decision):

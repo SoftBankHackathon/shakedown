@@ -107,7 +107,7 @@ def test_template_findings_map_to_original_file_and_line(tmp_path, source, unit_
     ('<script th:utext="${code}">placeholder();</script>', "TEMPLATE_EXPRESSION"),
     ('<script language="vbscript">placeholder()</script>', "UNSUPPORTED_SCRIPT_TYPE"),
 ])
-def test_uninspected_template_content_never_allows(tmp_path, source, gap):
+def test_uninspected_template_content_is_reported_and_only_evasive_forms_block(tmp_path, source, gap):
     (tmp_path / "safe.js").write_text("const value = 1;", encoding="utf-8")
     (tmp_path / "page.html").write_text(source, encoding="utf-8")
     report = scan(tmp_path)
@@ -116,8 +116,12 @@ def test_uninspected_template_content_never_allows(tmp_path, source, gap):
     if source == '<button th:onclick="${handler}">go</button>':
         assert report["decision"] == "SCAN_FAILED"
         assert report["semgrep"]["errors"] == ["SOURCE_SYNTAX_INVALID"]
+    elif gap not in source_targets.REPORTED_GAPS:
+        assert (report["decision"], report["reason_code"]) == ("DENY", "UNSUPPORTED_SOURCE")
+        assert gap in report["semgrep"]["block_reasons"]
     else:
-        assert report["decision"] == "REVIEW"
+        # CDN·템플릿 표현식처럼 못 본 범위는 막지 않고 보고서에 남긴다.
+        assert report["decision"] == "ALLOW"
     assert gap in report["semgrep"]["coverage_gaps"]
     assert report["semgrep"]["unscanned_sources"] >= 1
 
@@ -148,10 +152,17 @@ def test_template_unit_limit_is_not_a_silent_skip(tmp_path, monkeypatch):
     assert scan(tmp_path)["semgrep"]["errors"] == ["SOURCE_UNIT_LIMIT_EXCEEDED"]
 
 
-def test_schema_rejects_allow_with_uninspected_content(tmp_path):
+def test_reported_gaps_match_the_schema_allow_rule():
+    schema = json.loads((ROOT / "security_gate" / "gate.schema.json").read_text(encoding="utf-8"))
+    allow = next(rule["then"] for rule in schema["$defs"]["semgrep"]["allOf"]
+                 if rule["if"]["properties"].get("decision") == {"const": "ALLOW"})
+    assert set(allow["properties"]["coverage_gaps"]["items"]["enum"]) == source_targets.REPORTED_GAPS
+
+
+def test_schema_rejects_allow_with_blocking_gaps_or_nothing_scanned(tmp_path):
     (tmp_path / "app.ts").write_text("const value: number = 1;", encoding="utf-8")
     report = scan(tmp_path)
-    for field, value in [("unscanned_sources", 1), ("coverage_gaps", ["TEMPLATE_EXPRESSION"]),
+    for field, value in [("coverage_gaps", ["MALFORMED_TEMPLATE"]), ("coverage_gaps", ["UNSUPPORTED_SCRIPT_TYPE"]),
                          ("scanned_units", 0), ("scanned_languages", [])]:
         changed = copy.deepcopy(report)
         changed["semgrep"][field] = value
@@ -228,7 +239,7 @@ def test_real_template_danger_maps_lines_and_preserves_coverage_gaps(tmp_path):
 @REAL[1]
 @pytest.mark.gitleaks_real
 @pytest.mark.parametrize("scenario,decision,exit_code", [("normal", "ALLOW", 0),
-    ("danger", "DENY", 1), ("unsupported", "REVIEW", 2), ("secret", "DENY", 1)])
+    ("danger", "DENY", 1), ("unsupported", "DENY", 1), ("secret", "DENY", 1)])
 def test_real_web_cli_schema_exit_and_secrets(tmp_path, scenario, decision, exit_code):
     shutil.copy(FIXTURES / ("javascript_vulnerable" if scenario == "danger" else "javascript_safe") / "sample.js", tmp_path)
     if scenario == "unsupported":
@@ -242,3 +253,5 @@ def test_real_web_cli_schema_exit_and_secrets(tmp_path, scenario, decision, exit
     report = validate(json.loads(run.stdout))
     assert report["decision"] == decision, report
     assert run.returncode == exit_code
+    if scenario == "unsupported":
+        assert report["reason_code"] == "UNSUPPORTED_SOURCE" and report["semgrep"]["block_reasons"] == ["UNSUPPORTED_LANGUAGE"]

@@ -147,11 +147,11 @@ def test_missing_executable_fails_closed(monkeypatch):
     assert report["errors"] == ["SEMGREP_NOT_INSTALLED"]
 
 
-def test_no_python_files_is_review_and_runner_is_not_called(tmp_path):
+def test_no_supported_files_is_blocked_and_runner_is_not_called(tmp_path):
     def runner(*args, **kwargs):
         pytest.fail("Runner must not run without applicable files")
     report = semgrep.scan_semgrep(tmp_path, runner=runner)
-    assert report["decision"] == "REVIEW"
+    assert report["decision"] == "DENY"
     assert report["scan_status"] == "NOT_APPLICABLE"
 
 
@@ -341,11 +341,11 @@ def test_mock_docker_failure_prevents_integrated_allow(tmp_path):
     assert report["decision"] == "SCAN_FAILED"
 
 
-def test_mock_no_compose_keeps_step1_review_but_allows_applicable_source(tmp_path):
+def test_mock_no_compose_is_not_applicable_and_allows_applicable_source(tmp_path):
     (tmp_path / "sample.py").write_text("pass", encoding="utf-8")
     report = validate(scan_repository(tmp_path, semgrep_runner=output_runner()))
     assert report["decision"] == "ALLOW"
-    assert report["docker_compose"]["decision"] == "REVIEW"
+    assert report["docker_compose"]["decision"] == "ALLOW"
     assert report["docker_compose"]["scan_status"] == "NOT_APPLICABLE"
 
 

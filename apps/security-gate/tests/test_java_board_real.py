@@ -41,4 +41,5 @@ def test_real_board_read_only_compatibility(record_property):
     assert report["semgrep"]["scanned_languages"] == ["java", "javascript"]
     assert report["semgrep"]["unsupported_languages"] == []
     assert report["semgrep"]["coverage_gaps"] == ["EXTERNAL_SCRIPT_REFERENCE", "TEMPLATE_EXPRESSION"]
-    assert report["decision"] == "REVIEW" and completed.returncode == 2
+    # 시연 앱: 못 본 범위(CDN·Thymeleaf 표현식)는 보고만 하고 통과한다.
+    assert report["decision"] == "ALLOW" and completed.returncode == 0

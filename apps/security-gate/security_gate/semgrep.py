@@ -14,7 +14,7 @@ from functools import partial
 from .discovery import validate_target
 from .models import ScanError
 from .parsing import read_bounded
-from .source_targets import empty_coverage, sources
+from .source_targets import REPORTED_GAPS, empty_coverage, sources
 from .source_syntax import validate_sources
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -43,17 +43,25 @@ MAX_STDERR_BYTES = 1024 * 1024
 MAX_FINDINGS = 1000
 
 
+def block_reasons(coverage, applicable):
+    """근거(finding) 없이 막는 이유. 검사 가능 언어 밖의 소스, 검사할 소스 없음, 보고만 하는 gap이 아닌 gap."""
+    reasons = [] if applicable else ["NO_SCANNABLE_SOURCE"]
+    if coverage["unsupported_files"]:
+        reasons.append("UNSUPPORTED_LANGUAGE")
+    return reasons + sorted(set(coverage["coverage_gaps"]) - REPORTED_GAPS)
+
+
 def result(target, *, findings=None, error=None, applicable=True, scanned=0, coverage=None,
            scanned_units=0, scanned_languages=None):
     findings = findings or []
     coverage = coverage or empty_coverage()
+    blocked = [] if error else block_reasons(coverage, applicable)
     return {
         "tool": "semgrep", "scope": "local_multilanguage_mvp_rules",
         "target_path": str(target),
         "scan_status": "FAILED" if error else "SUCCESS" if applicable else "NOT_APPLICABLE",
-        "decision": "SCAN_FAILED" if error else "DENY" if findings else "REVIEW"
-                    if coverage["unsupported_files"] or coverage["unscanned_sources"] or not applicable else "ALLOW",
-        "findings": findings, "errors": [error] if error else [], "scanned_files": scanned,
+        "decision": "SCAN_FAILED" if error else "DENY" if findings or blocked else "ALLOW",
+        "block_reasons": blocked, "findings": findings, "errors": [error] if error else [], "scanned_files": scanned,
         "scanned_units": scanned_units, "scanned_languages": scanned_languages or [],
         **coverage,
     }
