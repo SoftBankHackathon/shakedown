@@ -439,3 +439,22 @@ gcloud secrets delete shakedown-db-password --project=shakedown-511106
 ```
 
 체험 크레딧 만료(2027-01-08) 전에 정리합니다.
+
+## Terraform (`terraform/`, provision.sh와 같은 일)
+
+`scripts/provision.sh`가 만들던 것을 Terraform으로도 만들 수 있다. provision.sh는 지우지 않고 같이 둔다. 설계와 판단 근거는 `docs/terraform-migration-aws-gcp.md` 2절에 있다.
+
+```sh
+gcloud config set project shakedown-511106
+GCP_PROJECT=shakedown-511106 bash infra/gcp/scripts/terraform.sh plan     # 바뀔 내용만
+GCP_PROJECT=shakedown-511106 bash infra/gcp/scripts/terraform.sh apply    # 생성 → .data/gcp/shakedown-511106.json, loadConfig 검증까지
+# 기존 스택 옆에 시험용 별도 스택 (피어링·Artifact Registry는 기존 것을 같이 쓴다)
+GCP_PROJECT=shakedown-511106 GCP_NAME_SUFFIX=-tf GCP_SHARED_NETWORK=1 bash infra/gcp/scripts/terraform.sh apply
+```
+
+- **Cloud Run 서비스·Job·`run.invoker`(allUsers)는 Terraform이 만들지 않는다.** 어댑터가 배포마다 통째로 쓰고 차단 때 공개 권한을 뺀다. Terraform이 이것을 관리하면 apply 한 번에 차단한 서비스가 다시 공개될 수 있다.
+- apply는 plan을 먼저 보여 주고, Cloud SQL이 지워지거나 교체되는 계획이면 멈춘다(`GCP_ALLOW_DATA_LOSS=1`로만 통과). `GCP_AUTO_APPROVE=1`이면 확인을 묻지 않는다.
+- 상태는 `.data/gcp/terraform/`(gitignore, 소유자만 읽기)에 둔다. workspace는 `<프로젝트><접미사>`. 상태에 DB 비밀번호가 들어간다.
+- gcloud와 기본값이 다른 곳: 자동 백업은 Terraform 기본이 꺼짐이라 켜 두었다. 기존 인스턴스를 import하면 첫 plan의 차이를 사람이 확인한다.
+- destroy: 별도 스택(`-tf`)이 있으면 그것부터 지운다. 기본 스택이 Artifact Registry 저장소를 소유하므로 먼저 지우면 별도 스택이 쓰던 이미지도 사라진다. 그다음 Cloud Run 서비스와 Job을 지운다(래퍼가 서비스가 남아 있으면 멈춘다). 그다음 `-var sql_deletion_protection=false`로 apply를 한 번 하고 destroy한다. 사설망 피어링은 지우지 않고 남긴다(`ABANDON`).
+- 실계정 없이 하는 시험: `cd infra/gcp/terraform && terraform init -backend=false && terraform test`. GCP provider를 가짜로 바꾸고 기본 스택·별도 스택의 자원 이름과 설정 파일 내용을 확인한다. **실제 GCP에서는 아직 돌려 보지 않았다.**
