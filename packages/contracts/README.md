@@ -23,7 +23,7 @@
 
 ## 상태: 초안
 
-Target API는 **v0.1.5 제안**, Engine API는 **v0.1.5 통합 제안**, Shakedown API는 **v0.1.1 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
+Target API는 **v0.1.5 제안**, Engine API는 **v0.1.6 통합 제안**, Shakedown API는 **v0.1.1 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
 
 바뀔 가능성이 있는 것
 - 상태 확인 방식: 지금은 GET 폴링(2~3초 간격). 콜백(`callback_url`) 방식이 추가될 수 있음
@@ -39,6 +39,7 @@ Target API는 **v0.1.5 제안**, Engine API는 **v0.1.5 통합 제안**, Shakedo
 
 ## 변경 이력
 
+- **Engine v0.1.6 (2026-10-10, 제안. 팀 채널 공유 TBD)**: 배포 요청 targets에서 gcp도 다른 클라우드(aws·azure)와 함께 보낼 수 있음(v0.1.4의 400 제거). 빌드는 첫 클라우드에서 한 번이고, gcp는 그 이미지(ECR 또는 설정된 ACR)를 Artifact Registry로 같은 digest 그대로 복사해 배포. local과 세 클라우드를 한 번에 고를 수 있게 maxItems 3 → 4. 수정 적용(applyFix)은 지금처럼 Local+GCP 하나일 때만(클라우드 둘 이상이면 400). 요청·응답 형식은 그대로라 타입·fixture는 바꾸지 않음.
 - **Target v0.1.5 (2026-10-10, 제안. 팀 채널 공유 TBD)**: GCP 준비 한도 예외. GCP 어댑터는 420초(7분)를 넘기면 0대로 내린 뒤(최대 19초) failed로 바꾸고, 엔진은 GCP를 450초(7분 30초) 기다림. 다른 대상의 대기는 그대로. 2026-10-10 13:19 Cloud Run이 최소 인스턴스 2대를 확보하는 데 4분 15초가 걸려 옛 한도 270초를 넘긴 일 때문. 요청·응답 형식은 그대로라 타입·fixture는 바꾸지 않음.
 - **Target v0.1.4 (2026-10-10, 제안. 팀 채널 공유 TBD)**: GCP 구현 제약에 범용 런타임(`runtime`, http-runtime.v1) 줄 추가. GCP는 DB 모드 none·postgres만, init_command는 Cloud Run Job, postgres_url 바인딩 미지원, secret_refs는 db_password만, 포트 자유, Cloud Run 예약 환경변수 이름 400. 요청·응답 형식과 타입은 그대로. `infra/gcp/README.md` "범용 런타임" 절 참고.
 - **Target v0.1.3 (2026-10-10, 제안. 팀 채널 공유 TBD)**: `DeployRequest.architecture`를 AWS 전용에서 클라우드별 실행 카탈로그로. `version` enum에 `gcp-architecture.v1`·`azure-architecture.v1` 추가(각 어댑터는 자기 버전만 받고 다른 버전은 400, Local에는 보내지 않음). GCP 구현 제약에 계획 배포 줄 추가: CPU·메모리·대수·자동 확장만 적용, DB 고가용성은 계획만, session-jdbc 필수, sticky 금지, 등급별 DB 연결 풀. 타입은 `TargetDeployRequest.architecture.version`만 넓힘. `infra/gcp/README.md` "계획 배포" 절 참고.
