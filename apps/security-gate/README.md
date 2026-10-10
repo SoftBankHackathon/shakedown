@@ -12,7 +12,7 @@
 | --- | --- |
 | main.py, security_gate/__main__.py, cli.py | 로컬 경로·옵션 입력, JSON 출력, 종료 코드 |
 | scanner.py, discovery.py, parsing.py, rules/privileged.py | 제한된 탐색, 안전 YAML 파싱, Docker privileged 검사 |
-| source_targets.py, source_units.py, source_syntax.py | 다중 언어 수집·템플릿 추출·미검사 범위 식별, Python AST·Java Tree-sitter 구문 검증 |
+| source_targets.py, source_units.py, source_syntax.py | 다중 언어 수집·템플릿 추출·미검사 범위 식별, Python AST·다국어 Tree-sitter 구문 검증 |
 | semgrep.py, semgrep_rules/*.yml | 로컬 고정 규칙 Semgrep 실행, 실패 처리, 결과 정규화 |
 | secret_targets.py, gitleaks.py, gitleaks_rules/gitleaks.toml | UTF-8 텍스트 수집, Gitleaks dir 검사, Secret 비노출·정리 |
 | models.py, gate.py, gate3.py | 각각 JSON 1.0, Docker+Semgrep 2.0, 세 검사 3.0 집계 |
@@ -219,7 +219,7 @@ HTML/SVG의 인라인 script, `on*`/`th:on*` 이벤트 코드, javascript URL은
 - Python 소스는 Semgrep 전에 아래 AST 사전 검증도 통과해야 합니다. `scanned` 포함과 빈 `errors`만으로 Python 문법의 유효성을 판단하지 않습니다.
 - 신뢰된 로컬 규칙과 위 옵션으로 네트워크 동작을 억제합니다. 이 Python 어댑터 자체는 운영체제 수준의 네트워크/파일시스템 샌드박스를 제공하지 않습니다. 소스 동시 변경에 대한 완전한 격리도 보장하지 않습니다.
 
-### Python AST / Java Tree-sitter 사전 검증
+### Python AST / 다국어 Tree-sitter 사전 검증
 
 Semgrep 1.180.0이 실제 Python 문법 오류 fixture를 scanned에 포함하고 errors 없이 exit 0을 반환한 원본 진단을 근거로, Python 구문 검증을 별도로 수행합니다.
 
@@ -228,7 +228,7 @@ Semgrep 1.180.0이 실제 Python 문법 오류 fixture를 scanned에 포함하�
 
 | 오류 코드 | 의미 |
 | --- | --- |
-| SOURCE_SYNTAX_INVALID | Python AST 또는 Java Tree-sitter 문법 검사 실패 |
+| SOURCE_SYNTAX_INVALID | Python AST 또는 Tree-sitter 문법 검사 실패 |
 | SOURCE_SYNTAX_TIMEOUT | 구문 검증에 배정한 시간이 만료됨 |
 | SOURCE_SYNTAX_CHECK_FAILED | 검증 프로세스 시작 실패, 자원 오류, 비정상 종료 등 |
 
@@ -243,14 +243,30 @@ stderr와 소스 원문은 보고하지 않습니다. 복잡한 AST 입력이 Py
 이 사전 검증은 [AST 생성 단계](https://docs.python.org/3.12/library/ast.html#ast.parse)에 한정됩니다. 타입·이름·스코프·정식 컴파일·런타임 유효성 전체를 검증하는 것은 아닙니다.
 AST 생성 자체의 자원 사용은 크기 및 시간으로 제한하지만, 별도의 OS 메모리 상한은 추가하지 않았습니다.
 
-Java는 오픈소스 [Tree-sitter Python 바인딩](https://github.com/tree-sitter/py-tree-sitter) 0.25.2와
+Java 및 아래 언어는 오픈소스 [Tree-sitter Python 바인딩](https://github.com/tree-sitter/py-tree-sitter) 0.25.2와
 [tree-sitter-java](https://github.com/tree-sitter/tree-sitter-java) 0.23.5 (둘 다 MIT)를 사용합니다.
 `requirements.txt`로 설치하며 Engine도 동일 의존성을 포함합니다. JDK·Gradle·프로젝트 classpath는 필요하지 않습니다.
 별도 `-I -S -B` 프로세스에 실행 중인 인터프리터의 설치 패키지 경로만 추가합니다. 소스 저장소의 모듈이나 `.pth`는 로드하지 않습니다.
 전체 구문 트리의 `has_error` (오류 복구/누락 토큰 포함)가 참이면 `SOURCE_SYNTAX_INVALID`, 파서 누락·비정상 종료는
-`SOURCE_SYNTAX_CHECK_FAILED`, 시간 초과는 `SOURCE_SYNTAX_TIMEOUT`으로 차단합니다. Python과 Java가 하나의 남은 시간 예산을 공유합니다.
+`SOURCE_SYNTAX_CHECK_FAILED`, 시간 초과는 `SOURCE_SYNTAX_TIMEOUT`으로 차단합니다. Python AST와 모든 Tree-sitter 검사가 하나의 남은 시간 예산을 공유합니다.
 타입/의존성 해석이나 컴파일 성공을 보장하지 않으며, 고정된 Java grammar에서 지원하지 않는 최신/preview 구문도 실패할 수 있습니다.
-JS/TS에는 아직 독립 구문 검사를 추가하지 않았으며 Semgrep이 보고한 오류만 처리합니다.
+
+| 언어 | 문법 검사 | 보안 패턴 검사 |
+| --- | --- | --- |
+| Python | 내장 `ast.parse` | 기존 Semgrep 규칙 |
+| Java | tree-sitter-java | 기존 Semgrep 규칙 |
+| JS / JSX / MJS / CJS | tree-sitter-javascript | 기존 Semgrep 규칙 |
+| TS / MTS / CTS / TSX | tree-sitter-typescript (TSX 별도 grammar) | 기존 Semgrep 규칙 |
+| Go / Rust / C / C++ / C# / Ruby / PHP | 각 언어별 Tree-sitter 패키지 | 미지원: 정상 문법도 REVIEW 유지 |
+
+고정 버전은 `requirements.txt`에 명시합니다. PHP는 태그/HTML을 포함하는 PHP grammar를 사용합니다.
+C/C++ 공용 `.h`는 두 문법 중 하나가 허용하면 문법 검사만 통과합니다. `.cxx`, `.hh`, `.hxx`, `.phtml`도 수집합니다.
+HTML/SVG의 추출 스크립트·이벤트 핸들러는 원본 `.html` 확장자 대신 SourceUnit의 JS/TS 문법을 사용합니다.
+동적 템플릿 표현식은 렌더링하지 않으며 문법 오류면 SCAN_FAILED, 미검사 범위는 계속 기록합니다.
+문법만 지원하는 파일도 동일한 경로/파일 크기/누적 크기 제한을 적용하며, 문법 오류는 SCAN_FAILED입니다.
+문법 통과는 보안 규칙 지원을 의미하지 않습니다. `unsupported_languages/files`와 REVIEW 정책을 유지하며
+`scanned_files/units/languages`는 계속 Semgrep 보안 규칙을 적용한 대상만 집계합니다.
+Kotlin/Swift/Vue/Svelte 등 표에 없는 언어는 이번 변경에서 파서를 추가하지 않았습니다.
 
 Semgrep 1.180.0은 기존 Java 보안 규칙으로 `class Broken { void broken( {`, 닫는 괄호 누락,
 `int x = ;`를 errors 없이 통과시켰습니다. 같은 소스에 넓은 규칙을 적용하면 오류가 보고되므로

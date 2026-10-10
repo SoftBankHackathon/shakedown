@@ -230,14 +230,15 @@ def scan_semgrep(target, *, timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
     deadline = time.monotonic() + timeout_seconds
     coverage = empty_coverage()
     try:
-        root, inputs = sources(target, max_file_bytes, coverage)
+        syntax_only = []
+        root, inputs = sources(target, max_file_bytes, coverage, syntax_only=syntax_only)
+        validate_sources([*inputs, *syntax_only], timeout_seconds=deadline - time.monotonic())
         done = partial(result, root, coverage=coverage)
         if not inputs:
             return done(applicable=False)
         executable = find_executable()
         if executable is None and runner is None:
             return done(error="SEMGREP_NOT_INSTALLED")
-        validate_sources(inputs, timeout_seconds=deadline - time.monotonic())
         for rule_file in RULE_FILES:
             validate_target(rule_file)
             read_bounded(rule_file, 64 * 1024)

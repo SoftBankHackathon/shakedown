@@ -6,10 +6,12 @@ from urllib.parse import unquote, urlsplit
 from .discovery import MAX_FILES, iter_files, validate_target
 from .models import ScanError
 from .parsing import read_bounded
+from .source_syntax import SYNTAX_SUFFIXES
 from .source_units import MAX_UNITS, SourceUnit, TemplateScripts
 
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
-# extension -> (language, snapshot suffix). JSX/TSX keep their own suffix so Semgrep parses them as such.
+# Security-rule coverage only. Syntax-only grammars must not enter this map.
+# extension -> (language, snapshot suffix). JSX/TSX preserve their parser dialect.
 SUPPORTED = {".py": ("python", ".py"), ".java": ("java", ".java"),
              ".js": ("javascript", ".js"), ".jsx": ("javascript", ".jsx"),
              ".mjs": ("javascript", ".js"), ".cjs": ("javascript", ".js"),
@@ -22,6 +24,7 @@ UNSUPPORTED = {
     ".kt": "kotlin", ".kts": "kotlin", ".scala": "scala", ".groovy": "groovy",
     ".go": "go", ".rs": "rust", ".rb": "ruby", ".php": "php", ".phtml": "php",
     ".c": "c", ".h": "c", ".cpp": "cpp", ".cc": "cpp", ".hpp": "cpp",
+    ".cxx": "cpp", ".hh": "cpp", ".hxx": "cpp",
     ".cs": "csharp", ".swift": "swift", ".dart": "dart", ".lua": "lua",
     ".sh": "shell", ".bash": "shell", ".ps1": "powershell", ".pl": "perl",
     ".r": "r", ".ex": "elixir", ".exs": "elixir", ".clj": "clojure",
@@ -53,7 +56,7 @@ def empty_coverage():
             "unscanned_sources": 0, "coverage_gaps": []}
 
 
-def sources(target, max_file_bytes, coverage=None):
+def sources(target, max_file_bytes, coverage=None, *, syntax_only=None):
     root = validate_target(target)
     if not root.is_dir():
         raise ScanError("SEMGREP_DIRECTORY_REQUIRED")
@@ -68,6 +71,8 @@ def sources(target, max_file_bytes, coverage=None):
         elif language:
             unsupported.add(language)
             unsupported_files += 1
+            if syntax_only is not None and suffix in SYNTAX_SUFFIXES:
+                paths.append(path)
         if len(paths) > MAX_FILES:
             raise ScanError("SOURCE_DISCOVERY_LIMIT_EXCEEDED")
     total = 0
@@ -81,6 +86,8 @@ def sources(target, max_file_bytes, coverage=None):
         suffix = path.suffix.lower()
         if suffix in SUPPORTED:
             result.append(SourceUnit(path, source, *SUPPORTED[suffix]))
+        elif suffix in SYNTAX_SUFFIXES:
+            syntax_only.append((path, source))
         else:
             template = TemplateScripts(path).finish(source)
             result.extend(template.units)

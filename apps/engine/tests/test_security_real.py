@@ -51,3 +51,15 @@ def test_real_invalid_java_blocks_image_planning(tmp_path):
             builder.plan(SimpleNamespace(id='java-invalid', repo=str(source)), PlanRequest(use_ai=False))
     finally:
         builder.close()
+
+
+@pytest.mark.parametrize('filename,source,decision', [
+    ('app.js', 'const value = ;', 'SCAN_FAILED'),
+    ('app.ts', 'const value: = ;', 'SCAN_FAILED'),
+    ('main.go', 'package main\nfunc main() {}', 'REVIEW'),
+    ('main.go', 'package main\nfunc main( {', 'SCAN_FAILED'),
+])
+def test_real_multilanguage_preflight_blocks_engine(tmp_path, filename, source, decision):
+    (tmp_path / filename).write_text(source)
+    with pytest.raises(security.SecurityGateError, match=decision):
+        security.require_allow(tmp_path)
