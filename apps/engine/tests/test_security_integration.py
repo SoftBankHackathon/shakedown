@@ -98,6 +98,25 @@ def test_image_plan_api_rejects_before_llm(client,repository,monkeypatch):
     assert response.status_code==400 and 'REVIEW' in response.json()['detail']
 
 
+@pytest.mark.parametrize('stage',['create','select','resolve'])
+def test_architecture_gated_at_each_boundary(monkeypatch,tmp_path,stage):
+    from engine.architecture import ArchitecturePlanner, ArchitectureRequest, ArchitectureError
+    root=tmp_path/'repo';root.mkdir()
+    (root/'package.json').write_text('{"dependencies":{"express":"5"}}')
+    planner=ArchitecturePlanner(tmp_path/'plans.db',LocalRunner(),None)
+    project=SimpleNamespace(id='project',repo=str(root))
+    options=ArchitectureRequest(peak_rps=5,availability='best_effort',traffic='steady',use_ai=False)
+    monkeypatch.setattr(security,'require_allow',lambda _:report())
+    plan=None
+    if stage!='create':plan=planner.create(project,options)
+    if stage=='resolve':planner.select(project,plan['id'],'small')
+    monkeypatch.setattr(security,'require_allow',lambda _:(_ for _ in ()).throw(security.SecurityGateError('REVIEW')))
+    with pytest.raises(ArchitectureError,match='REVIEW'):
+        if stage=='create':planner.create(project,options)
+        elif stage=='select':planner.select(project,plan['id'],'small')
+        else:planner.resolve(project,plan['id'])
+
+
 def no_compose_report():
     payload = report()
     payload['docker_compose'].update(decision='REVIEW', scan_status='NOT_APPLICABLE', files=[], errors=[])

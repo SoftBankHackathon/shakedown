@@ -4,6 +4,7 @@
   "clusterArn": "arn:aws:ecs:ap-northeast-2:123456789012:cluster/REPLACE",
   "repository": "shakedown-board", "repositoryUri": "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/shakedown-board",
   "listenerArn": "arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:listener/app/REPLACE",
+  "gateRuleArn": "arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:listener-rule/app/REPLACE",
   "targetGroupArn": "arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:targetgroup/REPLACE",
   "publicUrl": "http://REPLACE.ap-northeast-2.elb.amazonaws.com",
   "subnetIds": ["subnet-REPLACE1", "subnet-REPLACE2"], "securityGroupId": "sg-REPLACE",

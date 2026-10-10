@@ -1,3 +1,5 @@
+export type { HttpRuntime } from '../runtime.mjs';
+import type { HttpRuntime } from '../runtime.mjs';
 // Shared data contracts between the deploy engine, the shakedown runner and the dashboard.
 // Change these together: every package imports from here.
 //
@@ -54,6 +56,7 @@ export type Deployment = {
 };
 
 export type Project = {
+  runtime?: HttpRuntime | null;
   id: string;
   name: string;
   repo: string;
@@ -154,6 +157,7 @@ export type ComparisonEndpoint = { name: string; url: string };
 export type CompareRequest = { baseline: ComparisonEndpoint; candidate: ComparisonEndpoint };
 
 export type DeployRequest = {
+  architecture_plan_id?: string;
   comparison?: ComparisonEndpoint;
   targets?: TargetName[];
   shakedown: boolean;
@@ -164,6 +168,8 @@ export type DeployRequest = {
 
 /** Target API v0.1.1 proposal — distinct from the engine's DeployRequest. */
 export type TargetDeployRequest = {
+  runtime?: HttpRuntime;
+  architecture?: {version: "aws-architecture.v1"; template_id: ArchitectureTier};
   deployment_id: string;
   project_id: string;
   image: string;
@@ -220,4 +226,25 @@ export type ImageBuild = {
   image: string;
   source: ImagePlan["source"];
   error?: string;
+};
+
+
+export type ArchitectureTier = "small" | "medium" | "large";
+export type ArchitectureRequest = {
+  workload: "auto" | "http" | "worker" | "batch" | "static";
+  peak_rps: number | null;
+  availability: "unknown" | "best_effort" | "high";
+  traffic: "unknown" | "steady" | "bursty";
+  priority: "balanced" | "cost" | "availability";
+  use_ai: boolean;
+};
+export type ArchitecturePlan = {
+  id: string; project_id: string; created: number; schema_version: string;
+  source: "rule" | "ai"; status: "needs_input" | "proposed" | "selected";
+  recommended_template: ArchitectureTier | null; selected_template: ArchitectureTier | null;
+  requirements: ArchitectureRequest; reasons: string[]; evidence_ids: string[];
+  assessment: { minimum_tier: ArchitectureTier; eligible_templates: ArchitectureTier[]; missing_inputs: string[]; blockers: string[]; warnings: string[]; reasons: string[] };
+  facts: { stack: string; workload: string; workload_source: string; signals: { database: string | null; server_session: boolean; local_storage: boolean; queue_dependency: boolean; readme_hints: string[] }; evidence: {id: string; value: unknown; source: string}[]; analysis_warnings: string[] };
+  templates: { id: ArchitectureTier; name: string; cpu: number; memory_mib: number; min_tasks: number; max_tasks: number; availability_zones: number; autoscaling: boolean; database: string; tradeoff: string }[];
+  deployment: {ready: boolean; reason: string}; evidence_fingerprint: string;
 };

@@ -1,0 +1,20 @@
+{
+  "results": [
+    {
+      "mode": "mysql",
+      "read_write": true,
+      "restart_persistence": true,
+      "wrong_password_rejected": true,
+      "special_character_password": true
+    },
+    {
+      "mode": "mongodb",
+      "read_write": true,
+      "restart_persistence": true,
+      "wrong_password_rejected": true,
+      "special_character_password": true
+    }
+  ],
+  "cleanup": "completed",
+  "scope": "local official database images, driver connections; no AWS or public endpoint"
+}

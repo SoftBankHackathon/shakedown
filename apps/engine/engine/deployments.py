@@ -37,6 +37,7 @@ class CompareRequest(Model):
 
 
 class DeployRequest(Model):
+    architecture_plan_id: str | None = Field(default=None, pattern=r"^arch_[a-f0-9]{32}$")
     shakedown: bool = False
     autofix: bool = False
     comparison: Endpoint | None = None
@@ -79,12 +80,18 @@ class LocalRunner:
     def build(self, project, image, platform=None):
         with self.source(project.repo) as root:
             # Re-analyze the actual checkout, rather than trusting an earlier branch revision.
-            analysis = RepoAnalyzer().analyze(str(root))
+            from engine.analyzer import ImageRepoAnalyzer
+            analysis = ImageRepoAnalyzer().analyze(str(root))
+            if getattr(project,'runtime',None):
+                from engine.runtime import database_conflict
+                conflict = database_conflict(project.runtime['database']['mode'], analysis.database)
+                if conflict: raise DeploymentError(conflict)
+                analysis.port=project.runtime['port']; analysis.health_path=project.runtime['health_path']
             from engine.image_builder import app_context, prepared, BuildError
             from engine.llm import LlmError
             try:
                 context = app_context(root, analysis)
-                if analysis.database not in {'postgres', 'postgresql'}:
+                if not getattr(project, 'runtime', None) and analysis.database not in {'postgres', 'postgresql'}:
                     raise DeploymentError('Deployment currently requires the PostgreSQL sample application; use image build for other stacks.')
                 def build_at(path):
                     command = ['docker', 'build', '-t', image, str(path)] if platform is None else ['docker', 'buildx', 'build', '--platform', platform, '--provenance=false', '--sbom=false', '--load', '-t', image, str(path)]
@@ -168,6 +175,15 @@ class DeploymentStore:
             raise DeploymentError('Shakedown requires two deployment targets or an existing comparison endpoint.')
         if set(request.options) - set(targets):
             raise DeploymentError('Options must belong to selected targets.')
+        architecture = None
+        if request.architecture_plan_id:
+            if 'aws' not in targets:
+                raise DeploymentError('An architecture plan requires the AWS target.')
+            if not getattr(self, 'architecture', None):
+                raise DeploymentError('Architecture planner is unavailable.')
+            architecture = self.architecture.resolve(project, request.architecture_plan_id)
+            if 'replicas' in request.options.get('aws', {}):
+                raise DeploymentError('Selected architecture controls AWS replicas; remove the replica override.')
         options = {}
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
         for target in targets:
@@ -180,12 +196,15 @@ class DeploymentStore:
             if (set(opts) != {'replicas','sticky_sessions','tz'} or type(opts['replicas']) is not int
                     or opts['replicas'] not in ([1] if target == 'local' else [1, 2]) or opts['sticky_sessions'] is not False):
                 raise DeploymentError('Local supports one replica; AWS supports one or two. Sticky sessions are unsupported.')
+            if target == 'aws' and architecture:
+                opts['replicas'] = architecture['min_tasks']
             options[target] = opts
         if 'aws' in targets:
             self.aws.preflight(project)
+            if architecture: self.aws.validate_architecture(architecture, project)
         d = dict(id='dep_' + uuid.uuid4().hex, project_id=project.id, created=time.time(), status='queued',
                  shakedown=request.shakedown, autofix=False, options=options, targets={name: {'status':'pending','label': 'Local Docker' if name == 'local' else 'AWS ECS'} for name in targets},
-                 attempts=[], timings={}, ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0))
+                 architecture=architecture, architecture_plan_id=request.architecture_plan_id, attempts=[], timings={}, ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0))
         try:
             with self.connect() as db:
                 db.execute('INSERT INTO deployments VALUES (?,?,?,?)', (d['id'], project.id, d['status'], json.dumps(d)))
@@ -235,9 +254,17 @@ class DeploymentStore:
                 body = dict(deployment_id=d['id'], project_id=project.id, image=image, port=analysis.port,
                             health_path=analysis.health_path, database={'engine':'postgres','name':analysis.database_name or 'board_db'},
                             secret_refs={'SPRING_DATASOURCE_PASSWORD':'db_password'}, options=d['options'][target])
+                if target == 'aws' and d.get('architecture'):
+                    # Only server-resolved catalog IDs cross the adapter boundary.
+                    body['architecture'] = {'version': 'aws-architecture.v1', 'template_id': d['architecture']['id']}
+                    if not project.runtime: body['env'] = {'SPRING_PROFILES_ACTIVE': 'demo,session-jdbc'}
+                if project.runtime:
+                    body.pop('database',None); body.pop('secret_refs',None)
+                    body['runtime']=project.runtime
+                    body['port']=project.runtime['port']; body['health_path']=project.runtime['health_path']
                 submitted.append(target)
                 runner.call('POST', '/deployments', body)
-                deadline = time.monotonic() + self.timeout
+                deadline = time.monotonic() + (max(self.timeout, 2700) if target == 'aws' and d.get('architecture') else self.timeout)
                 while time.monotonic() < deadline:
                     state = runner.call('GET', '/deployments/' + d['id'])
                     if state.get('status') == 'failed': raise DeploymentError(f'{target} deployment failed; inspect its logs.')

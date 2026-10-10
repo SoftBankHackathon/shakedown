@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { RuntimeSettings } from "@/components/runtime-settings";
+import { ArchitecturePlanner } from "@/components/architecture-planner";
 import { ImageBuilder } from "@/components/image-builder";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useT } from "@/components/i18n";
 import { AiTag, Badge, Mono, RuleTag, Section } from "@/components/ui";
-import { api, MOCK, ApiError, errorMessage, formatSeconds, type Deployment, type Project, type TargetName, type TargetOptions } from "@/lib/api";
+import { api, API, MOCK, ApiError, errorMessage, formatSeconds, type Deployment, type Project, type TargetName, type TargetOptions } from "@/lib/api";
 import { DEFAULT_TARGET_OPTIONS, DEFAULT_TARGETS, TARGETS, targetLabel, TIMEZONES } from "@/lib/targets";
 
 export default function ProjectPage() {
@@ -34,7 +36,15 @@ export default function ProjectPage() {
     setBusy(true);
     setError(null);
     try {
-      const d = await api.deploy(id, { shakedown: MOCK ? shakedown : liveTargets.length === 2 || !!comparisonUrl.trim(), autofix, options: MOCK ? opts : Object.fromEntries(Object.entries(opts).filter(([name]) => liveTargets.includes(name as TargetName))), targets: MOCK ? undefined : liveTargets, comparison: !MOCK && liveTargets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
+      let architectureId: string | undefined;
+      if(!MOCK && liveTargets.includes("aws")){
+        const response=await fetch(`${API}/api/projects/${id}/architecture-plans/latest`,{cache:"no-store"});
+        if(!response.ok)throw new Error("아키텍처 선택 상태를 확인하지 못했습니다.");
+        const plan=await response.json();
+        if(plan?.selected_template)architectureId=plan.id;
+      }
+      const deploymentOptions=Object.fromEntries(Object.entries(opts).filter(([name])=>liveTargets.includes(name as TargetName)).map(([name,value])=>[name,name==="aws"&&architectureId?{sticky_sessions:false,tz:value.tz}:value]));
+      const d = await api.deploy(id, { architecture_plan_id: architectureId, shakedown: MOCK ? shakedown : liveTargets.length === 2 || !!comparisonUrl.trim(), autofix, options: MOCK ? opts : deploymentOptions, targets: MOCK ? undefined : liveTargets, comparison: !MOCK && liveTargets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
       router.push(`/deployments/${d.id}`);
     } catch (e) {
       setError(e instanceof ApiError && e.status === 409 ? t("home.busy", { name: project?.name ?? id }) : errorMessage(e));
@@ -205,6 +215,9 @@ export default function ProjectPage() {
         </div>
       </div>
 
+      <p className="text-sm text-muted">AWS가 선택된 Action은 저장한 최신 아키텍처를 적용합니다. 선택한 설계가 없으면 기존 AWS 기본 구성으로 배포합니다.</p>
+      <RuntimeSettings key={id} project={project} onSaved={setProject} />
+      <ArchitecturePlanner key={id+JSON.stringify(project.runtime)} projectId={id} />
       <ImageBuilder projectId={id} />
 
       <Section title={t("project.deployments")}>

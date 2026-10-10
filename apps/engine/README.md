@@ -169,6 +169,33 @@ API:
 
 계획 응답에 `fallback_diagnostic`과 `prompt_version`을 포함해 어떤 진단과 규격으로 생성했는지 확인할 수 있습니다. 프롬프트 본문이나 키를 별도 로그로 저장하지 않습니다.
 
+## AWS 아키텍처 판단 및 선택 구성 배포
+
+프로젝트 화면에서 서비스 형태, 피크 RPS, 가용성, 트래픽 변화, 우선순위를 입력해 세 설계안을 비교합니다. 저장소를 다시 분석해 프레임워크/DB/서버 세션/의존성 이름과 README의 제한된 키워드를 추출합니다. README 원문이나 코드·환경값은 API로 전송하지 않습니다. README 키워드는 미검증 힌트이며 실제 기능이나 수요의 증명이 아닙니다.
+
+| 설계안 | 태스크당 자원 | 태스크 / AZ | 확장 | 관계형 DB 필요 시 |
+| --- | --- | --- | --- | --- |
+| small | 0.5 vCPU / 1 GiB | 1 / 1 | 고정 | Single-AZ RDS |
+| medium | 1 vCPU / 2 GiB | 2–4 / 2 | 목표 추적 | Multi-AZ RDS |
+| large | 2 vCPU / 4 GiB | 3–12 / 3 | 목표 추적 | Multi-AZ RDS, 읽기 복제본 검토 |
+
+세 안은 ALB + ECS Fargate HTTP 서비스의 초기 설계 프리셋입니다. 수치는 AWS 처리량 보장이 아닙니다. 피크 10 RPS 이하/100 이하/100 초과로 초기 후보를 나누는 **제품 내 가정**이며 반드시 부하 테스트로 조정해야 합니다. 고가용성 또는 급증 트래픽은 최소 medium을 요구합니다. 코드 크기로 수요를 추측하지 않으며, RPS/가용성/트래픽 미정이면 잠정 추천만 반환하고 선택 저장을 막습니다. 비용 견적은 제공하지 않습니다.
+
+Claude가 연결되어 있고 `use_ai=true`이면 `aws-architecture.v1` 고정 요청(카탈로그·근거·운영 요구·규칙 최소 등급·허용안·응답 스키마)을 한 번 전송합니다. AI는 `template_id`, 한국어 `reasons`, 실제 `evidence_ids`만 반환할 수 있습니다. 임의 리소스/명령/새 템플릿이나 최소 등급 미달 선택은 거절합니다. 미연결 또는 use_ai=false이면 규칙 결과임을 명시합니다. API 오류나 규격 위반을 AI 성공으로 대체하지 않습니다.
+
+로컬 DB/파일 영속성 위험 또는 지원 밖 DB는 선택을 차단합니다. 감지된 서버 세션은 다중 태스크 전 앱 수정 검토 항목으로 표시합니다. 정적 사이트/워커/배치 및 미확정 서비스는 HTTP 세 안에 억지로 배치하지 않고 별도 설계 필요로 반환합니다. 캐시·큐·읽기 복제본을 규모만으로 추가하지 않습니다.
+
+계획 및 선택은 `architecture.sqlite3`에 저장되어 재시작 후에도 남습니다. 프로젝트가 다른 계획이나 최신이 아닌 계획은 선택할 수 없습니다. 저장된 근거는 작성 당시의 스냅샷이며 레포/요구가 바뀌면 다시 판단해야 합니다.
+
+- POST `/api/projects/{id}/architecture-plans`: ArchitectureRequest
+- GET `/api/projects/{id}/architecture-plans/latest`: 최근 계획 또는 null
+- POST `/api/projects/{id}/architecture-plans/{plan_id}/select`: `{template_id: small|medium|large}`
+
+**선택 저장 자체는 AWS를 변경하지 않습니다.** 배포 요청에 `architecture_plan_id`를 전달하면 최신 선택·분석 근거·실행 설정 및 보안 검사를 재검증한 뒤 서버 카탈로그의 ECS 자원·AZ·자동 확장을 적용합니다. 관리형 PostgreSQL에만 RDS 가용성 변경을 적용합니다. 사전 기반 스택이 필요하며 빈 계정 온보딩은 포함하지 않습니다. 기존 medium·large 실측은 게이트·범용 실행 설정 변경 전 결과입니다. 이번 변경의 AWS 재배포는 미검증입니다.
+
+설계 참고: [ECS 목표 추적 확장](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-autoscaling-targettracking.html), [ECS AZ 분산](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-rebalancing.html), [RDS Multi-AZ](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZSingleStandby.html). Multi-AZ DB 인스턴스의 standby는 읽기 트래픽을 처리하지 않습니다.
+
+
 ### Security Gate prerequisite (#16, updated by #25)
 
 Image planning now scans an isolated repository snapshot using the merged
@@ -192,3 +219,19 @@ blocking. A structurally valid Gradle wrapper JAR can be excluded from text-secr
 scanning; that is not a security review of the binary or dependencies.
 Only a sanitized decision is returned; raw scanner findings/output are not
 sent to the dashboard or LLM. No production security guarantee is implied.
+
+Architecture planning follows the same prerequisite: creating, selecting and
+resolving an architecture plan rescan the current repository before collecting
+facts or calling Claude. The actual local/AWS build checks its own fresh source
+snapshot again, so a previously selected plan is not a security approval token.
+Historical AWS smoke-test results predate this integration. No AWS redeployment
+was run for the gate change; the current Java/Gradle scanner limitation must be
+resolved in the gate's supported-scope policy before that demo can pass again.
+
+### Generic HTTP runtime
+
+See [HTTP runtime contract and setup](../../docs/http-runtime.md) for DB-free
+HTTP apps, configurable PostgreSQL bindings and initialization. Saving an
+explicit runtime replaces the Spring-only execution assumption; the security
+gate limitation above remains separate. Existing projects without a runtime
+retain legacy behavior.

@@ -55,7 +55,7 @@ Implements `packages/contracts/openapi/target.yaml` v0.1.1:
 - POST returns 202; poll GET every 2–3 seconds. Status: pending → deploying → ready/failed.
 - `ready` requires the public Tunnel URL + `health_path` to return **200**, without following redirects.
 - The engine supplies a prebuilt `image`; both targets should run the same image.
-- PostgreSQL is the only supported DB here. An explicit MySQL request returns 400.
+- Legacy sample requests remain PostgreSQL-only. Explicit HTTP runtime supports PostgreSQL, MySQL and MongoDB; see [managed databases](../../docs/managed-databases.md).
 - App DB URL/user/password are set consistently with the managed PG service. Password
   comes from LOCAL_DB_PASSWORD or `secret_refs.SPRING_DATASOURCE_PASSWORD`.
 - Secret names resolve through LOCAL_SECRETS_FILE (JSON object); `db_password`
@@ -123,3 +123,5 @@ BOARD_PROFILE=default BOARD_PORT=18081 docker compose -p shakedown-bug up -d
 For the Target API, enable with `env.SPRING_PROFILES_ACTIVE=demo-reset` on a dedicated
 new project/ID. Removing that profile restores normal persistence. Do not override
 SPRING_JPA_HIBERNATE_DDL_AUTO in the bug demo; environment variables override profiles.
+
+`node infra/local/smoke-databases.mjs` (from repository root) verifies real MySQL/MongoDB connectivity, authentication and restart persistence without a tunnel or AWS.

@@ -55,6 +55,7 @@ class Project(Model):
     targets: list[TargetName]
     secrets: list[Secret]
     last_deployment: dict | None = None
+    runtime: dict | None = None
 
 class CreateProjectRequest(Model):
     image_only: bool = False

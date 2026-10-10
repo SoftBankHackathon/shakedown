@@ -183,6 +183,7 @@ components:
       type: object
       required: [deployment_id, project_id, image, port, health_path]
       properties:
+        runtime: {$ref: '#/components/schemas/HttpRuntime'}
         deployment_id: { type: string, description: 엔진이 발급. 멱등 키로 사용 }
         project_id: { type: string }
         image:
@@ -203,6 +204,14 @@ components:
           properties:
             engine: { type: string, enum: [mysql, postgres] }
             name: { type: string }
+        architecture:
+          type: object
+          additionalProperties: false
+          required: [version, template_id]
+          description: "AWS 전용 실행 카탈로그. replicas는 small=1, medium=2, large=3. Local에는 보내지 않음."
+          properties:
+            version: {const: aws-architecture.v1}
+            template_id: {type: string, enum: [small, medium, large]}
         options: { $ref: "#/components/schemas/TargetOptions" }
     TargetOptions:
       type: object
@@ -242,3 +251,82 @@ components:
       properties:
         error: { type: string }
         detail: { type: string }
+
+    HttpRuntime:
+      additionalProperties: false
+      properties:
+        version:
+          const: http-runtime.v1
+          default: http-runtime.v1
+          title: Version
+          type: string
+        port:
+          maximum: 65535
+          minimum: 1
+          title: Port
+          type: integer
+        health_path:
+          default: /
+          maxLength: 256
+          pattern: ^/(?!/)[^\s?#\\]*$
+          title: Health Path
+          type: string
+        env:
+          additionalProperties:
+            type: string
+          maxProperties: 64
+          title: Env
+          type: object
+        secret_refs:
+          additionalProperties:
+            type: string
+          maxProperties: 32
+          title: Secret Refs
+          type: object
+        database:
+          $ref: '#/components/schemas/RuntimeDatabase'
+        init_command:
+          items:
+            type: string
+          maxItems: 32
+          title: Init Command
+          type: array
+      required:
+      - port
+      title: HttpRuntime
+      type: object
+    RuntimeDatabase:
+      additionalProperties: false
+      properties:
+        mode:
+          default: none
+          enum:
+          - none
+          - postgres
+          - mysql
+          - mongodb
+          - external
+          title: Mode
+          type: string
+        name:
+          default: app
+          pattern: ^[a-z][a-z0-9_]{0,62}$
+          title: Name
+          type: string
+        bindings:
+          additionalProperties:
+            enum:
+            - host
+            - port
+            - name
+            - username
+            - password
+            - jdbc_url
+            - postgres_url
+            - mysql_url
+            - mongodb_url
+            type: string
+          title: Bindings
+          type: object
+      title: RuntimeDatabase
+      type: object

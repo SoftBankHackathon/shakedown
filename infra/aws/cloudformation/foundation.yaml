@@ -1,17 +1,100 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: Shakedown single-project demo foundation (ECS Fargate, ALB, private RDS)
+AWSTemplateFormatVersion: 2010-09-09
+Description: Shakedown ECS with RDS PostgreSQL/MySQL or TLS MongoDB replica set across three AZs
 Parameters:
   Name:
     Type: String
     Default: shakedown-board
-    AllowedPattern: '[a-z][a-z0-9-]{2,29}'
+    AllowedPattern: "[a-z][a-z0-9-]{2,29}"
+  AdditionalSecretArns:
+    Type: CommaDelimitedList
+    Default: ""
+    AllowedPattern: ^$|arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+
+    Description: Exact external Secrets Manager ARNs that ECS may read
+  AdditionalSecretKmsKeyArns:
+    Type: CommaDelimitedList
+    Default: ""
+    AllowedPattern: ^$|arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-zA-Z0-9-]+
+    Description: Exact customer-managed KMS key ARNs used by the additional secrets
+  CreateDatabase:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+  AppPort:
+    Type: Number
+    Default: 8080
+    MinValue: 1
+    MaxValue: 65535
+  DatabaseEngine:
+    Type: String
+    Default: postgres
+    AllowedValues:
+      - postgres
+      - mysql
+      - mongodb
+  MysqlVersion:
+    Type: String
+    Default: 8.4.7
+    AllowedPattern: 8\.4\.[0-9]+
+  MongoAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
   PostgresVersion:
     Type: String
-    AllowedPattern: '17\.[0-9]+'
+    AllowedPattern: 17\.[0-9]+
   DatabaseName:
     Type: String
     Default: board_db
-    AllowedPattern: '[a-zA-Z][a-zA-Z0-9_]{0,63}'
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9_]{0,63}"
+  EnableMongoSnapshots:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+Conditions:
+  WithAdditionalSecrets:
+    Fn::Not:
+      - Fn::Equals:
+          - Fn::Join:
+              - ""
+              - Ref: AdditionalSecretArns
+          - ""
+  WithAdditionalKmsKeys:
+    Fn::Not:
+      - Fn::Equals:
+          - Fn::Join:
+              - ""
+              - Ref: AdditionalSecretKmsKeyArns
+          - ""
+  WithDatabase:
+    Fn::Equals:
+      - Ref: CreateDatabase
+      - "true"
+  WithMongo:
+    Fn::And:
+      - Condition: WithDatabase
+      - Fn::Equals:
+          - Ref: DatabaseEngine
+          - mongodb
+  WithRds:
+    Fn::And:
+      - Condition: WithDatabase
+      - Fn::Not:
+          - Fn::Equals:
+              - Ref: DatabaseEngine
+              - mongodb
+  WithMysql:
+    Fn::Equals:
+      - Ref: DatabaseEngine
+      - mysql
+  WithMongoSnapshots:
+    Fn::And:
+      - Condition: WithMongo
+      - Fn::Equals:
+          - Ref: EnableMongoSnapshots
+          - "true"
 Resources:
   Vpc:
     Type: AWS::EC2::VPC
@@ -19,119 +102,457 @@ Resources:
       CidrBlock: 10.42.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
-      Tags: [{Key: Name, Value: {Ref: Name}}]
+      Tags:
+        - Key: Name
+          Value:
+            Ref: Name
   Gateway:
     Type: AWS::EC2::InternetGateway
   GatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
-    Properties: {VpcId: {Ref: Vpc}, InternetGatewayId: {Ref: Gateway}}
+    Properties:
+      VpcId:
+        Ref: Vpc
+      InternetGatewayId:
+        Ref: Gateway
   PublicA:
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: {Ref: Vpc}
+      VpcId:
+        Ref: Vpc
       CidrBlock: 10.42.0.0/24
-      AvailabilityZone: {Fn::Select: [0, {Fn::GetAZs: ''}]}
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ""
   PublicB:
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: {Ref: Vpc}
+      VpcId:
+        Ref: Vpc
       CidrBlock: 10.42.1.0/24
-      AvailabilityZone: {Fn::Select: [1, {Fn::GetAZs: ''}]}
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ""
+  PublicC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      CidrBlock: 10.42.2.0/24
+      AvailabilityZone:
+        Fn::Select:
+          - 2
+          - Fn::GetAZs: ""
+  RouteC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PublicRoutes
+      SubnetId:
+        Ref: PublicC
   PrivateA:
+    Condition: WithRds
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: {Ref: Vpc}
+      VpcId:
+        Ref: Vpc
       CidrBlock: 10.42.10.0/24
-      AvailabilityZone: {Fn::Select: [0, {Fn::GetAZs: ''}]}
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ""
   PrivateB:
+    Condition: WithRds
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: {Ref: Vpc}
+      VpcId:
+        Ref: Vpc
       CidrBlock: 10.42.11.0/24
-      AvailabilityZone: {Fn::Select: [1, {Fn::GetAZs: ''}]}
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ""
   PublicRoutes:
     Type: AWS::EC2::RouteTable
-    Properties: {VpcId: {Ref: Vpc}}
+    Properties:
+      VpcId:
+        Ref: Vpc
   PublicRoute:
     Type: AWS::EC2::Route
     DependsOn: GatewayAttachment
-    Properties: {RouteTableId: {Ref: PublicRoutes}, DestinationCidrBlock: 0.0.0.0/0, GatewayId: {Ref: Gateway}}
+    Properties:
+      RouteTableId:
+        Ref: PublicRoutes
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: Gateway
   RouteA:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties: {RouteTableId: {Ref: PublicRoutes}, SubnetId: {Ref: PublicA}}
+    Properties:
+      RouteTableId:
+        Ref: PublicRoutes
+      SubnetId:
+        Ref: PublicA
   RouteB:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties: {RouteTableId: {Ref: PublicRoutes}, SubnetId: {Ref: PublicB}}
+    Properties:
+      RouteTableId:
+        Ref: PublicRoutes
+      SubnetId:
+        Ref: PublicB
   AlbSg:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Public demo HTTP entry
-      VpcId: {Ref: Vpc}
-      SecurityGroupIngress: [{IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0}]
+      VpcId:
+        Ref: Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
   AppSg:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: App ingress only from ALB; outbound for ECR logs and DB
-      VpcId: {Ref: Vpc}
-      SecurityGroupIngress: [{IpProtocol: tcp, FromPort: 8080, ToPort: 8080, SourceSecurityGroupId: {Ref: AlbSg}}]
+      VpcId:
+        Ref: Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort:
+            Ref: AppPort
+          ToPort:
+            Ref: AppPort
+          SourceSecurityGroupId:
+            Ref: AlbSg
   DbSg:
+    Condition: WithRds
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: PostgreSQL only from ECS tasks
-      VpcId: {Ref: Vpc}
-      SecurityGroupIngress: [{IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: {Ref: AppSg}}]
+      VpcId:
+        Ref: Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort:
+            Fn::If:
+              - WithMysql
+              - 3306
+              - 5432
+          ToPort:
+            Fn::If:
+              - WithMysql
+              - 3306
+              - 5432
+          SourceSecurityGroupId:
+            Ref: AppSg
   DbSubnets:
+    Condition: WithRds
     Type: AWS::RDS::DBSubnetGroup
     Properties:
       DBSubnetGroupDescription: Isolated subnets without an internet route
-      SubnetIds: [{Ref: PrivateA}, {Ref: PrivateB}]
+      SubnetIds:
+        - Ref: PrivateA
+        - Ref: PrivateB
   DbSecret:
+    Condition: WithDatabase
     Type: AWS::SecretsManager::Secret
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      Description: Shakedown demo DB password (never read by adapter)
+      Description: DB password read only for managed URL synchronization
       GenerateSecretString:
         SecretStringTemplate: '{"username":"board_admin"}'
         GenerateStringKey: password
         PasswordLength: 32
         ExcludeCharacters: '"@/\\'
+  DbUrlSecret:
+    Condition: WithDatabase
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Database URL refreshed by the adapter on deployment
+      SecretString: "{}"
   Database:
+    Condition: WithRds
     Type: AWS::RDS::DBInstance
     DeletionPolicy: Snapshot
     UpdateReplacePolicy: Snapshot
     Properties:
-      Engine: postgres
-      EngineVersion: {Ref: PostgresVersion}
+      Engine:
+        Ref: DatabaseEngine
+      EngineVersion:
+        Fn::If:
+          - WithMysql
+          - Ref: MysqlVersion
+          - Ref: PostgresVersion
       DBInstanceClass: db.t3.micro
-      AllocatedStorage: '20'
+      AllocatedStorage: "20"
       StorageType: gp3
       StorageEncrypted: true
-      MultiAZ: false
       PubliclyAccessible: false
-      DBName: {Ref: DatabaseName}
+      DBName:
+        Ref: DatabaseName
       MasterUsername: board_admin
-      MasterUserPassword: {Fn::Sub: '{{resolve:secretsmanager:${DbSecret}:SecretString:password}}'}
-      DBSubnetGroupName: {Ref: DbSubnets}
-      VPCSecurityGroups: [{Ref: DbSg}]
+      MasterUserPassword:
+        Fn::Sub: "{{resolve:secretsmanager:${DbSecret}:SecretString:password}}"
+      DBSubnetGroupName:
+        Ref: DbSubnets
+      VPCSecurityGroups:
+        - Ref: DbSg
       BackupRetentionPeriod: 1
       AutoMinorVersionUpgrade: true
       CopyTagsToSnapshot: true
+  MongoSg:
+    Condition: WithMongo
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: MongoDB reachable only from application tasks; no SSH
+      VpcId:
+        Ref: Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 27017
+          ToPort: 27017
+          SourceSecurityGroupId:
+            Ref: AppSg
+  MongoRole:
+    Condition: WithMongo
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: read-own-db-password
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - Ref: DbSecret
+                  - Ref: MongoClusterSecret
+              - Effect: Allow
+                Action: secretsmanager:PutSecretValue
+                Resource:
+                  - Ref: DbUrlSecret
+                  - Ref: MongoClusterSecret
+                  - Ref: MongoCaSecret
+  MongoProfile:
+    Condition: WithMongo
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - Ref: MongoRole
+  MongoData:
+    Condition: WithMongo
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      AvailabilityZone:
+        Fn::GetAtt:
+          - PublicA
+          - AvailabilityZone
+      Size: 20
+      VolumeType: gp3
+      Encrypted: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: ${Name}-mongo-data-0
+        - Key: ShakedownMongoBackup
+          Value:
+            Ref: Name
+  MongoAttachment:
+    Condition: WithMongo
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdf
+      InstanceId:
+        Ref: MongoInstance
+      VolumeId:
+        Ref: MongoData
+  MongoReadyHandle:
+    Condition: WithMongo
+    Type: AWS::CloudFormation::WaitConditionHandle
+  MongoReady:
+    Condition: WithMongo
+    Type: AWS::CloudFormation::WaitCondition
+    DependsOn:
+      - MongoAttachment
+      - MongoAttachment2
+      - MongoAttachment3
+    Properties:
+      Handle:
+        Ref: MongoReadyHandle
+      Timeout: "1800"
+      Count: 1
+  MongoInstance:
+    Condition: WithMongo
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - PublicRoute
+      - RouteA
+    Properties:
+      ImageId:
+        Ref: MongoAmi
+      InstanceType: t3.small
+      IamInstanceProfile:
+        Ref: MongoProfile
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+      NetworkInterfaces:
+        - DeviceIndex: "0"
+          SubnetId:
+            Ref: PublicA
+          AssociatePublicIpAddress: true
+          GroupSet:
+            - Ref: MongoSg
+          PrivateIpAddress: 10.42.0.50
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 12
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: ${Name}-mongo-0
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/bin/bash
+            # Rendered into CloudFormation UserData. Values are substituted by CloudFormation.
+            set -euo pipefail
+            umask 077
+            node_index='0'
+            volume='${MongoData}'
+            region='${AWS::Region}'
+            bundle_secret='${MongoClusterSecret}'
+            ca_secret='${MongoCaSecret}'
+            password_secret='${DbSecret}'
+            url_secret='${DbUrlSecret}'
+            db_name='${DatabaseName}'
+            ready_handle='${MongoReadyHandle}'
+            dnf install -y docker openssl
+            systemctl enable --now docker
+            security=/etc/shakedown-mongo
+            mkdir -p "$security" /srv/mongodb
+            chmod 700 "$security"
+            device="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_$(echo "$volume" | tr -d '-')"
+            for i in $(seq 1 120); do test -b "$device" && break; sleep 5; done
+            test -b "$device"
+            if ! blkid "$device"; then mkfs -t xfs "$device"; fi
+            echo "UUID=$(blkid -s UUID -o value "$device") /srv/mongodb xfs defaults,nofail 0 2" >> /etc/fstab
+            mount /srv/mongodb
+            # Node 0 creates one cluster bundle. Replacements reuse it; credentials never enter logs.
+            if [ "$node_index" = 0 ]; then
+              aws secretsmanager get-secret-value --region "$region" --secret-id "$bundle_secret" --query SecretString --output text > "$security/bundle.json"
+              if ! python3 -c 'import json,sys; assert "pem" in json.load(open(sys.argv[1]))' "$security/bundle.json" 2>/dev/null; then
+                openssl req -x509 -newkey rsa:3072 -nodes -keyout "$security/ca.key" -out "$security/ca.pem" -days 3650 -subj '/CN=Shakedown Mongo CA' >/dev/null 2>&1
+                openssl req -new -newkey rsa:3072 -nodes -keyout "$security/server.key" -out "$security/server.csr" -subj '/CN=shakedown-mongo' >/dev/null 2>&1
+                printf '%s\n' 'subjectAltName=IP:10.42.0.50,IP:10.42.1.50,IP:10.42.2.50,IP:127.0.0.1,DNS:localhost' 'extendedKeyUsage=serverAuth,clientAuth' > "$security/extensions"
+                openssl x509 -req -in "$security/server.csr" -CA "$security/ca.pem" -CAkey "$security/ca.key" -CAcreateserial -out "$security/server.crt" -days 365 -extfile "$security/extensions" >/dev/null 2>&1
+                python3 - "$security" <<'PY'
+            import json,pathlib,secrets,sys
+            p=pathlib.Path(sys.argv[1]); (p/'bundle.json').write_text(json.dumps({'ca':(p/'ca.pem').read_text(),'pem':(p/'server.crt').read_text()+(p/'server.key').read_text(),'keyfile':secrets.token_urlsafe(500).replace('-','A').replace('_','B'),'adminPassword':secrets.token_hex(32)}))
+            PY
+                aws secretsmanager put-secret-value --region "$region" --secret-id "$bundle_secret" --secret-string "file://$security/bundle.json" >/dev/null
+                # No CA signing key is persisted. Leaf renewal creates a coordinated new CA/bundle.
+                rm -f "$security/ca.key" "$security/server.key" "$security/server.csr" "$security/server.crt" "$security/ca.srl"
+              fi
+            fi
+            for i in $(seq 1 120); do
+              aws secretsmanager get-secret-value --region "$region" --secret-id "$bundle_secret" --query SecretString --output text > "$security/bundle.json"
+              if python3 -c 'import json,sys; assert "pem" in json.load(open(sys.argv[1]))' "$security/bundle.json" 2>/dev/null; then break; fi
+              sleep 5
+            done
+            python3 - "$security" <<'PY'
+            import json,pathlib,sys
+            p=pathlib.Path(sys.argv[1]); b=json.loads((p/'bundle.json').read_text())
+            for k,f in [('ca','ca.pem'),('pem','server.pem'),('keyfile','keyfile')]: (p/f).write_text(b[k])
+            (p/'env').write_text('MONGO_INITDB_ROOT_USERNAME=admin\nMONGO_INITDB_ROOT_PASSWORD='+b['adminPassword']+'\n')
+            PY
+            rm "$security/bundle.json"
+            chown 999:999 "$security/ca.pem" "$security/server.pem" "$security/keyfile"
+            chmod 400 "$security/server.pem" "$security/keyfile"
+            chmod 444 "$security/ca.pem"
+            docker pull mongo:8.0
+            docker run -d --name shakedown-mongo --restart unless-stopped --env-file "$security/env" -p 27017:27017 \
+              -v /srv/mongodb:/data/db -v "$security/server.pem:/security/server.pem:ro" -v "$security/keyfile:/security/keyfile:ro" -v "$security/ca.pem:/security/ca.pem:ro" \
+              mongo:8.0 --replSet shakedown --keyFile /security/keyfile --tlsMode requireTLS --tlsCertificateKeyFile /security/server.pem --tlsCAFile /security/ca.pem --tlsAllowConnectionsWithoutCertificates
+            if [ "$node_index" != 0 ]; then exit 0; fi
+            for i in $(seq 1 120); do
+              if docker exec shakedown-mongo mongosh --quiet --tls --tlsCAFile /security/ca.pem --eval 'const a=db.getSiblingDB("admin"); if(!a.auth("admin",process.env.MONGO_INITDB_ROOT_PASSWORD))quit(1); a.runCommand({ping:1});' >/dev/null 2>&1; then break; fi
+              sleep 5
+            done
+            # Initiate idempotently, then wait for all three authenticated TLS members.
+            cat > "$security/configure.js" <<'JS'
+            const a=db.getSiblingDB('admin'); a.auth('admin',process.env.MONGO_INITDB_ROOT_PASSWORD);
+            try {rs.status();} catch(e) {if(e.code!==94)throw e;const r=rs.initiate({_id:'shakedown',members:[{_id:0,host:'10.42.0.50:27017',priority:2},{_id:1,host:'10.42.1.50:27017'},{_id:2,host:'10.42.2.50:27017'}]}); if(!r.ok)quit(2);}
+            JS
+            docker cp "$security/configure.js" shakedown-mongo:/tmp/configure.js
+            for i in $(seq 1 120); do
+              if docker exec shakedown-mongo mongosh --quiet --tls --tlsCAFile /security/ca.pem /tmp/configure.js >/dev/null 2>&1; then break; fi
+              sleep 5
+            done
+            aws secretsmanager get-secret-value --region "$region" --secret-id "$password_secret" --query SecretString --output text > "$security/password.json"
+            python3 - "$security" "$db_name" <<'PY'
+            import json,pathlib,sys
+            p=pathlib.Path(sys.argv[1]); password=json.loads((p/'password.json').read_text())['password']; name=sys.argv[2]
+            (p/'app.js').write_text("const a=db.getSiblingDB('admin'); a.auth('admin',process.env.MONGO_INITDB_ROOT_PASSWORD); const s=rs.status(); if(s.members.filter(m=>m.health===1&&[1,2].includes(m.state)).length!==3)quit(2); if(!db.hello().isWritablePrimary)quit(2); const d=db.getSiblingDB("+json.dumps(name)+"); if(!d.getUser('app'))d.createUser({user:'app',pwd:"+json.dumps(password)+",roles:[{role:'readWrite',db:"+json.dumps(name)+"}]},{w:'majority'});")
+            PY
+            docker cp "$security/app.js" shakedown-mongo:/tmp/app.js
+            for i in $(seq 1 120); do
+              if docker exec shakedown-mongo mongosh --quiet --tls --tlsCAFile /security/ca.pem /tmp/app.js >/dev/null 2>&1; then
+                python3 - "$security" "$db_name" <<'PY'
+            import json,pathlib,sys,urllib.parse
+            p=pathlib.Path(sys.argv[1]); password=json.loads((p/'password.json').read_text())['password']; name=sys.argv[2]
+            (p/'url').write_text('mongodb://app:'+urllib.parse.quote(password,safe='')+'@10.42.0.50:27017,10.42.1.50:27017,10.42.2.50:27017/'+name+'?authSource='+name+'&replicaSet=shakedown&tls=true&tlsCAFile=/run/shakedown/db-ca/ca.pem&w=majority&retryWrites=true')
+            PY
+                aws secretsmanager put-secret-value --region "$region" --secret-id "$ca_secret" --secret-string "file://$security/ca.pem" >/dev/null
+                aws secretsmanager put-secret-value --region "$region" --secret-id "$url_secret" --secret-string "file://$security/url" >/dev/null
+                rm -f "$security/url" "$security/password.json" "$security/app.js"
+                docker exec shakedown-mongo rm /tmp/app.js
+                curl --fail --silent --show-error -X PUT -H 'Content-Type:' --data-binary '{"Status":"SUCCESS","Reason":"TLS replica set ready","UniqueId":"mongo","Data":"ready"}' "$ready_handle"
+                exit 0
+              fi
+              sleep 5
+            done
+            exit 1
   Repository:
     Type: AWS::ECR::Repository
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      RepositoryName: {Ref: Name}
+      RepositoryName:
+        Ref: Name
       ImageTagMutability: IMMUTABLE
-      ImageScanningConfiguration: {ScanOnPush: true}
-      EncryptionConfiguration: {EncryptionType: AES256}
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
   Logs:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      LogGroupName: {Fn::Sub: '/shakedown/${Name}'}
+      LogGroupName:
+        Fn::Sub: /shakedown/${Name}
       RetentionInDays: 7
   Cluster:
     Type: AWS::ECS::Cluster
@@ -141,13 +562,19 @@ Resources:
     Properties:
       Scheme: internet-facing
       Type: application
-      Subnets: [{Ref: PublicA}, {Ref: PublicB}]
-      SecurityGroups: [{Ref: AlbSg}]
+      Subnets:
+        - Ref: PublicA
+        - Ref: PublicB
+        - Ref: PublicC
+      SecurityGroups:
+        - Ref: AlbSg
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      VpcId: {Ref: Vpc}
-      Port: 8080
+      VpcId:
+        Ref: Vpc
+      Port:
+        Ref: AppPort
       Protocol: HTTP
       TargetType: ip
       HealthCheckPath: /
@@ -155,107 +582,798 @@ Resources:
       HealthCheckTimeoutSeconds: 5
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 2
-      Matcher: {HttpCode: '200'}
+      Matcher:
+        HttpCode: "200"
       TargetGroupAttributes:
-        - {Key: stickiness.enabled, Value: 'false'}
-        - {Key: load_balancing.algorithm.type, Value: round_robin}
-        - {Key: deregistration_delay.timeout_seconds, Value: '5'}
+        - Key: stickiness.enabled
+          Value: "false"
+        - Key: load_balancing.algorithm.type
+          Value: round_robin
+        - Key: deregistration_delay.timeout_seconds
+          Value: "5"
   Listener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
-      LoadBalancerArn: {Ref: Alb}
+      LoadBalancerArn:
+        Ref: Alb
       Port: 80
       Protocol: HTTP
       DefaultActions:
+        - Type: forward
+          TargetGroupArn:
+            Ref: TargetGroup
+  TrafficGate:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn:
+        Ref: Listener
+      Priority: 1
+      Conditions:
+        - Field: source-ip
+          SourceIpConfig:
+            Values:
+              - 0.0.0.0/0
+              - ::/0
+      Actions:
         - Type: fixed-response
-          FixedResponseConfig: {StatusCode: '403', ContentType: text/plain, MessageBody: 'Shakedown: deployment unavailable'}
+          FixedResponseConfig:
+            StatusCode: "403"
+            ContentType: text/plain
+            MessageBody: "Shakedown: deployment unavailable"
   ExecutionRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: 'sts:AssumeRole'}]
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
       Policies:
         - PolicyName: image-logs-secret
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: 2012-10-17
             Statement:
-              - {Effect: Allow, Action: 'ecr:GetAuthorizationToken', Resource: '*'}
               - Effect: Allow
-                Action: ['ecr:BatchCheckLayerAvailability', 'ecr:GetDownloadUrlForLayer', 'ecr:BatchGetImage']
-                Resource: {Fn::GetAtt: [Repository, Arn]}
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
               - Effect: Allow
-                Action: ['logs:CreateLogStream', 'logs:PutLogEvents']
-                Resource: {Fn::GetAtt: [Logs, Arn]}
-              - {Effect: Allow, Action: 'secretsmanager:GetSecretValue', Resource: {Ref: DbSecret}}
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource:
+                  Fn::GetAtt:
+                    - Repository
+                    - Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::GetAtt:
+                    - Logs
+                    - Arn
+              - Fn::If:
+                  - WithDatabase
+                  - Effect: Allow
+                    Action: secretsmanager:GetSecretValue
+                    Resource:
+                      - Ref: DbSecret
+                      - Ref: DbUrlSecret
+                  - Ref: AWS::NoValue
+              - Fn::If:
+                  - WithAdditionalSecrets
+                  - Effect: Allow
+                    Action: secretsmanager:GetSecretValue
+                    Resource:
+                      Ref: AdditionalSecretArns
+                  - Ref: AWS::NoValue
+              - Fn::If:
+                  - WithAdditionalKmsKeys
+                  - Effect: Allow
+                    Action: kms:Decrypt
+                    Resource:
+                      Ref: AdditionalSecretKmsKeyArns
+                    Condition:
+                      StringEquals:
+                        kms:ViaService:
+                          Fn::Sub: secretsmanager.${AWS::Region}.${AWS::URLSuffix}
+                  - Ref: AWS::NoValue
+              - Fn::If:
+                  - WithMongo
+                  - Effect: Allow
+                    Action: secretsmanager:GetSecretValue
+                    Resource:
+                      Ref: MongoCaSecret
+                  - Ref: AWS::NoValue
   TaskRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: 'sts:AssumeRole'}]
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
   AdapterPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Attach to the explicitly chosen hackathon adapter principal; no DB-secret read
+      Description: Attach to the chosen adapter principal; DB secret access for URL synchronization
       PolicyDocument:
-        Version: '2012-10-17'
+        Version: 2012-10-17
         Statement:
           - Effect: Allow
-            Action: ['ecs:RegisterTaskDefinition', 'ecs:DescribeTaskDefinition', 'ecs:DescribeServices', 'ecs:ListTasks', 'ecs:DescribeTasks']
-            Resource: '*'
+            Action:
+              - ecs:RegisterTaskDefinition
+              - ecs:DescribeTaskDefinition
+              - ecs:DescribeServices
+              - ecs:ListTasks
+              - ecs:DescribeTasks
+            Resource: "*"
           - Effect: Allow
-            Action: ['ecs:CreateService', 'ecs:UpdateService', 'ecs:DeleteService']
-            Resource: {Fn::Sub: 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${Cluster}/${Name}'}
+            Action:
+              - ecs:CreateService
+              - ecs:UpdateService
+              - ecs:DeleteService
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${Cluster}/${Name}
           - Effect: Allow
-            Action: ['ecs:RunTask']
-            Resource: {Fn::Sub: 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${Name}:*'}
-            Condition: {ArnEquals: {'ecs:cluster': {Fn::GetAtt: [Cluster, Arn]}}}
+            Action:
+              - ecs:RunTask
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${Name}:*
+            Condition:
+              ArnEquals:
+                ecs:cluster:
+                  Fn::GetAtt:
+                    - Cluster
+                    - Arn
           - Effect: Allow
-            Action: ['ecs:StopTask']
-            Resource: {Fn::Sub: 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${Cluster}/*'}
+            Action:
+              - ecs:StopTask
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${Cluster}/*
           - Effect: Allow
-            Action: ['iam:PassRole']
-            Resource: [{Fn::GetAtt: [ExecutionRole, Arn]}, {Fn::GetAtt: [TaskRole, Arn]}]
-            Condition: {StringEquals: {'iam:PassedToService': ecs-tasks.amazonaws.com}}
+            Action:
+              - iam:PassRole
+            Resource:
+              - Fn::GetAtt:
+                  - ExecutionRole
+                  - Arn
+              - Fn::GetAtt:
+                  - TaskRole
+                  - Arn
+            Condition:
+              StringEquals:
+                iam:PassedToService: ecs-tasks.amazonaws.com
           - Effect: Allow
-            Action: ['iam:CreateServiceLinkedRole']
-            Resource: {Fn::Sub: 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS*'}
-            Condition: {StringEquals: {'iam:AWSServiceName': ecs.amazonaws.com}}
-          - {Effect: Allow, Action: 'elasticloadbalancing:ModifyListener', Resource: {Ref: Listener}}
+            Action:
+              - iam:CreateServiceLinkedRole
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS*
+            Condition:
+              StringEquals:
+                iam:AWSServiceName: ecs.amazonaws.com
           - Effect: Allow
-            Action: ['elasticloadbalancing:ModifyTargetGroup', 'elasticloadbalancing:ModifyTargetGroupAttributes']
-            Resource: {Ref: TargetGroup}
-          - {Effect: Allow, Action: 'elasticloadbalancing:DescribeTargetHealth', Resource: '*'}
-          - {Effect: Allow, Action: 'ecr:DescribeImages', Resource: {Fn::GetAtt: [Repository, Arn]}}
-          - {Effect: Allow, Action: ['logs:DescribeLogStreams', 'logs:GetLogEvents'], Resource: {Fn::GetAtt: [Logs, Arn]}}
+            Action: elasticloadbalancing:ModifyRule
+            Resource:
+              Ref: TrafficGate
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:ModifyTargetGroup
+              - elasticloadbalancing:ModifyTargetGroupAttributes
+            Resource:
+              Ref: TargetGroup
+          - Effect: Allow
+            Action: elasticloadbalancing:DescribeTargetHealth
+            Resource: "*"
+          - Effect: Allow
+            Action: ecr:DescribeImages
+            Resource:
+              Fn::GetAtt:
+                - Repository
+                - Arn
+          - Fn::If:
+              - WithDatabase
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - Ref: DbSecret
+                  - Ref: DbUrlSecret
+              - Ref: AWS::NoValue
+          - Fn::If:
+              - WithDatabase
+              - Effect: Allow
+                Action: secretsmanager:PutSecretValue
+                Resource:
+                  Ref: DbUrlSecret
+              - Ref: AWS::NoValue
+          - Effect: Allow
+            Action:
+              - logs:DescribeLogStreams
+              - logs:GetLogEvents
+            Resource:
+              Fn::GetAtt:
+                - Logs
+                - Arn
+          - Effect: Allow
+            Action:
+              - ec2:DescribeSubnets
+              - rds:DescribeDBInstances
+              - application-autoscaling:DescribeScalableTargets
+            Resource: "*"
+          - Fn::If:
+              - WithRds
+              - Effect: Allow
+                Action: rds:ModifyDBInstance
+                Resource:
+                  Fn::GetAtt:
+                    - Database
+                    - DBInstanceArn
+              - Ref: AWS::NoValue
+          - Effect: Allow
+            Action:
+              - application-autoscaling:RegisterScalableTarget
+              - application-autoscaling:DeregisterScalableTarget
+              - application-autoscaling:PutScalingPolicy
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:application-autoscaling:${AWS::Region}:${AWS::AccountId}:scalable-target/*
+            Condition:
+              StringEquals:
+                application-autoscaling:service-namespace: ecs
+                application-autoscaling:scalable-dimension: ecs:service:DesiredCount
+          - Effect: Allow
+            Action: iam:CreateServiceLinkedRole
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+            Condition:
+              StringEquals:
+                iam:AWSServiceName: ecs.application-autoscaling.amazonaws.com
+          - Fn::If:
+              - WithMongo
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  Ref: MongoCaSecret
+              - Ref: AWS::NoValue
   ImagePublisherPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       Description: Separate build/push permissions for the engine or CI
       PolicyDocument:
-        Version: '2012-10-17'
+        Version: 2012-10-17
         Statement:
-          - {Effect: Allow, Action: 'ecr:GetAuthorizationToken', Resource: '*'}
           - Effect: Allow
-            Action: ['ecr:BatchCheckLayerAvailability', 'ecr:InitiateLayerUpload', 'ecr:UploadLayerPart', 'ecr:CompleteLayerUpload', 'ecr:PutImage', 'ecr:DescribeImages', 'ecr:BatchGetImage', 'ecr:GetDownloadUrlForLayer']
-            Resource: {Fn::GetAtt: [Repository, Arn]}
+            Action: ecr:GetAuthorizationToken
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+              - ecr:PutImage
+              - ecr:DescribeImages
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+            Resource:
+              Fn::GetAtt:
+                - Repository
+                - Arn
+  MongoData2:
+    Condition: WithMongo
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      AvailabilityZone:
+        Fn::GetAtt:
+          - PublicB
+          - AvailabilityZone
+      Size: 20
+      VolumeType: gp3
+      Encrypted: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: ${Name}-mongo-data-1
+        - Key: ShakedownMongoBackup
+          Value:
+            Ref: Name
+  MongoInstance2:
+    Condition: WithMongo
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - PublicRoute
+      - RouteB
+    Properties:
+      ImageId:
+        Ref: MongoAmi
+      InstanceType: t3.small
+      IamInstanceProfile:
+        Ref: MongoProfile
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+      NetworkInterfaces:
+        - DeviceIndex: "0"
+          SubnetId:
+            Ref: PublicB
+          AssociatePublicIpAddress: true
+          GroupSet:
+            - Ref: MongoSg
+          PrivateIpAddress: 10.42.1.50
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 12
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: ${Name}-mongo-1
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/bin/bash
+            # Rendered into CloudFormation UserData. Values are substituted by CloudFormation.
+            set -euo pipefail
+            umask 077
+            node_index='1'
+            volume='${MongoData2}'
+            region='${AWS::Region}'
+            bundle_secret='${MongoClusterSecret}'
+            ca_secret='${MongoCaSecret}'
+            password_secret='${DbSecret}'
+            url_secret='${DbUrlSecret}'
+            db_name='${DatabaseName}'
+            ready_handle='${MongoReadyHandle}'
+            dnf install -y docker openssl
+            systemctl enable --now docker
+            security=/etc/shakedown-mongo
+            mkdir -p "$security" /srv/mongodb
+            chmod 700 "$security"
+            device="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_$(echo "$volume" | tr -d '-')"
+            for i in $(seq 1 120); do test -b "$device" && break; sleep 5; done
+            test -b "$device"
+            if ! blkid "$device"; then mkfs -t xfs "$device"; fi
+            echo "UUID=$(blkid -s UUID -o value "$device") /srv/mongodb xfs defaults,nofail 0 2" >> /etc/fstab
+            mount /srv/mongodb
+            # Node 0 creates one cluster bundle. Replacements reuse it; credentials never enter logs.
+            if [ "$node_index" = 0 ]; then
+              aws secretsmanager get-secret-value --region "$region" --secret-id "$bundle_secret" --query SecretString --output text > "$security/bundle.json"
+              if ! python3 -c 'import json,sys; assert "pem" in json.load(open(sys.argv[1]))' "$security/bundle.json" 2>/dev/null; then
+                openssl req -x509 -newkey rsa:3072 -nodes -keyout "$security/ca.key" -out "$security/ca.pem" -days 3650 -subj '/CN=Shakedown Mongo CA' >/dev/null 2>&1
+                openssl req -new -newkey rsa:3072 -nodes -keyout "$security/server.key" -out "$security/server.csr" -subj '/CN=shakedown-mongo' >/dev/null 2>&1
+                printf '%s\n' 'subjectAltName=IP:10.42.0.50,IP:10.42.1.50,IP:10.42.2.50,IP:127.0.0.1,DNS:localhost' 'extendedKeyUsage=serverAuth,clientAuth' > "$security/extensions"
+                openssl x509 -req -in "$security/server.csr" -CA "$security/ca.pem" -CAkey "$security/ca.key" -CAcreateserial -out "$security/server.crt" -days 365 -extfile "$security/extensions" >/dev/null 2>&1
+                python3 - "$security" <<'PY'
+            import json,pathlib,secrets,sys
+            p=pathlib.Path(sys.argv[1]); (p/'bundle.json').write_text(json.dumps({'ca':(p/'ca.pem').read_text(),'pem':(p/'server.crt').read_text()+(p/'server.key').read_text(),'keyfile':secrets.token_urlsafe(500).replace('-','A').replace('_','B'),'adminPassword':secrets.token_hex(32)}))
+            PY
+                aws secretsmanager put-secret-value --region "$region" --secret-id "$bundle_secret" --secret-string "file://$security/bundle.json" >/dev/null
+                # No CA signing key is persisted. Leaf renewal creates a coordinated new CA/bundle.
+                rm -f "$security/ca.key" "$security/server.key" "$security/server.csr" "$security/server.crt" "$security/ca.srl"
+              fi
+            fi
+            for i in $(seq 1 120); do
+              aws secretsmanager get-secret-value --region "$region" --secret-id "$bundle_secret" --query SecretString --output text > "$security/bundle.json"
+              if python3 -c 'import json,sys; assert "pem" in json.load(open(sys.argv[1]))' "$security/bundle.json" 2>/dev/null; then break; fi
+              sleep 5
+            done
+            python3 - "$security" <<'PY'
+            import json,pathlib,sys
+            p=pathlib.Path(sys.argv[1]); b=json.loads((p/'bundle.json').read_text())
+            for k,f in [('ca','ca.pem'),('pem','server.pem'),('keyfile','keyfile')]: (p/f).write_text(b[k])
+            (p/'env').write_text('MONGO_INITDB_ROOT_USERNAME=admin\nMONGO_INITDB_ROOT_PASSWORD='+b['adminPassword']+'\n')
+            PY
+            rm "$security/bundle.json"
+            chown 999:999 "$security/ca.pem" "$security/server.pem" "$security/keyfile"
+            chmod 400 "$security/server.pem" "$security/keyfile"
+            chmod 444 "$security/ca.pem"
+            docker pull mongo:8.0
+            docker run -d --name shakedown-mongo --restart unless-stopped --env-file "$security/env" -p 27017:27017 \
+              -v /srv/mongodb:/data/db -v "$security/server.pem:/security/server.pem:ro" -v "$security/keyfile:/security/keyfile:ro" -v "$security/ca.pem:/security/ca.pem:ro" \
+              mongo:8.0 --replSet shakedown --keyFile /security/keyfile --tlsMode requireTLS --tlsCertificateKeyFile /security/server.pem --tlsCAFile /security/ca.pem --tlsAllowConnectionsWithoutCertificates
+            if [ "$node_index" != 0 ]; then exit 0; fi
+            for i in $(seq 1 120); do
+              if docker exec shakedown-mongo mongosh --quiet --tls --tlsCAFile /security/ca.pem --eval 'const a=db.getSiblingDB("admin"); if(!a.auth("admin",process.env.MONGO_INITDB_ROOT_PASSWORD))quit(1); a.runCommand({ping:1});' >/dev/null 2>&1; then break; fi
+              sleep 5
+            done
+            # Initiate idempotently, then wait for all three authenticated TLS members.
+            cat > "$security/configure.js" <<'JS'
+            const a=db.getSiblingDB('admin'); a.auth('admin',process.env.MONGO_INITDB_ROOT_PASSWORD);
+            try {rs.status();} catch(e) {if(e.code!==94)throw e;const r=rs.initiate({_id:'shakedown',members:[{_id:0,host:'10.42.0.50:27017',priority:2},{_id:1,host:'10.42.1.50:27017'},{_id:2,host:'10.42.2.50:27017'}]}); if(!r.ok)quit(2);}
+            JS
+            docker cp "$security/configure.js" shakedown-mongo:/tmp/configure.js
+            for i in $(seq 1 120); do
+              if docker exec shakedown-mongo mongosh --quiet --tls --tlsCAFile /security/ca.pem /tmp/configure.js >/dev/null 2>&1; then break; fi
+              sleep 5
+            done
+            aws secretsmanager get-secret-value --region "$region" --secret-id "$password_secret" --query SecretString --output text > "$security/password.json"
+            python3 - "$security" "$db_name" <<'PY'
+            import json,pathlib,sys
+            p=pathlib.Path(sys.argv[1]); password=json.loads((p/'password.json').read_text())['password']; name=sys.argv[2]
+            (p/'app.js').write_text("const a=db.getSiblingDB('admin'); a.auth('admin',process.env.MONGO_INITDB_ROOT_PASSWORD); const s=rs.status(); if(s.members.filter(m=>m.health===1&&[1,2].includes(m.state)).length!==3)quit(2); if(!db.hello().isWritablePrimary)quit(2); const d=db.getSiblingDB("+json.dumps(name)+"); if(!d.getUser('app'))d.createUser({user:'app',pwd:"+json.dumps(password)+",roles:[{role:'readWrite',db:"+json.dumps(name)+"}]},{w:'majority'});")
+            PY
+            docker cp "$security/app.js" shakedown-mongo:/tmp/app.js
+            for i in $(seq 1 120); do
+              if docker exec shakedown-mongo mongosh --quiet --tls --tlsCAFile /security/ca.pem /tmp/app.js >/dev/null 2>&1; then
+                python3 - "$security" "$db_name" <<'PY'
+            import json,pathlib,sys,urllib.parse
+            p=pathlib.Path(sys.argv[1]); password=json.loads((p/'password.json').read_text())['password']; name=sys.argv[2]
+            (p/'url').write_text('mongodb://app:'+urllib.parse.quote(password,safe='')+'@10.42.0.50:27017,10.42.1.50:27017,10.42.2.50:27017/'+name+'?authSource='+name+'&replicaSet=shakedown&tls=true&tlsCAFile=/run/shakedown/db-ca/ca.pem&w=majority&retryWrites=true')
+            PY
+                aws secretsmanager put-secret-value --region "$region" --secret-id "$ca_secret" --secret-string "file://$security/ca.pem" >/dev/null
+                aws secretsmanager put-secret-value --region "$region" --secret-id "$url_secret" --secret-string "file://$security/url" >/dev/null
+                rm -f "$security/url" "$security/password.json" "$security/app.js"
+                docker exec shakedown-mongo rm /tmp/app.js
+                curl --fail --silent --show-error -X PUT -H 'Content-Type:' --data-binary '{"Status":"SUCCESS","Reason":"TLS replica set ready","UniqueId":"mongo","Data":"ready"}' "$ready_handle"
+                exit 0
+              fi
+              sleep 5
+            done
+            exit 1
+  MongoAttachment2:
+    Condition: WithMongo
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdf
+      InstanceId:
+        Ref: MongoInstance2
+      VolumeId:
+        Ref: MongoData2
+  MongoData3:
+    Condition: WithMongo
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      AvailabilityZone:
+        Fn::GetAtt:
+          - PublicC
+          - AvailabilityZone
+      Size: 20
+      VolumeType: gp3
+      Encrypted: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: ${Name}-mongo-data-2
+        - Key: ShakedownMongoBackup
+          Value:
+            Ref: Name
+  MongoInstance3:
+    Condition: WithMongo
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - PublicRoute
+      - RouteC
+    Properties:
+      ImageId:
+        Ref: MongoAmi
+      InstanceType: t3.small
+      IamInstanceProfile:
+        Ref: MongoProfile
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+      NetworkInterfaces:
+        - DeviceIndex: "0"
+          SubnetId:
+            Ref: PublicC
+          AssociatePublicIpAddress: true
+          GroupSet:
+            - Ref: MongoSg
+          PrivateIpAddress: 10.42.2.50
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 12
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: ${Name}-mongo-2
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/bin/bash
+            # Rendered into CloudFormation UserData. Values are substituted by CloudFormation.
+            set -euo pipefail
+            umask 077
+            node_index='2'
+            volume='${MongoData3}'
+            region='${AWS::Region}'
+            bundle_secret='${MongoClusterSecret}'
+            ca_secret='${MongoCaSecret}'
+            password_secret='${DbSecret}'
+            url_secret='${DbUrlSecret}'
+            db_name='${DatabaseName}'
+            ready_handle='${MongoReadyHandle}'
+            dnf install -y docker openssl
+            systemctl enable --now docker
+            security=/etc/shakedown-mongo
+            mkdir -p "$security" /srv/mongodb
+            chmod 700 "$security"
+            device="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_$(echo "$volume" | tr -d '-')"
+            for i in $(seq 1 120); do test -b "$device" && break; sleep 5; done
+            test -b "$device"
+            if ! blkid "$device"; then mkfs -t xfs "$device"; fi
+            echo "UUID=$(blkid -s UUID -o value "$device") /srv/mongodb xfs defaults,nofail 0 2" >> /etc/fstab
+            mount /srv/mongodb
+            # Node 0 creates one cluster bundle. Replacements reuse it; credentials never enter logs.
+            if [ "$node_index" = 0 ]; then
+              aws secretsmanager get-secret-value --region "$region" --secret-id "$bundle_secret" --query SecretString --output text > "$security/bundle.json"
+              if ! python3 -c 'import json,sys; assert "pem" in json.load(open(sys.argv[1]))' "$security/bundle.json" 2>/dev/null; then
+                openssl req -x509 -newkey rsa:3072 -nodes -keyout "$security/ca.key" -out "$security/ca.pem" -days 3650 -subj '/CN=Shakedown Mongo CA' >/dev/null 2>&1
+                openssl req -new -newkey rsa:3072 -nodes -keyout "$security/server.key" -out "$security/server.csr" -subj '/CN=shakedown-mongo' >/dev/null 2>&1
+                printf '%s\n' 'subjectAltName=IP:10.42.0.50,IP:10.42.1.50,IP:10.42.2.50,IP:127.0.0.1,DNS:localhost' 'extendedKeyUsage=serverAuth,clientAuth' > "$security/extensions"
+                openssl x509 -req -in "$security/server.csr" -CA "$security/ca.pem" -CAkey "$security/ca.key" -CAcreateserial -out "$security/server.crt" -days 365 -extfile "$security/extensions" >/dev/null 2>&1
+                python3 - "$security" <<'PY'
+            import json,pathlib,secrets,sys
+            p=pathlib.Path(sys.argv[1]); (p/'bundle.json').write_text(json.dumps({'ca':(p/'ca.pem').read_text(),'pem':(p/'server.crt').read_text()+(p/'server.key').read_text(),'keyfile':secrets.token_urlsafe(500).replace('-','A').replace('_','B'),'adminPassword':secrets.token_hex(32)}))
+            PY
+                aws secretsmanager put-secret-value --region "$region" --secret-id "$bundle_secret" --secret-string "file://$security/bundle.json" >/dev/null
+                # No CA signing key is persisted. Leaf renewal creates a coordinated new CA/bundle.
+                rm -f "$security/ca.key" "$security/server.key" "$security/server.csr" "$security/server.crt" "$security/ca.srl"
+              fi
+            fi
+            for i in $(seq 1 120); do
+              aws secretsmanager get-secret-value --region "$region" --secret-id "$bundle_secret" --query SecretString --output text > "$security/bundle.json"
+              if python3 -c 'import json,sys; assert "pem" in json.load(open(sys.argv[1]))' "$security/bundle.json" 2>/dev/null; then break; fi
+              sleep 5
+            done
+            python3 - "$security" <<'PY'
+            import json,pathlib,sys
+            p=pathlib.Path(sys.argv[1]); b=json.loads((p/'bundle.json').read_text())
+            for k,f in [('ca','ca.pem'),('pem','server.pem'),('keyfile','keyfile')]: (p/f).write_text(b[k])
+            (p/'env').write_text('MONGO_INITDB_ROOT_USERNAME=admin\nMONGO_INITDB_ROOT_PASSWORD='+b['adminPassword']+'\n')
+            PY
+            rm "$security/bundle.json"
+            chown 999:999 "$security/ca.pem" "$security/server.pem" "$security/keyfile"
+            chmod 400 "$security/server.pem" "$security/keyfile"
+            chmod 444 "$security/ca.pem"
+            docker pull mongo:8.0
+            docker run -d --name shakedown-mongo --restart unless-stopped --env-file "$security/env" -p 27017:27017 \
+              -v /srv/mongodb:/data/db -v "$security/server.pem:/security/server.pem:ro" -v "$security/keyfile:/security/keyfile:ro" -v "$security/ca.pem:/security/ca.pem:ro" \
+              mongo:8.0 --replSet shakedown --keyFile /security/keyfile --tlsMode requireTLS --tlsCertificateKeyFile /security/server.pem --tlsCAFile /security/ca.pem --tlsAllowConnectionsWithoutCertificates
+            if [ "$node_index" != 0 ]; then exit 0; fi
+            for i in $(seq 1 120); do
+              if docker exec shakedown-mongo mongosh --quiet --tls --tlsCAFile /security/ca.pem --eval 'const a=db.getSiblingDB("admin"); if(!a.auth("admin",process.env.MONGO_INITDB_ROOT_PASSWORD))quit(1); a.runCommand({ping:1});' >/dev/null 2>&1; then break; fi
+              sleep 5
+            done
+            # Initiate idempotently, then wait for all three authenticated TLS members.
+            cat > "$security/configure.js" <<'JS'
+            const a=db.getSiblingDB('admin'); a.auth('admin',process.env.MONGO_INITDB_ROOT_PASSWORD);
+            try {rs.status();} catch(e) {if(e.code!==94)throw e;const r=rs.initiate({_id:'shakedown',members:[{_id:0,host:'10.42.0.50:27017',priority:2},{_id:1,host:'10.42.1.50:27017'},{_id:2,host:'10.42.2.50:27017'}]}); if(!r.ok)quit(2);}
+            JS
+            docker cp "$security/configure.js" shakedown-mongo:/tmp/configure.js
+            for i in $(seq 1 120); do
+              if docker exec shakedown-mongo mongosh --quiet --tls --tlsCAFile /security/ca.pem /tmp/configure.js >/dev/null 2>&1; then break; fi
+              sleep 5
+            done
+            aws secretsmanager get-secret-value --region "$region" --secret-id "$password_secret" --query SecretString --output text > "$security/password.json"
+            python3 - "$security" "$db_name" <<'PY'
+            import json,pathlib,sys
+            p=pathlib.Path(sys.argv[1]); password=json.loads((p/'password.json').read_text())['password']; name=sys.argv[2]
+            (p/'app.js').write_text("const a=db.getSiblingDB('admin'); a.auth('admin',process.env.MONGO_INITDB_ROOT_PASSWORD); const s=rs.status(); if(s.members.filter(m=>m.health===1&&[1,2].includes(m.state)).length!==3)quit(2); if(!db.hello().isWritablePrimary)quit(2); const d=db.getSiblingDB("+json.dumps(name)+"); if(!d.getUser('app'))d.createUser({user:'app',pwd:"+json.dumps(password)+",roles:[{role:'readWrite',db:"+json.dumps(name)+"}]},{w:'majority'});")
+            PY
+            docker cp "$security/app.js" shakedown-mongo:/tmp/app.js
+            for i in $(seq 1 120); do
+              if docker exec shakedown-mongo mongosh --quiet --tls --tlsCAFile /security/ca.pem /tmp/app.js >/dev/null 2>&1; then
+                python3 - "$security" "$db_name" <<'PY'
+            import json,pathlib,sys,urllib.parse
+            p=pathlib.Path(sys.argv[1]); password=json.loads((p/'password.json').read_text())['password']; name=sys.argv[2]
+            (p/'url').write_text('mongodb://app:'+urllib.parse.quote(password,safe='')+'@10.42.0.50:27017,10.42.1.50:27017,10.42.2.50:27017/'+name+'?authSource='+name+'&replicaSet=shakedown&tls=true&tlsCAFile=/run/shakedown/db-ca/ca.pem&w=majority&retryWrites=true')
+            PY
+                aws secretsmanager put-secret-value --region "$region" --secret-id "$ca_secret" --secret-string "file://$security/ca.pem" >/dev/null
+                aws secretsmanager put-secret-value --region "$region" --secret-id "$url_secret" --secret-string "file://$security/url" >/dev/null
+                rm -f "$security/url" "$security/password.json" "$security/app.js"
+                docker exec shakedown-mongo rm /tmp/app.js
+                curl --fail --silent --show-error -X PUT -H 'Content-Type:' --data-binary '{"Status":"SUCCESS","Reason":"TLS replica set ready","UniqueId":"mongo","Data":"ready"}' "$ready_handle"
+                exit 0
+              fi
+              sleep 5
+            done
+            exit 1
+  MongoAttachment3:
+    Condition: WithMongo
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdf
+      InstanceId:
+        Ref: MongoInstance3
+      VolumeId:
+        Ref: MongoData3
+  MongoClusterSecret:
+    Condition: WithMongo
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Mongo TLS leaf/keyfile/admin bootstrap bundle; EC2 role only
+      SecretString: "{}"
+  MongoCaSecret:
+    Condition: WithMongo
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Public Mongo CA certificate for app trust
+      SecretString: "{}"
+  MongoPeerIngress:
+    Condition: WithMongo
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: MongoSg
+      IpProtocol: tcp
+      FromPort: 27017
+      ToPort: 27017
+      SourceSecurityGroupId:
+        Ref: MongoSg
+  MongoSnapshotRole:
+    Condition: WithMongoSnapshots
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: dlm.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole
+  MongoSnapshotPolicy:
+    Condition: WithMongoSnapshots
+    Type: AWS::DLM::LifecyclePolicy
+    Properties:
+      Description: Daily Mongo EBS crash-consistent snapshots retain seven
+      State: ENABLED
+      ExecutionRoleArn:
+        Fn::GetAtt:
+          - MongoSnapshotRole
+          - Arn
+      PolicyDetails:
+        ResourceTypes:
+          - VOLUME
+        TargetTags:
+          - Key: ShakedownMongoBackup
+            Value:
+              Ref: Name
+        Schedules:
+          - Name: daily
+            CreateRule:
+              Interval: 24
+              IntervalUnit: HOURS
+              Times:
+                - '18:00'
+            RetainRule:
+              Count: 7
+            CopyTags: true
 Outputs:
-  ClusterArn: {Value: {Fn::GetAtt: [Cluster, Arn]}}
-  RepositoryUri: {Value: {Fn::GetAtt: [Repository, RepositoryUri]}}
-  Repository: {Value: {Ref: Repository}}
-  ServiceName: {Value: {Ref: Name}}
-  ListenerArn: {Value: {Ref: Listener}}
-  TargetGroupArn: {Value: {Ref: TargetGroup}}
-  PublicUrl: {Value: {Fn::Sub: 'http://${Alb.DNSName}'}}
-  SubnetIds: {Value: {Fn::Join: [',', [{Ref: PublicA}, {Ref: PublicB}]]}}
-  SecurityGroupId: {Value: {Ref: AppSg}}
-  ExecutionRoleArn: {Value: {Fn::GetAtt: [ExecutionRole, Arn]}}
-  TaskRoleArn: {Value: {Fn::GetAtt: [TaskRole, Arn]}}
-  LogGroup: {Value: {Ref: Logs}}
-  DbHost: {Value: {Fn::GetAtt: [Database, Endpoint.Address]}}
-  DbName: {Value: {Ref: DatabaseName}}
-  DbUsername: {Value: board_admin}
-  DbPasswordSecretArn: {Value: {Ref: DbSecret}}
-  AdapterPolicyArn: {Value: {Ref: AdapterPolicy}}
-  ImagePublisherPolicyArn: {Value: {Ref: ImagePublisherPolicy}}
+  Port:
+    Value:
+      Ref: AppPort
+  ClusterArn:
+    Value:
+      Fn::GetAtt:
+        - Cluster
+        - Arn
+  RepositoryUri:
+    Value:
+      Fn::GetAtt:
+        - Repository
+        - RepositoryUri
+  Repository:
+    Value:
+      Ref: Repository
+  ServiceName:
+    Value:
+      Ref: Name
+  ListenerArn:
+    Value:
+      Ref: Listener
+  GateRuleArn:
+    Value:
+      Ref: TrafficGate
+  TargetGroupArn:
+    Value:
+      Ref: TargetGroup
+  PublicUrl:
+    Value:
+      Fn::Sub: http://${Alb.DNSName}
+  SubnetIds:
+    Value:
+      Fn::Join:
+        - ","
+        - - Ref: PublicA
+          - Ref: PublicB
+          - Ref: PublicC
+  SecurityGroupId:
+    Value:
+      Ref: AppSg
+  ExecutionRoleArn:
+    Value:
+      Fn::GetAtt:
+        - ExecutionRole
+        - Arn
+  TaskRoleArn:
+    Value:
+      Fn::GetAtt:
+        - TaskRole
+        - Arn
+  LogGroup:
+    Value:
+      Ref: Logs
+  DbEngine:
+    Condition: WithDatabase
+    Value:
+      Ref: DatabaseEngine
+  DbInstanceId:
+    Condition: WithDatabase
+    Value:
+      Fn::If:
+        - WithMongo
+        - Ref: MongoInstance
+        - Ref: Database
+  DbHost:
+    Condition: WithDatabase
+    Value:
+      Fn::If:
+        - WithMongo
+        - Fn::GetAtt:
+            - MongoInstance
+            - PrivateIp
+        - Fn::GetAtt:
+            - Database
+            - Endpoint.Address
+  DbName:
+    Condition: WithDatabase
+    Value:
+      Ref: DatabaseName
+  DbUsername:
+    Condition: WithDatabase
+    Value:
+      Fn::If:
+        - WithMongo
+        - app
+        - board_admin
+  DbPasswordSecretArn:
+    Condition: WithDatabase
+    Value:
+      Ref: DbSecret
+  AdapterPolicyArn:
+    Value:
+      Ref: AdapterPolicy
+  ImagePublisherPolicyArn:
+    Value:
+      Ref: ImagePublisherPolicy
+  DbUrlSecretArn:
+    Condition: WithDatabase
+    Value:
+      Ref: DbUrlSecret
+  DbHosts:
+    Condition: WithMongo
+    Value: 10.42.0.50,10.42.1.50,10.42.2.50
+  DbInstanceIds:
+    Condition: WithMongo
+    Value:
+      Fn::Join:
+        - ","
+        - - Ref: MongoInstance
+          - Ref: MongoInstance2
+          - Ref: MongoInstance3
+  DbCaSecretArn:
+    Condition: WithMongo
+    Value:
+      Ref: MongoCaSecret
