@@ -2,6 +2,7 @@
 // AI는 선택 기능이다. 꺼져 있거나 실패하면 규칙 보고서(fallback)를 그대로 돌려준다.
 import Anthropic from "@anthropic-ai/sdk";
 import type { CostLedger, Fix, Report, StepDiff, StepResult } from "@shakedown/contracts";
+import { switchLine } from "./report.ts";
 import type { Verdict } from "./verdict.ts";
 
 // 가격 출처: claude-api 스킬 shared/models.md 모델 표(2026-09-25 캐시). claude-opus-5-5는 100만 토큰당 입력 $4, 출력 $20
@@ -84,7 +85,8 @@ function promptData(input: AiInput): string {
       kind: d.kind,
       reasons: d.reasons,
       baseline: { env: d.baseline, ...side(d.local) },
-      candidate: { env: d.candidate, ...side(d.cloud), hops: d.cloud.hops.map((h) => `${h.method} ${h.path} ${h.status}`) },
+      // 응답 서버 ID를 hop마다 붙인다. SYSTEM이 "데이터에 없는 건 주장하지 말라"고 하므로, 서버가 바뀐 것을 AI가 데이터로 직접 볼 수 있어야 한다.
+      candidate: { env: d.candidate, ...side(d.cloud), hops: d.cloud.hops.map((h) => `${h.method} ${h.path} ${h.status}${h.instance ? ` [${h.instance}]` : ""}`) },
     }));
   return JSON.stringify({ diverging_steps: steps, rule_report: input.fallback, hints: input.hints ?? {} });
 }
@@ -120,6 +122,19 @@ function parseReport(raw: string): Report | null {
     auto_applicable: false,
   };
   return { headline, cause, evidence, fix: picked, confidence, by: "ai" };
+}
+
+/**
+ * AI가 evidence를 다시 쓰면서 서버 ID 근거를 빠뜨리면, "다른 서버가 받았다"는 가장 직접적인 증거가 최종 보고서에서 사라진다.
+ * AI는 rule_report 문장으로 그 줄을 보지만, 로그인이 앞 단계에서 끝났으면 그 단계는 프롬프트에 들어가지 않아(critical·warn만 보냄)
+ * 로그인 서버 ID를 원본 hop으로는 보지 못한다. 그래서 규칙 줄이 AI evidence에 그대로 없으면 끝에 붙인다.
+ * AI 글에서 ID를 찾아 "이미 말했다"고 보지 않는다. ID는 아무 문자열이라 "2"가 "302"에 걸리듯 엉뚱한 글과 겹친다.
+ * 그 대가로 AI가 같은 내용을 다른 말로 썼으면 비슷한 줄이 두 번 보일 수 있다.
+ */
+function keepInstanceEvidence(report: Report, fallback: Report | null): Report {
+  const line = fallback && switchLine(fallback.evidence);
+  if (!line || report.evidence.includes(line)) return report;
+  return { ...report, evidence: [...report.evidence, line] };
 }
 
 export async function aiReport(input: AiInput, options: AiOptions): Promise<{ report: Report | null; cost: CostLedger }> {
@@ -159,7 +174,8 @@ export async function aiReport(input: AiInput, options: AiOptions): Promise<{ re
   // 거절이면 content가 비었거나 스키마를 안 지킬 수 있어서, 내용을 읽기 전에 거른다.
   if (response.stop_reason === "refusal") return { report: input.fallback, cost: spent };
   const raw = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-  const parsed = parseReport(raw);
+  const answer = parseReport(raw);
+  const parsed = answer && keepInstanceEvidence(answer, input.fallback);
   // 엔진이 그대로 적용할 수정안은 규칙이 정한다. AI가 값을 바꾸거나 지우면 허용되지 않은 설정이 적용되거나
   // 적용 버튼이 사라지므로, 규칙 수정안이 자동 적용 가능이면 fix만 규칙 것으로 덮는다. headline·cause·evidence와
   // confidence는 AI 것을 쓴다(confidence는 AI가 자기 원인 설명을 얼마나 확신하는지라서 그 설명과 함께 간다).

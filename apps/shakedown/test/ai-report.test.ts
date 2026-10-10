@@ -6,6 +6,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import fixture from "@shakedown/contracts/fixtures/deployment-blocked-then-fixed.json" with { type: "json" };
 import type { Report, StepDiff } from "@shakedown/contracts";
 import { aiOptionsFromEnv, aiReport } from "../src/ai-report.ts";
+import { ruleReport } from "../src/report.ts";
 import { judge } from "../src/verdict.ts";
 
 // 진짜 키가 아니다. 가짜 서버로만 간다.
@@ -170,12 +171,59 @@ test("요청: POST /v1/messages, claude-opus-5-5, output_config.format, fallback
       final_path: "/",
       final_status: 200,
       failed_checks: [],
-      hops: ["POST /login 302", "GET /board 302", "GET / 200"],
+      // 응답 서버 ID를 원본 hop에 붙여 AI가 rule_report 문장이 아니라 데이터에서 직접 근거를 댈 수 있게 한다.
+      hops: ["POST /login 302 [172.23.0.3:8080]", "GET /board 302 [172.23.0.4:8080]", "GET / 200 [172.23.0.3:8080]"],
     },
   });
   assert.deepEqual(data.diverging_steps[1].candidate.failed_checks, ["ended on /, expected /write"]);
   assert.deepEqual(data.rule_report, rule);
   assert.deepEqual(data.hints, hints);
+});
+
+// 실제 규칙 보고서(fixture 데이터로 만든 것)에는 서버 전환 근거 줄이 있다. AI가 evidence를 다시 쓰면서 이 줄을 빠뜨릴 수 있다.
+const ruled = ruleReport(blocked, judge(blocked))!;
+const switched =
+  "POST /login was handled by instance 172.23.0.3:8080, GET /board by instance 172.23.0.4:8080: 2 different instances served one user's requests.";
+const aiFix = { ...answer.fix, auto_applicable: false };
+
+test("AI evidence에 규칙 보고서의 instance 근거 줄이 그대로 없으면 끝에 붙인다", async (t) => {
+  assert.equal(ruled.evidence.at(-1), switched);
+  const oneId = [...answer.evidence, "GET /board was answered by 172.23.0.4:8080."];
+  // 두 ID를 다른 말로 다 적었어도 붙인다. AI 글에서 ID 언급을 찾으면 짧은 ID가 302 같은 글에 잘못 걸리기 때문이다.
+  const paraphrased = ["POST /login reached 172.23.0.3:8080 but GET /board reached 172.23.0.4:8080."];
+  for (const evidence of [answer.evidence, oneId, paraphrased]) {
+    const f = await fake(t, json(200, answered({ ...answer, evidence })));
+    const { report } = await aiReport({ ...input, fallback: ruled }, { apiKey: KEY, baseURL: f.baseURL });
+    assert.deepEqual(report, { ...answer, evidence: [...evidence, switched], fix: aiFix, by: "ai" });
+  }
+});
+
+test("AI evidence에 같은 instance 근거 줄이 이미 있으면 다시 붙이지 않는다", async (t) => {
+  const evidence = [...answer.evidence, switched];
+  const f = await fake(t, json(200, answered({ ...answer, evidence })));
+  const { report } = await aiReport({ ...input, fallback: ruled }, { apiKey: KEY, baseURL: f.baseURL });
+  assert.deepEqual(report, { ...answer, evidence, fix: aiFix, by: "ai" });
+});
+
+test("서버 ID에 공백·쉼표가 있거나 아주 짧아도 instance 근거 줄을 지킨다", async (t) => {
+  // 서버 ID는 외부 앱이 정하는 아무 문자열이다(계약 Hop.instance: string|null). 헤더가 두 번 오면 fetch가 ", "로 이어 붙인다.
+  const cases = [
+    ["web 1", "web 2"],
+    ["172.23.0.3:8080, proxy", "172.23.0.4:8080, proxy"],
+    ["1", "2"],
+  ];
+  // "1"과 "2"가 302·"1 second"의 일부로 들어 있지만 서버를 말한 게 아니다.
+  const evidence = ["Step 4 (Sign in) ended on / after HTTP 302 within 1 second."];
+  for (const [a, b] of cases) {
+    const rename: Record<string, string> = { "172.23.0.3:8080": a, "172.23.0.4:8080": b };
+    const diffs = blocked.map((d) => ({ ...d, cloud: { ...d.cloud, hops: d.cloud.hops.map((h) => ({ ...h, instance: rename[h.instance!] })) } }));
+    const fallback = ruleReport(diffs, judge(diffs))!;
+    const line = `POST /login was handled by instance ${a}, GET /board by instance ${b}: 2 different instances served one user's requests.`;
+    assert.equal(fallback.evidence.at(-1), line);
+    const f = await fake(t, json(200, answered({ ...answer, evidence })));
+    const { report } = await aiReport({ ...input, diffs, fallback }, { apiKey: KEY, baseURL: f.baseURL });
+    assert.deepEqual(report?.evidence, [...evidence, line], `${a} / ${b}`);
+  }
 });
 
 test("JSON이 아닌 응답이면 규칙 보고서로 대체하고 받은 토큰은 센다", async (t) => {
