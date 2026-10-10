@@ -60,7 +60,7 @@ node --import tsx infra/aws/scripts/config-from-outputs.ts .data/aws/outputs.jso
   hackathon-adapter "$HACKATHON_ACCOUNT_ID" prj_board > .data/aws/config.json
 ```
 
-3. Outputs의 `AdapterPolicyArn`을 어댑터가 사용할 principal에, `ImagePublisherPolicyArn`을 엔진/이미지 빌드 principal에 부여합니다. 어댑터에는 DB 비밀값 조회 권한이 없습니다. `PassRole`은 이 스택의 실행·앱 역할만 허용합니다. 실행 역할만 ECR pull/로그/해당 DB secret을 사용할 수 있고 앱 task role에는 AWS 관리 권한이 없습니다. ECS 서비스 연결 역할은 첫 사용 때 생성할 수 있도록 범위를 제한했습니다.
+3. Outputs의 `AdapterPolicyArn`을 어댑터가 사용할 principal에, `ImagePublisherPolicyArn`을 엔진/이미지 빌드 principal에 부여합니다. postgres_url 지원을 위해 어댑터는 이 스택의 DB 비밀값을 읽고 전용 URL Secret만 갱신할 수 있습니다. `PassRole`은 이 스택의 실행·앱 역할만 허용합니다. 실행 역할만 ECR pull/로그/해당 DB secret을 사용할 수 있고 앱 task role에는 AWS 관리 권한이 없습니다. ECS 서비스 연결 역할은 첫 사용 때 생성할 수 있도록 범위를 제한했습니다.
 4. 엔진이 이미지를 **한 번** 빌드·업로드하고 반환된 digest 주소를 Local/AWS 모두 사용합니다. 수동 준비용 보조 스크립트는 아래와 같습니다. multiarch/index manifest 대신 단일 AMD64 manifest를 사용합니다.
 
 ```sh
@@ -191,3 +191,26 @@ RDS `MultiAZ` 속성의 운영 소유자는 어댑터다. 템플릿에 고정 fa
 
 AWS API 기준: [RDS DB 식별자·ARN](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-rds-dbinstance.html),
 [Application Auto Scaling 권한](https://docs.aws.amazon.com/service-authorization/latest/reference/list_application-autoscaling.html).
+
+
+### PostgreSQL URL / 외부 DB Secret 설정
+
+`runtime.database.bindings`에 `{"DATABASE_URL":"postgres_url"}`을 지정하면
+관리형 PostgreSQL URI를 자동 생성해 ECS `secrets`로 주입합니다. 기존 스택은
+foundation 템플릿을 업데이트한 후 outputs에서 어댑터 설정을 재생성해야 합니다.
+새 `DbUrlSecretArn` → `dbUrlSecretArn`은 비밀번호 Secret과 다른 전용 Secret입니다.
+특수문자는 표준 URL 인코딩하고, AWS URL에는 `sslmode=require`를 사용합니다.
+비밀번호/URL은 응답이나 task definition의 일반 environment에 저장하지 않습니다.
+
+외부 Secret은 config.secrets 등록과 별도로 실행 역할 읽기 권한이 필요합니다.
+provision.sh에서 `HACKATHON_ADDITIONAL_SECRET_ARNS`에 정확한 ARN을 쉼표로 연결해
+전달합니다. 고객 관리 KMS 키는 `HACKATHON_ADDITIONAL_SECRET_KMS_KEY_ARNS`도 지정하고
+키 정책을 확인합니다. 이 값들은 각각 AdditionalSecretArns/AdditionalSecretKmsKeyArns
+스택 파라미터입니다. 환경변수를 생략하면 기존 스택 값을 유지하고, 빈 값은 권한을
+제거합니다. DB 네트워크 연결/외부 DB 계정 권한은 별도 준비가 필요합니다.
+
+암호 회전 후 재배포하면 URL Secret을 갱신하며, 동일한 값은 새 버전을 만들지 않습니다.
+태스크 정의에 Secret 버전을 고정하므로 실행 중 태스크는 자동 갱신되지 않습니다.
+마이그레이션·배포 중 회전은 피하고, 완료 후 새 배포로 반영합니다.
+URL Secret도 Retain 대상이므로 실험 종료 후 별도 정리해야 합니다.
+이번 변경은 SDK 테스트/템플릿 lint로 검증했고 실제 AWS 재배포는 수행하지 않았습니다.

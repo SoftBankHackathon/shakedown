@@ -99,3 +99,28 @@ def test_image_plan_uses_saved_runtime_port(tmp_path, monkeypatch):
         assert '3000' in plan['dockerfile']
     finally:
         builder.pool.shutdown()
+
+
+def test_postgres_url_binding_needs_no_separate_password():
+    r = HttpRuntime(port=3000, database={'mode':'postgres','bindings':{'DATABASE_URL':'postgres_url'}})
+    assert r.database.bindings == {'DATABASE_URL':'postgres_url'}
+
+
+@pytest.mark.parametrize('mode,detected,blocked', [
+    ('none',None,False), ('none','postgresql',True), ('postgres','mysql',True),
+    ('postgres','postgresql',False), ('postgres',None,False), ('external','mongodb',False),
+])
+def test_database_conflict_is_applied_to_architecture(mode,detected,blocked):
+    from engine.architecture import assess,ArchitectureRequest
+    facts={'workload':'http','runtime_database':mode,'signals':{'local_storage':False,'server_session':False,'database':detected,'readme_hints':[]}}
+    r=assess(facts,ArchitectureRequest(workload='http',peak_rps=5,availability='best_effort',traffic='steady',use_ai=False))
+    assert bool(r['blockers']) == blocked
+
+
+def test_direct_deployment_blocks_database_mismatch(tmp_path,monkeypatch):
+    from engine.deployments import DeploymentError
+    monkeypatch.setattr('engine.analyzer.ImageRepoAnalyzer.analyze',lambda *_:SimpleNamespace(database='mysql'))
+    runner=LocalRunner()
+    runner.command=lambda *a,**kw:pytest.fail('Must not build or execute on a DB conflict')
+    with pytest.raises(DeploymentError,match='PostgreSQL'):
+        runner.build(SimpleNamespace(repo=str(tmp_path),runtime=runtime('postgres')),'test')

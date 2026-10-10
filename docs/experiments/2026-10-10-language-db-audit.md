@@ -18,7 +18,7 @@ composeSpec/validateRuntime/DockerRuntime.resolved로 synthetic 요청을 확인
 
 AWS 어댑터 회귀 테스트는 DB 없음과 관리형 PostgreSQL의 분기, 초기화 실패 중단, 환경변수와 Secret 전달 계약을 검증한다. 실제 외부 DB 연결, 외부 Secret IAM 권한 및 네트워크 접근성은 이 테스트로 보장되지 않는다.
 
-## 미해결 항목
+## 최초 감사 결과 (아래 후속 수정 전)
 
 1. **관리형 PostgreSQL URL 자동 생성 없음.** engine/runtime.py의 바인딩은 host/port/name/username/password/jdbc_url만 허용한다. `DATABASE_URL: postgres_url`은 Pydantic 검증에서 거절된다. 이미 만들어 둔 URL을 external + secret_refs로 전달하는 경로는 있다. Node 표준 URL API로 포맷/인코딩을 처리하고, 로컬은 private 환경 설정, AWS는 Secrets Manager + ECS secret 참조로 연결하는 작업이 필요하다. URL에 포함된 비밀번호를 일반 task environment/응답/로그에 넣으면 안 된다. 암호 회전 후 URL 갱신과 태스크 재시작 정책도 정의해야 한다.
 
@@ -43,4 +43,18 @@ AWS 어댑터 회귀 테스트는 DB 없음과 관리형 PostgreSQL의 분기, �
 - 직접 구현: DB 모드/감지 결과 충돌 정책, postgres_url 바인딩과 어댑터 연결, Secret 수명/권한/암호 회전 정책. 자체 DB 드라이버/암호화/URL 파서는 만들지 않는다.
 - 검증: none/postgres/external × 로컬/AWS, 특수문자 비밀번호, 비밀값 로그 차단, IAM 미설정, DB 유형 충돌, 초기화 실패, 암호 회전.
 
-이 문서의 미해결 항목은 이번 보안 규칙 추가로 해결된 것으로 표시하지 않는다.
+## 후속 수정 (2026-10-10)
+
+1~3은 #12에서 코드 수정했다. `postgres_url` 바인딩을 양쪽 어댑터에 추가하고,
+AWS는 전용 URL Secret 갱신 및 버전 고정 참조를 사용한다. none/감지 DB 및
+postgres/다른 DB 충돌은 계획·실제 빌드에서 차단한다. external MongoDB는
+관리형 RDS 검사에서 분리했다. 외부 Secret/KMS 권한은 정확한 ARN을 받는
+조건부 스택 파라미터로 추가했다. 기존 스택 업데이트와 설정 재생성이 필요하다.
+
+엔진 275, 로컬 10, AWS SDK 33 테스트 통과. 템플릿 lint와 웹 lint/build 통과.
+실제 AWS IAM/외부 DB 연결 및 새 URL Secret 경로는 이번에 실측하지 않았다.
+4번 언어별 자동 이미지 생성/탐지 제한은 여전히 남아 있다.
+
+실제 로컬 컨테이너 5조합(Node/Python DB 없음·PG 및 Node DATABASE_URL) HTTP 200,
+초기화 2회, 특수문자·Unicode 비밀번호 연결을 확인했다. 임시 리소스 정리 완료.
+증거: [로컬 실행 결과](evidence/2026-10-10-postgres-url-runtime.json).

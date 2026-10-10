@@ -17,8 +17,12 @@ if [[ "$create_database" == true ]]; then
   available=$(aws --profile "$HACKATHON_PROVISION_PROFILE" --region ap-northeast-2 rds describe-orderable-db-instance-options --engine postgres --engine-version "$postgres_version" --db-instance-class db.t3.micro --query 'length(OrderableDBInstanceOptions)' --output text)
   [[ "$available" -gt 0 ]] || { echo 'Chosen PostgreSQL version/db.t3.micro is unavailable in Seoul' >&2; exit 1; }
 fi
+# Omit unset optional parameters so existing stack grants are preserved.
+extra_parameters=("Name=$HACKATHON_STACK" "PostgresVersion=$postgres_version" "CreateDatabase=$create_database" "AppPort=${HACKATHON_APP_PORT:-8080}")
+if [[ ${HACKATHON_ADDITIONAL_SECRET_ARNS+x} ]]; then extra_parameters+=("AdditionalSecretArns=$HACKATHON_ADDITIONAL_SECRET_ARNS"); fi
+if [[ ${HACKATHON_ADDITIONAL_SECRET_KMS_KEY_ARNS+x} ]]; then extra_parameters+=("AdditionalSecretKmsKeyArns=$HACKATHON_ADDITIONAL_SECRET_KMS_KEY_ARNS"); fi
 aws --profile "$HACKATHON_PROVISION_PROFILE" --region ap-northeast-2 cloudformation deploy \
   --stack-name "$HACKATHON_STACK" --template-file "$(dirname "$0")/../cloudformation/foundation.yaml" \
-  --parameter-overrides "Name=$HACKATHON_STACK" "PostgresVersion=$postgres_version" "CreateDatabase=$create_database" "AppPort=${HACKATHON_APP_PORT:-8080}" --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset
+  --parameter-overrides "${extra_parameters[@]}" --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset
 aws --profile "$HACKATHON_PROVISION_PROFILE" --region ap-northeast-2 cloudformation describe-stacks \
   --stack-name "$HACKATHON_STACK" --query 'Stacks[0].Outputs' --output json

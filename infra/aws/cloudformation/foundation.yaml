@@ -5,6 +5,16 @@ Parameters:
     Type: String
     Default: shakedown-board
     AllowedPattern: '[a-z][a-z0-9-]{2,29}'
+  AdditionalSecretArns:
+    Type: CommaDelimitedList
+    Default: ''
+    AllowedPattern: '^$|arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+'
+    Description: Exact external Secrets Manager ARNs that ECS may read
+  AdditionalSecretKmsKeyArns:
+    Type: CommaDelimitedList
+    Default: ''
+    AllowedPattern: '^$|arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-zA-Z0-9-]+'
+    Description: Exact customer-managed KMS key ARNs used by the additional secrets
   CreateDatabase:
     Type: String
     Default: 'true'
@@ -22,6 +32,8 @@ Parameters:
     Default: board_db
     AllowedPattern: '[a-zA-Z][a-zA-Z0-9_]{0,63}'
 Conditions:
+  WithAdditionalSecrets: {Fn::Not: [{Fn::Equals: [{Fn::Join: ['', {Ref: AdditionalSecretArns}]}, '']}]}
+  WithAdditionalKmsKeys: {Fn::Not: [{Fn::Equals: [{Fn::Join: ['', {Ref: AdditionalSecretKmsKeyArns}]}, '']}]}
   WithDatabase: {Fn::Equals: [{Ref: CreateDatabase}, 'true']}
 Resources:
   Vpc:
@@ -115,12 +127,20 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      Description: Shakedown demo DB password (never read by adapter)
+      Description: DB password read only for managed URL synchronization
       GenerateSecretString:
         SecretStringTemplate: '{"username":"board_admin"}'
         GenerateStringKey: password
         PasswordLength: 32
         ExcludeCharacters: '"@/\\'
+  DbUrlSecret:
+    Condition: WithDatabase
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: PostgreSQL URL refreshed by the adapter on deployment
+      SecretString: '{}'
   Database:
     Condition: WithDatabase
     Type: AWS::RDS::DBInstance
@@ -228,7 +248,20 @@ Resources:
                 Resource: {Fn::GetAtt: [Logs, Arn]}
               - Fn::If:
                   - WithDatabase
-                  - {Effect: Allow, Action: 'secretsmanager:GetSecretValue', Resource: {Ref: DbSecret}}
+                  - {Effect: Allow, Action: 'secretsmanager:GetSecretValue', Resource: [{Ref: DbSecret}, {Ref: DbUrlSecret}]}
+                  - {Ref: 'AWS::NoValue'}
+              - Fn::If:
+                  - WithAdditionalSecrets
+                  - {Effect: Allow, Action: 'secretsmanager:GetSecretValue', Resource: {Ref: AdditionalSecretArns}}
+                  - {Ref: 'AWS::NoValue'}
+              - Fn::If:
+                  - WithAdditionalKmsKeys
+                  - Effect: Allow
+                    Action: 'kms:Decrypt'
+                    Resource: {Ref: AdditionalSecretKmsKeyArns}
+                    Condition:
+                      StringEquals:
+                        kms:ViaService: {Fn::Sub: 'secretsmanager.${AWS::Region}.${AWS::URLSuffix}'}
                   - {Ref: 'AWS::NoValue'}
   TaskRole:
     Type: AWS::IAM::Role
@@ -239,7 +272,7 @@ Resources:
   AdapterPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Attach to the explicitly chosen hackathon adapter principal; no DB-secret read
+      Description: Attach to the chosen adapter principal; DB secret access for URL synchronization
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -270,6 +303,14 @@ Resources:
             Resource: {Ref: TargetGroup}
           - {Effect: Allow, Action: 'elasticloadbalancing:DescribeTargetHealth', Resource: '*'}
           - {Effect: Allow, Action: 'ecr:DescribeImages', Resource: {Fn::GetAtt: [Repository, Arn]}}
+          - Fn::If:
+              - WithDatabase
+              - {Effect: Allow, Action: 'secretsmanager:GetSecretValue', Resource: [{Ref: DbSecret}, {Ref: DbUrlSecret}]}
+              - {Ref: 'AWS::NoValue'}
+          - Fn::If:
+              - WithDatabase
+              - {Effect: Allow, Action: 'secretsmanager:PutSecretValue', Resource: {Ref: DbUrlSecret}}
+              - {Ref: 'AWS::NoValue'}
           - {Effect: Allow, Action: ['logs:DescribeLogStreams', 'logs:GetLogEvents'], Resource: {Fn::GetAtt: [Logs, Arn]}}
           - {Effect: Allow, Action: ['ec2:DescribeSubnets', 'rds:DescribeDBInstances', 'application-autoscaling:DescribeScalableTargets'], Resource: '*'}
           - Fn::If:
@@ -320,3 +361,5 @@ Outputs:
   DbPasswordSecretArn: {Condition: WithDatabase, Value: {Ref: DbSecret}}
   AdapterPolicyArn: {Value: {Ref: AdapterPolicy}}
   ImagePublisherPolicyArn: {Value: {Ref: ImagePublisherPolicy}}
+
+  DbUrlSecretArn: {Condition: WithDatabase, Value: {Ref: DbUrlSecret}}

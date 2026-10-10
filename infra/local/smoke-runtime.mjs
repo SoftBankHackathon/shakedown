@@ -12,12 +12,13 @@ try {
   const image=`shakedown/runtime-smoke:${language}-${Date.now()}`;
   run(['build','-t',image,path.resolve(`examples/http-${language}`)]);
   try {
-   for(const mode of ['none','postgres']) {
+   for(const variant of (language==='node'?['none','postgres','postgres_url']:['none','postgres'])) {
+    const mode=variant==='postgres_url'?'postgres':variant;
     const id=`sd-runtime-${language}-${mode}-${Date.now()}`,file=path.join(root,id+'.json');
-    const bindings=language==='node'?{PGHOST:'host',PGPORT:'port',PGDATABASE:'name',PGUSER:'username',PGPASSWORD:'password'}:{APP_DB_HOST:'host',APP_DB_PORT:'port',APP_DB_NAME:'name',APP_DB_USER:'username',APP_DB_PASSWORD:'password'};
+    const bindings=variant==='postgres_url'?{DATABASE_URL:'postgres_url'}:language==='node'?{PGHOST:'host',PGPORT:'port',PGDATABASE:'name',PGUSER:'username',PGPASSWORD:'password'}:{APP_DB_HOST:'host',APP_DB_PORT:'port',APP_DB_NAME:'name',APP_DB_USER:'username',APP_DB_PASSWORD:'password'};
     const command=language==='node'?['node','app.mjs','--init']:['python','app.py','--init'];
     const runtime={version:'http-runtime.v1',port:3000,health_path:'/',env:{},secret_refs:{},database:{mode,name:'app',bindings:mode==='postgres'?bindings:{}},init_command:mode==='postgres'?command:[]};
-    const spec=composeSpec({image,runtime},'temporary-smoke-password');
+    const spec=composeSpec({image,runtime},'temporary@:/?#%$ 한글');
     delete spec.services.tunnel;
     spec.services.app.ports=['127.0.0.1::3000'];
     await writeFile(file,JSON.stringify(spec),{mode:0o600});
@@ -36,7 +37,7 @@ try {
         await new Promise(r=>setTimeout(r,200));
       }
       if(body?.language!==language || body.database!==(mode==='postgres') || body.count!==(mode==='postgres'?1:null))throw new Error('Runtime probe failed');
-      results.push({language,mode,http:200,migration_runs:mode==='postgres'?2:0,count:body.count});
+      results.push({language,mode,variant,http:200,migration_runs:mode==='postgres'?2:0,count:body.count});
     }finally{compose(['down','-v','--remove-orphans']);}
    }
   } finally {run(['image','rm',image]);}

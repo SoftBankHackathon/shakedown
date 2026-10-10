@@ -776,6 +776,7 @@ components:
             - username
             - password
             - jdbc_url
+            - postgres_url
             type: string
           title: Bindings
           type: object

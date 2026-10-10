@@ -1,6 +1,6 @@
 import http from 'node:http';
 import pg from 'pg';
-const db=process.env.PGHOST ? new pg.Client() : null;
+const db=process.env.DATABASE_URL ? new pg.Client({connectionString:process.env.DATABASE_URL}) : process.env.PGHOST ? new pg.Client() : null;
 if(db) await db.connect();
 if(process.argv.includes('--init')) {
   if(!db)throw new Error('DB required for migration');

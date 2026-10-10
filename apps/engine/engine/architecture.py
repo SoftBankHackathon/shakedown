@@ -113,8 +113,11 @@ def assess(facts, options):
     signals=facts['signals']
     if signals['local_storage']:blockers.append('로컬 DB/파일 영속성 대응을 먼저 설계하세요. 태스크 교체·복제 시 데이터가 유실되거나 분리될 수 있습니다.')
     if signals['server_session']:warnings.append('서버 세션이 감지됐습니다. 다중 태스크에서는 외부 세션 저장소 등 앱 수정이 필요할 수 있습니다.')
+    from engine.runtime import database_conflict
+    conflict = database_conflict(facts.get('runtime_database'), signals['database'])
+    if conflict: blockers.append(conflict)
     if signals['database'] is None:warnings.append('DB가 감지되지 않았습니다. DB가 없다는 확정은 아니며 필요 여부를 확인하세요.')
-    elif signals['database'] not in {'postgres','postgresql','mysql','mariadb','sqlite'}:blockers.append('감지된 DB는 RDS 관계형 DB 설계안과 일치하지 않습니다. DB 구성을 별도로 검토하세요.')
+    elif facts.get('runtime_database') != 'external' and signals['database'] not in {'postgres','postgresql','mysql','mariadb','sqlite'}:blockers.append('감지된 DB는 RDS 관계형 DB 설계안과 일치하지 않습니다. DB 구성을 별도로 검토하세요.')
     if signals['readme_hints']:warnings.append('README 키워드는 미검증 힌트입니다. 실제 코드·운영 요구와 대조하세요.')
     if options.priority=='cost' and tier>0:warnings.append('비용 우선보다 입력된 트래픽·가용성 요구를 우선했습니다. 실제 비용 견적이 필요합니다.')
     warnings += ['RPS 경계 10/100과 CPU·메모리·태스크 수는 초기 설계 가정이며 부하 테스트로 조정해야 합니다.',

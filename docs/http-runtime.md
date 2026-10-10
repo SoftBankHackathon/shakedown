@@ -12,7 +12,7 @@ Runtime settings are explicit user inputs, not facts guessed by the LLM.
   migration task, and no AWS RDS inspection/modification.
 - `postgres`: local Compose creates PostgreSQL; AWS uses the dedicated RDS
   instance already configured in the adapter. Map environment variable names
-  to `host`, `port`, `name`, `username`, `password`, or `jdbc_url`. The password
+  to `host`, `port`, `name`, `username`, `password`, `jdbc_url`, or `postgres_url`. The password
   is resolved by the adapter/Secrets Manager and never stored in project JSON.
 - `external`: pass the app's existing connection through adapter-registered
   secret references. No DB is provisioned or resized. Network reachability,
@@ -87,7 +87,7 @@ apply only to managed PostgreSQL. CPU/RPS heuristics are not capacity guarantees
 ## Validation and remaining gate dependency
 
 `node infra/local/smoke-runtime.mjs` builds the Node and Python examples and
-checks all four combinations (each language, with/without PostgreSQL), including
+checks five combinations (each language with/without PostgreSQL, plus Node DATABASE_URL), including
 repeatable initialization and HTTP results. It uses the real Compose spec
 builder, exposes only a temporary loopback port, removes its own containers,
 volumes, networks and image tags, and never starts a public tunnel or AWS.
@@ -102,3 +102,44 @@ Compose NOT_APPLICABLE can accompany overall ALLOW, but Semgrep and Gitleaks
 must both succeed. Unsupported languages and template/external-script coverage
 gaps still require REVIEW. This runtime generalization never bypasses that gate. Workers, batch jobs, multiple app containers,
 arbitrary persistent volumes and automatic MySQL conversion remain unsupported.
+
+
+## Managed PostgreSQL connection URLs (2026-10-10)
+
+Applications accepting a PostgreSQL URI, including Go/Rust drivers, can set:
+
+```json
+{"mode":"postgres","name":"app","bindings":{"DATABASE_URL":"postgres_url"}}
+```
+
+The application must actually read that variable and support PostgreSQL URIs;
+this does not rewrite application code or install a DB driver. Standard Node
+URL encoding handles credentials (including `%`, `$`, `@` and Unicode).
+Local Compose creates a private DB and supplies a URL with `sslmode=disable`;
+the generated private Compose file contains secrets and must not be shared.
+AWS supplies `sslmode=require` via ECS Secrets Manager references, never plain
+ECS environment values. Missing URL-secret configuration fails validation.
+
+Update the foundation stack and regenerate adapter outputs/config to obtain
+`dbUrlSecretArn`. This dedicated secret is distinct from `dbPasswordSecretArn`.
+At deployment, the adapter reads the password secret and refreshes the URL
+secret only when changed, pinning both secret version references in the task
+definition. Rotation requires a new deployment; running tasks do not auto-refresh.
+Coordinate rotations outside deployment/migration runs. The adapter can now read
+DB credentials in memory and write only the dedicated URL secret; keep its
+principal restricted. Retained URL secrets need explicit cleanup after a demo.
+
+For external DBs use `secret_refs`, register the reference in adapter `secrets`,
+and pass exact secret ARNs through foundation `AdditionalSecretArns`. For a
+customer-managed KMS key also set `AdditionalSecretKmsKeyArns` and allow the role
+in that key's policy. These grants do not establish DB network reachability or
+convert DB engines. External DB URIs are supplied as-is, not generated.
+
+Detected DB + `none`, or non-PostgreSQL DB + managed `postgres`, blocks both
+architecture selection and direct engine build. `external` is not subject to
+managed RDS compatibility checks; local persistence warnings still apply.
+Unknown DB detection is not proof of a DB-free app.
+
+Validation: engine 275 tests, local 10 tests, AWS SDK 33 tests; CloudFormation
+lint, TypeScript, web lint/build. AWS tests use SDK doubles: the new URL-secret
+path and external IAM grants have not been redeployed to a live AWS account.

@@ -11,11 +11,22 @@ export function validateRuntime(r) {
   if (new Set(names).size!==names.length || names.some(k=>!envName.test(k)||['PORT','TZ'].includes(k))) throw new Error('Overlapping or invalid environment names');
   if (Object.entries(r.env).some(([k,v])=>/password|passwd|secret|token|credential|api.?key|private.?key|access.?key/i.test(k)||typeof v!=='string'||v.length>4096||v.includes('\0')||/:\/\/[^/\s]*@/.test(v))) throw new Error('Use secret references for credentials');
   if (Object.values(r.secret_refs).some(v=>typeof v!=='string'||!/^[A-Za-z0-9_-]{1,100}$/.test(v))) throw new Error('Invalid secret reference');
-  if (Object.values(d.bindings).some(v=>!['host','port','name','username','password','jdbc_url'].includes(v)) || (d.mode!=='postgres' && Object.keys(d.bindings).length) || (d.mode==='postgres'&&!Object.values(d.bindings).includes('password')) || (d.mode==='external'&&!Object.keys(r.secret_refs).length)) throw new Error('Invalid database bindings');
+  if (Object.values(d.bindings).some(v=>!['host','port','name','username','password','jdbc_url','postgres_url'].includes(v)) || (d.mode!=='postgres' && Object.keys(d.bindings).length) || (d.mode==='postgres'&&!Object.values(d.bindings).some(v=>['password','postgres_url'].includes(v))) || (d.mode==='external'&&!Object.keys(r.secret_refs).length)) throw new Error('Invalid database bindings');
   if (!Array.isArray(r.init_command)||r.init_command.length>32||r.init_command.some(v=>typeof v!=='string'||!v||v.length>512||/[\0\n]/.test(v))||(d.mode==='none'&&r.init_command.length)) throw new Error('Invalid initialization command');
   return r;
 }
 export function databaseEnvironment(r, db) {
   const values={host:db.host,port:'5432',name:r.database.name,username:db.username,jdbc_url:`jdbc:postgresql://${db.host}:5432/${r.database.name}${db.ssl?'?sslmode=require':''}`};
-  return Object.fromEntries(Object.entries(r.database.bindings).filter(([,v])=>v!=='password').map(([k,v])=>[k,values[v]]));
+  return Object.fromEntries(Object.entries(r.database.bindings).filter(([,v])=>!['password','postgres_url'].includes(v)).map(([k,v])=>[k,values[v]]));
+}
+
+// Uses standard URI encoding; credentials never belong in ordinary task env.
+export function postgresUrl({host, username, password, name, ssl}) {
+  if (![host, username, password, name].every(v=>typeof v==='string' && v.length>0 && !v.includes('\0'))) throw new Error('Incomplete PostgreSQL connection settings');
+  const url=new URL('postgresql://localhost');
+  url.hostname=host; url.port='5432';
+  url.username=encodeURIComponent(username); url.password=encodeURIComponent(password);
+  url.pathname='/'+encodeURIComponent(name);
+  url.searchParams.set('sslmode',ssl?'require':'disable');
+  return url.href;
 }

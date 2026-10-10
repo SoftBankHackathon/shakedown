@@ -10,7 +10,8 @@ const config = configSchema.parse(JSON.parse(readFileSync(new URL('../config.exa
 const image = config.repositoryUri + '@sha256:' + 'a'.repeat(64);
 const request = requestSchema.parse({ deployment_id: 'dep_test', project_id: config.projectId, image, port: 8080, health_path: '/', options: { replicas: 2 }, env: { SPRING_PROFILES_ACTIVE: 'demo,session-jdbc' } });
 function setup() {
-  const provider = new AwsProvider(config);
+  const provider = new AwsProvider({...config,secrets:{...config.secrets}});
+  provider.secretManager.send=(async()=>{assert.fail('No secret reads without postgres_url');}) as typeof provider.secretManager.send;
   let route = 403; let servicePresent = false;
   const foundation = YAML.parse(readFileSync(new URL('../cloudformation/foundation.yaml', import.meta.url), 'utf8'));
   let attached = foundation.Resources.Listener.Properties.DefaultActions.some((a: { Type: string }) => a.Type === 'forward');
@@ -171,4 +172,40 @@ test('DB-free medium architecture applies compute and scaling without any RDS ca
   assert.equal((fake.definitions[0] as any).cpu,'1024');
   assert.ok(scale.includes('RegisterScalableTargetCommand'));
   assert.ok(!fake.actions.includes('RunTaskCommand'));
+});
+
+
+test('managed URL reaches ECS only as a versioned secret and missing config fails before mutation',async t=>{
+  const fake=setup();
+  const runtime={version:'http-runtime.v1',port:8080,health_path:'/',env:{},secret_refs:{},database:{mode:'postgres',name:config.dbName!,bindings:{DATABASE_URL:'postgres_url',PGPASSWORD:'password'}},init_command:[]};
+  const r=requestSchema.parse({...request,env:{},runtime});
+  await assert.rejects(fake.provider.deploy(r,AbortSignal.timeout(2000),()=>{}),/dedicated PostgreSQL URL secret/);
+  assert.equal(fake.actions.length,0);
+  const arn=`arn:aws:secretsmanager:ap-northeast-2:${config.accountId}:secret:url-abcdef`;
+  fake.provider.config={...fake.provider.config,dbUrlSecretArn:arn};
+  fake.provider.secretManager.send=(async(c:any)=>{
+    if(c.constructor.name==='PutSecretValueCommand')return {VersionId:'url-version'};
+    return c.input.SecretId===arn?{SecretString:'{}',VersionId:'empty'}:{SecretString:JSON.stringify({password:'private@%value'}),VersionId:'password-version'};
+  }) as typeof fake.provider.secretManager.send;
+  t.mock.method(globalThis,'fetch',async()=>new Response('',{status:fake.route}));
+  await fake.provider.deploy(r,AbortSignal.timeout(2000),()=>{});
+  const app=(fake.definitions[0] as any).containerDefinitions[0];
+  assert.deepEqual(app.secrets.find((v:any)=>v.name==='DATABASE_URL'),{name:'DATABASE_URL',valueFrom:`${arn}:::url-version`});
+  assert.equal(app.secrets.find((v:any)=>v.name==='PGPASSWORD').valueFrom,`${config.dbPasswordSecretArn}:password::password-version`);
+  assert.ok(!app.environment.some((v:any)=>v.name==='DATABASE_URL'||v.name==='PGPASSWORD'));
+  assert.ok(!JSON.stringify(fake.definitions).includes('private'));
+});
+
+test('foundation grants secret writes only to dedicated URL and external reads to supplied ARNs',()=>{
+  const f=YAML.parse(readFileSync(new URL('../cloudformation/foundation.yaml',import.meta.url),'utf8'));
+  assert.equal(f.Resources.DbUrlSecret.Condition,'WithDatabase');
+  const statements=f.Resources.AdapterPolicy.Properties.PolicyDocument.Statement;
+  const write=statements.map((s:any)=>s['Fn::If']?.[1]).find((s:any)=>s?.Action==='secretsmanager:PutSecretValue');
+  assert.deepEqual(write.Resource,{Ref:'DbUrlSecret'});
+  const execution=f.Resources.ExecutionRole.Properties.Policies[0].PolicyDocument.Statement;
+  const external=execution.find((s:any)=>s['Fn::If']?.[0]==='WithAdditionalSecrets');
+  assert.deepEqual(external['Fn::If'][1].Resource,{Ref:'AdditionalSecretArns'});
+  const kms=execution.find((s:any)=>s['Fn::If']?.[0]==='WithAdditionalKmsKeys');
+  assert.equal(kms['Fn::If'][1].Action,'kms:Decrypt');
+  assert.ok(kms['Fn::If'][1].Condition.StringEquals['kms:ViaService']);
 });

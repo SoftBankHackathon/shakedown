@@ -1,4 +1,4 @@
-import { databaseEnvironment, validateRuntime } from '../../packages/contracts/runtime.mjs';
+import { databaseEnvironment, validateRuntime, postgresUrl } from '../../packages/contracts/runtime.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile, chmod, readFile } from 'node:fs/promises';
@@ -13,7 +13,7 @@ export function composeSpec(request, password, secrets = {}) {
     const r=validateRuntime(request.runtime), managed=r.database.mode==='postgres';
     const env={...r.env,...secrets,PORT:String(r.port),TZ:request.options?.tz??'UTC',
       ...(managed?databaseEnvironment(r,{host:'db',username:'app',ssl:false}):{}),
-      ...Object.fromEntries(Object.entries(r.database.bindings).filter(([,v])=>v==='password').map(([k])=>[k,password]))};
+      ...Object.fromEntries(Object.entries(r.database.bindings).filter(([,v])=>['password','postgres_url'].includes(v)).map(([k,v])=>[k,v==='password'?password:postgresUrl({host:'db',username:'app',password,name:r.database.name,ssl:false})]))};
     return {services:{
       ...(managed?{db:{image:'postgres:17-alpine',environment:{POSTGRES_DB:r.database.name,POSTGRES_USER:'app',POSTGRES_PASSWORD:literal(password)},volumes:['pgdata:/var/lib/postgresql/data'],healthcheck:{test:['CMD','pg_isready','-U','app','-d',r.database.name],interval:'2s',timeout:'3s',retries:30}}}:{}),
       app:{image:request.image,environment:Object.fromEntries(Object.entries(env).map(([k,v])=>[k,literal(v)])),...(managed?{depends_on:{db:{condition:'service_healthy'}}}:{})},
@@ -78,7 +78,7 @@ export class DockerRuntime {
   }
   redact(value) {
     let text = String(value);
-    for (const secret of [this.password, ...Object.values(this.secrets)].filter(Boolean).sort((a,b)=>b.length-a.length)) text = text.replaceAll(secret, '[REDACTED]');
+    for (const secret of [this.password, ...Object.values(this.secrets)].filter(Boolean).flatMap(v=>[v,encodeURIComponent(v)]).sort((a,b)=>b.length-a.length)) text = text.replaceAll(secret, '[REDACTED]');
     return text;
   }
   async deploy(request, log) {

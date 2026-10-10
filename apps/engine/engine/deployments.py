@@ -83,6 +83,9 @@ class LocalRunner:
             from engine.analyzer import ImageRepoAnalyzer
             analysis = ImageRepoAnalyzer().analyze(str(root))
             if getattr(project,'runtime',None):
+                from engine.runtime import database_conflict
+                conflict = database_conflict(project.runtime['database']['mode'], analysis.database)
+                if conflict: raise DeploymentError(conflict)
                 analysis.port=project.runtime['port']; analysis.health_path=project.runtime['health_path']
             from engine.image_builder import app_context, prepared, BuildError
             from engine.llm import LlmError

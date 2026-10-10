@@ -115,3 +115,16 @@ test('generic PostgreSQL binds app-specific names and excludes secrets from plai
   assert.ok(!Object.keys(spec.services.app.environment).some(k=>k.startsWith('SPRING')));
   assert.throws(()=>validate({...request,runtime:{...runtime,secret_refs:{CUSTOM_HOST:'bad'}}}));
 });
+
+test('managed PostgreSQL URL binding encodes credentials and stays out of logs',()=>{
+  const password='p@ss:/?#%$ 한글';
+  const runtime={version:'http-runtime.v1',port:3000,health_path:'/',env:{},secret_refs:{},database:{mode:'postgres',name:'app',bindings:{DATABASE_URL:'postgres_url'}},init_command:[]};
+  const spec=composeSpec({runtime,image:'test:app'},password);
+  const uri=new URL(spec.services.app.environment.DATABASE_URL);
+  assert.equal(decodeURIComponent(uri.password),password);
+  assert.equal(uri.hostname,'db');assert.equal(uri.searchParams.get('sslmode'),'disable');
+  assert.equal(spec.services.db.environment.POSTGRES_PASSWORD,password.replaceAll('$',()=> '$$'));
+  assert.ok(!('PGPASSWORD' in spec.services.app.environment));
+  const runner=new DockerRuntime('/tmp',{password});
+  assert.ok(!runner.redact(uri.href).includes(encodeURIComponent(password)));
+});

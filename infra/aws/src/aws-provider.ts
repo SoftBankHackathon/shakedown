@@ -1,3 +1,5 @@
+import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+import { synchronizeDatabaseUrl } from './database-url.js';
 import { databaseEnvironment } from '../../../packages/contracts/runtime.mjs';
 import { architectures } from './architecture.js';
 import { RDSClient, DescribeDBInstancesCommand, ModifyDBInstanceCommand } from '@aws-sdk/client-rds';
@@ -28,10 +30,12 @@ async function phase<T>(name: string, log: Log, work: () => Promise<T>): Promise
 }
 
 export class AwsProvider implements Provider {
+  secretManager: SecretsManagerClient;
   rds: RDSClient; ec2: EC2Client; scaling: ApplicationAutoScalingClient;
   ecs: ECSClient; elb: ElasticLoadBalancingV2Client; ecr: ECRClient; logs: CloudWatchLogsClient; sts: STSClient;
   constructor(public config: Config) {
     const options = { region: config.region, credentials: fromIni({ profile: config.profile }), maxAttempts: 2, requestHandler: { requestTimeout: 15_000, connectionTimeout: 5_000 } };
+    this.secretManager = new SecretsManagerClient(options);
     this.rds = new RDSClient(options); this.ec2 = new EC2Client(options); this.scaling = new ApplicationAutoScalingClient(options);
     this.ecs = new ECSClient(options); this.elb = new ElasticLoadBalancingV2Client(options);
     this.ecr = new ECRClient(options); this.logs = new CloudWatchLogsClient(options); this.sts = new STSClient(options);
@@ -48,11 +52,14 @@ export class AwsProvider implements Provider {
     const mediaType = image.imageDetails?.[0]?.imageManifestMediaType;
     if (!mediaType || mediaType.includes('index') || mediaType.includes('manifest.list')) throw new Error('A single Linux AMD64 image manifest is required; publish with --provenance=false --sbom=false');
     const runtime=request.runtime;
+    const urlSecrets = runtime?.database.mode==='postgres' && Object.values(runtime.database.bindings).includes('postgres_url')
+      ? await synchronizeDatabaseUrl(this.secretManager,c,signal) : undefined;
     const genericEnv=runtime ? {...runtime.env,PORT:String(runtime.port),TZ:request.options.tz,
       ...(runtime.database.mode==='postgres'?databaseEnvironment(runtime,{host:c.dbHost!,username:c.dbUsername!,ssl:true}):{})} : {};
     const genericSecrets=runtime ? [
       ...Object.entries(runtime.secret_refs).map(([name,ref])=>({name,valueFrom:c.secrets[ref]})),
-      ...Object.entries(runtime.database.bindings).filter(([,v])=>v==='password').map(([name])=>({name,valueFrom:`${c.dbPasswordSecretArn}:password::`})),
+      ...Object.entries(runtime.database.bindings).filter(([,v])=>v==='password').map(([name])=>({name,valueFrom:urlSecrets?.passwordReference ?? `${c.dbPasswordSecretArn}:password::`})),
+      ...Object.entries(runtime.database.bindings).filter(([,v])=>v==='postgres_url').map(([name])=>({name,valueFrom:urlSecrets!.urlReference})),
     ] : [];
     const result = await this.ecs.send(new RegisterTaskDefinitionCommand({
       family: c.serviceName, networkMode: 'awsvpc', requiresCompatibilities: ['FARGATE'], cpu: request.architecture ? architectures[request.architecture.template_id].cpu : '512', memory: request.architecture ? architectures[request.architecture.template_id].memory : '1024',

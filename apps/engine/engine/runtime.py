@@ -10,7 +10,7 @@ SENSITIVE = re.compile(r'password|passwd|secret|token|credential|api.?key|privat
 class RuntimeDatabase(Model):
     mode: Literal['none', 'postgres', 'external'] = 'none'
     name: str = Field(default='app', pattern=r'^[a-z][a-z0-9_]{0,62}$')
-    bindings: dict[str, Literal['host','port','name','username','password','jdbc_url']] = Field(default_factory=dict)
+    bindings: dict[str, Literal['host','port','name','username','password','jdbc_url','postgres_url']] = Field(default_factory=dict)
 
 class HttpRuntime(Model):
     version: Literal['http-runtime.v1'] = 'http-runtime.v1'
@@ -33,8 +33,8 @@ class HttpRuntime(Model):
             raise ValueError('Use an adapter-registered secret name, not a secret value or ARN')
         if self.database.mode!='postgres' and self.database.bindings:
             raise ValueError('Managed DB bindings require postgres mode')
-        if self.database.mode=='postgres' and 'password' not in self.database.bindings.values():
-            raise ValueError('Map a password environment variable for PostgreSQL')
+        if self.database.mode=='postgres' and not {'password','postgres_url'} & set(self.database.bindings.values()):
+            raise ValueError('Map a password or postgres_url environment variable for PostgreSQL')
         if self.database.mode=='external' and not self.secret_refs:
             raise ValueError('External DB requires adapter-registered connection secrets')
         if self.database.mode=='none' and self.init_command:
@@ -42,3 +42,12 @@ class HttpRuntime(Model):
         if any(not arg or len(arg)>512 or '\x00' in arg or '\n' in arg for arg in self.init_command):
             raise ValueError('Invalid initialization argv')
         return self
+
+
+def database_conflict(mode, detected):
+    """Static detection is evidence, not automatic database conversion."""
+    if mode == 'none' and detected:
+        return 'DB 없음 설정과 감지된 DB가 충돌합니다. DB 설정 또는 소스를 확인하세요.'
+    if mode == 'postgres' and detected and detected not in {'postgres', 'postgresql'}:
+        return '관리형 PostgreSQL 설정과 감지된 DB가 다릅니다. DB 변환은 자동 수행하지 않습니다.'
+    return None

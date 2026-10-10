@@ -17,7 +17,7 @@ export const configSchema = z.object({
   executionRoleArn: arn, taskRoleArn: arn, logGroup: z.string().startsWith('/shakedown/'),
   dbInstanceId: z.string().regex(/^[a-zA-Z][a-zA-Z0-9-]{0,62}$/).optional(),
   dbHost: z.string().regex(/^[a-zA-Z0-9.-]+$/).optional(), dbName: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/).optional(),
-  dbUsername: z.string().regex(/^[a-zA-Z0-9_]+$/).optional(), dbPasswordSecretArn: arn.optional(),
+  dbUsername: z.string().regex(/^[a-zA-Z0-9_]+$/).optional(), dbPasswordSecretArn: arn.optional(), dbUrlSecretArn: arn.optional(),
   secrets: z.record(z.string().regex(/^[A-Za-z0-9_-]{1,100}$/),arn).default({}),
   port: z.number().int().default(8080),
 }).strict();
@@ -26,7 +26,7 @@ export function loadConfig(path: string): Config {
   const config = configSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
   const prefix = `${config.accountId}.dkr.ecr.${config.region}.amazonaws.com/${config.repository}`;
   if (config.repositoryUri !== prefix) throw new Error('ECR repository account/region mismatch');
-  for (const value of [config.clusterArn, config.listenerArn, config.gateRuleArn, config.targetGroupArn, config.executionRoleArn, config.taskRoleArn, config.dbPasswordSecretArn, ...Object.values(config.secrets)]) {
+  for (const value of [config.clusterArn, config.listenerArn, config.gateRuleArn, config.targetGroupArn, config.executionRoleArn, config.taskRoleArn, config.dbPasswordSecretArn, config.dbUrlSecretArn, ...Object.values(config.secrets)]) {
     if (value && value.split(':')[4] !== config.accountId) throw new Error('Resource ARN account mismatch');
   }
   return config;
@@ -36,6 +36,7 @@ export function validateRequest(config: Config, request: DeployRequest) {
   const runtime=request.runtime;
   const managed=!runtime || runtime.database.mode==='postgres';
   if (managed && (!config.dbHost||!config.dbName||!config.dbUsername||!config.dbPasswordSecretArn)) reject('PostgreSQL configuration is required');
+  if (runtime?.database.mode==='postgres' && Object.values(runtime.database.bindings).includes('postgres_url') && (!config.dbUrlSecretArn || config.dbUrlSecretArn===config.dbPasswordSecretArn)) reject('A dedicated PostgreSQL URL secret is required; update the foundation stack and adapter config');
   if (request.architecture) {
     const spec = architectures[request.architecture.template_id];
     if ((managed && !config.dbInstanceId) || new Set(config.subnetIds).size < spec.azs) reject('아키텍처 배포용 기반 스택/DB 식별자/AZ 서브넷을 먼저 준비하세요.');
