@@ -7,12 +7,13 @@ set -euo pipefail
 IMAGE="${1:?사용법: schema-init.sh <ACR image@sha256:digest>}"
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 CONFIG="${AZURE_ADAPTER_CONFIG:-$ROOT/.data/azure/config.json}"
-read -r RG REPO < <(python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(c["resourceGroup"], c["repositoryUri"])' "$CONFIG")
+read -r SUB RG REPO < <(python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(c["subscriptionId"], c["resourceGroup"], c["repositoryUri"])' "$CONFIG")
 [ "${IMAGE%@sha256:*}" = "$REPO" ] || { echo "설정한 ACR 저장소($REPO)의 이미지가 아닙니다: $IMAGE" >&2; exit 1; }
 JOB=sd-schema-init
 
 az containerapp job update -n "$JOB" -g "$RG" --image "$IMAGE" -o none
-run="$(az containerapp job start -n "$JOB" -g "$RG" --query name -o tsv)"
+# az 2.91의 job start는 실행이 끝난 뒤에도 돌아오지 않아(10분 넘게) ARM start를 직접 부른다. 응답 본문에 실행 이름이 있다.
+run="$(az rest --method post --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/jobs/$JOB/start?api-version=2024-03-01" --query name -o tsv)"
 echo "실행: $run"
 for _ in $(seq 1 120); do
   status="$(az containerapp job execution show -n "$JOB" -g "$RG" --job-execution-name "$run" --query properties.status -o tsv)"
