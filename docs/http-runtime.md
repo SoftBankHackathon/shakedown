@@ -101,9 +101,9 @@ performed for this change.
 
 Security Gate #16 remains a mandatory predecessor for engine planning/builds.
 #25 adds Java/JavaScript/TypeScript rules and validated wrapper-JAR exclusion.
-Compose NOT_APPLICABLE can accompany overall ALLOW, but Semgrep and Gitleaks
-must both succeed. Unsupported languages and template/external-script coverage
-gaps still require REVIEW. This runtime generalization never bypasses that gate. Workers, batch jobs, multiple app containers,
+A missing Compose file is ALLOW, but Semgrep and Gitleaks must both succeed. Sources outside the scanned allow-list are blocked
+(`UNSUPPORTED_SOURCE`); template/external-script coverage gaps are reported but do
+not block. This runtime generalization never bypasses that gate. Workers, batch jobs, multiple app containers,
 arbitrary persistent volumes and automatic MySQL conversion remain unsupported.
 
 

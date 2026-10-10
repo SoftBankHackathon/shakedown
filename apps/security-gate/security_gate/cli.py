@@ -4,7 +4,7 @@ import json
 
 from .scanner import DEFAULT_MAX_FILE_BYTES, DEFAULT_TIMEOUT_SECONDS, scan
 
-EXIT_CODES = {"ALLOW": 0, "DENY": 1, "REVIEW": 2, "SCAN_FAILED": 3}
+EXIT_CODES = {"ALLOW": 0, "DENY": 1, "SCAN_FAILED": 3}
 
 
 def main(argv=None):

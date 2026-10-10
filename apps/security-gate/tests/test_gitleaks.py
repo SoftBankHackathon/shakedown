@@ -205,10 +205,10 @@ def test_cleanup_failure_prevents_allow(monkeypatch):
     assert FAKE not in json.dumps(report)
 
 
-def test_no_text_files_requires_review(tmp_path):
+def test_no_text_files_has_nothing_to_leak(tmp_path):
     report = gitleaks.scan_gitleaks(tmp_path, runner=runner())
     assert report["scan_status"] == "NOT_APPLICABLE"
-    assert report["decision"] == "REVIEW"
+    assert report["decision"] == "ALLOW"
 
 
 def test_targets_are_never_executed_and_ignore_files_do_not_hide_them(tmp_path):

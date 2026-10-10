@@ -9,16 +9,16 @@ from engine.image_builder import ImageBuilder, PlanRequest, prepared
 from engine.deployments import LocalRunner, DeploymentError
 
 
-def report(decision='ALLOW'):
+def report(decision='ALLOW', reason=None):
     payload = json.loads((security.GATE_ROOT / 'examples' / 'normal-v3.json').read_text())
     payload['decision'] = decision
     payload['scan_status'] = 'FAILED' if decision == 'SCAN_FAILED' else 'SUCCESS'
-    payload['reason_code'] = {'ALLOW':'ALL_APPLICABLE_CHECKS_PASSED', 'DENY':'RISK_DETECTED',
-                              'REVIEW':'REVIEW_REQUIRED', 'SCAN_FAILED':'REQUIRED_SCAN_FAILED'}[decision]
+    payload['reason_code'] = reason or {'ALLOW':'ALL_APPLICABLE_CHECKS_PASSED', 'DENY':'RISK_DETECTED',
+                                        'SCAN_FAILED':'REQUIRED_SCAN_FAILED'}[decision]
     return payload
 
 
-@pytest.mark.parametrize('decision', ['ALLOW','DENY','REVIEW','SCAN_FAILED'])
+@pytest.mark.parametrize('decision', ['ALLOW','DENY','SCAN_FAILED'])
 def test_gate_exit_decisions(monkeypatch,tmp_path,decision):
     monkeypatch.setattr(security.subprocess,'run',lambda *a,**kw:SimpleNamespace(
         returncode=security.CODES[decision],stdout=json.dumps(report(decision))))
@@ -28,11 +28,20 @@ def test_gate_exit_decisions(monkeypatch,tmp_path,decision):
 
 
 @pytest.mark.parametrize('payload,code', [('SECRET',0), ('{}',0), ('[]',0),
-    (json.dumps(report()),1), (json.dumps({**report(),'semgrep':{'decision':'REVIEW'}}),0)])
+    (json.dumps(report()),1), (json.dumps({**report(),'semgrep':{'decision':'DENY'}}),0)])
 def test_invalid_reports_fail_closed(monkeypatch,tmp_path,payload,code):
     monkeypatch.setattr(security.subprocess,'run',lambda *a,**kw:SimpleNamespace(returncode=code,stdout=payload))
     with pytest.raises(security.SecurityGateError,match='SCAN_FAILED') as exc:security.require_allow(tmp_path)
     assert 'SECRET' not in str(exc.value)
+
+
+def test_unsupported_source_message_names_the_languages(monkeypatch,tmp_path):
+    payload = report('DENY', 'UNSUPPORTED_SOURCE')
+    payload['semgrep'] = {**payload['semgrep'], 'decision': 'DENY', 'block_reasons': ['UNSUPPORTED_LANGUAGE'],
+                          'unsupported_languages': ['kotlin', 'shell'], 'unsupported_files': 2}
+    monkeypatch.setattr(security.subprocess,'run',lambda *a,**kw:SimpleNamespace(returncode=1,stdout=json.dumps(payload)))
+    with pytest.raises(security.SecurityGateError, match=r'DENY\. 검사할 수 없는 언어가 있습니다\(kotlin, shell\)\. 검사 가능한 언어: python, java'):
+        security.require_allow(tmp_path)
 
 
 def test_scan_before_ai_and_secret_filtering(monkeypatch,tmp_path):
@@ -61,7 +70,7 @@ def test_scan_and_build_share_copy(monkeypatch,tmp_path):
         assert plan['security_gate']['decision']=='ALLOW'
 
 
-@pytest.mark.parametrize('decision',['DENY','REVIEW','SCAN_FAILED'])
+@pytest.mark.parametrize('decision',['DENY','SCAN_FAILED'])
 def test_existing_dockerfile_deployment_cannot_bypass(monkeypatch,tmp_path,decision):
     (tmp_path/'Dockerfile').write_text('FROM scratch\n')
     monkeypatch.setattr('engine.analyzer.RepoAnalyzer.analyze',lambda *a:SimpleNamespace(evidence=[],database='postgres'))
@@ -93,9 +102,9 @@ def test_image_plan_api_rejects_before_llm(client,repository,monkeypatch):
     result=client.post('/api/projects',json={'repo':str(repository)})
     project=result.json()['id']
     client.app.state.llm.suggest=lambda _:pytest.fail('LLM called')
-    monkeypatch.setattr(security,'require_allow',lambda _:(_ for _ in ()).throw(security.SecurityGateError('REVIEW')))
+    monkeypatch.setattr(security,'require_allow',lambda _:(_ for _ in ()).throw(security.SecurityGateError('DENY')))
     response=client.post(f'/api/projects/{project}/image-plans',json={})
-    assert response.status_code==400 and 'REVIEW' in response.json()['detail']
+    assert response.status_code==400 and 'DENY' in response.json()['detail']
 
 
 @pytest.mark.parametrize('stage',['create','select','resolve'])
@@ -110,8 +119,8 @@ def test_architecture_gated_at_each_boundary(monkeypatch,tmp_path,stage):
     plan=None
     if stage!='create':plan=planner.create(project,options)
     if stage=='resolve':planner.select(project,plan['id'],'small')
-    monkeypatch.setattr(security,'require_allow',lambda _:(_ for _ in ()).throw(security.SecurityGateError('REVIEW')))
-    with pytest.raises(ArchitectureError,match='REVIEW'):
+    monkeypatch.setattr(security,'require_allow',lambda _:(_ for _ in ()).throw(security.SecurityGateError('DENY')))
+    with pytest.raises(ArchitectureError,match='DENY'):
         if stage=='create':planner.create(project,options)
         elif stage=='select':planner.select(project,plan['id'],'small')
         else:planner.resolve(project,plan['id'])
@@ -119,7 +128,7 @@ def test_architecture_gated_at_each_boundary(monkeypatch,tmp_path,stage):
 
 def no_compose_report():
     payload = report()
-    payload['docker_compose'].update(decision='REVIEW', scan_status='NOT_APPLICABLE', files=[], errors=[])
+    payload['docker_compose'].update(decision='ALLOW', scan_status='NOT_APPLICABLE', files=[], errors=[])
     return payload
 
 
@@ -137,7 +146,8 @@ def test_no_compose_never_weakens_required_checks(monkeypatch, tmp_path, defect)
     elif defect == 'compose_files': payload['docker_compose']['files'] = report()['docker_compose']['files']
     elif defect == 'compose_failed': payload['docker_compose']['scan_status'] = 'FAILED'
     elif defect.endswith('_na'):
-        payload[defect[:-3]].update(decision='REVIEW', scan_status='NOT_APPLICABLE', scanned_files=0)
+        tool = defect[:-3]  # 소스가 없으면 Semgrep은 DENY, 비밀 대상이 없으면 Gitleaks는 ALLOW지만 전체 ALLOW와는 모순
+        payload[tool].update(decision={'semgrep': 'DENY', 'gitleaks': 'ALLOW'}[tool], scan_status='NOT_APPLICABLE', scanned_files=0)
     elif defect == 'missing_tool': del payload['gitleaks']
     elif defect == 'missing_field': del payload['semgrep']['scanned_files']
     elif defect == 'coverage_gap': payload['semgrep']['unsupported_files'] = 1

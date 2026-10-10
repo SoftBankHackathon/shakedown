@@ -21,11 +21,9 @@ def report(target, files=None, error=None):
     if error or any(f["decision"] == "SCAN_FAILED" for f in files):
         status, decision = "FAILED", "SCAN_FAILED"
     elif not files:
-        status, decision = "NOT_APPLICABLE", "REVIEW"
+        status, decision = "NOT_APPLICABLE", "ALLOW"
     else:
-        status = "SUCCESS"
-        decision = next((d for d in ("DENY", "REVIEW")
-                         if any(f["decision"] == d for f in files)), "ALLOW")
+        status, decision = "SUCCESS", combine_decisions(f["decision"] for f in files)
     return {
         "schema_version": "1.0", "scope": SCOPE, "target_path": str(target),
         "scan_status": status, "decision": decision, "files": files,
@@ -34,9 +32,15 @@ def report(target, files=None, error=None):
 
 
 # Aggregators combine tool decisions by severity; the first present wins.
-DECISION_ORDER = ("SCAN_FAILED", "DENY", "REVIEW", "ALLOW")
-REASON_CODES = {"SCAN_FAILED": "REQUIRED_SCAN_FAILED", "DENY": "RISK_DETECTED",
-                "REVIEW": "REVIEW_REQUIRED", "ALLOW": "ALL_APPLICABLE_CHECKS_PASSED"}
+# 결과는 통과(ALLOW) 아니면 차단(DENY·SCAN_FAILED)이다. 사람이 판단할 중간 상태는 두지 않는다.
+DECISION_ORDER = ("SCAN_FAILED", "DENY", "ALLOW")
+
+
+def reason_code(decision, findings):
+    """근거 없는 DENY는 Semgrep block_reasons(검사할 수 없는 소스)뿐이다. 스키마가 이 짝을 강제한다."""
+    if decision == "DENY":
+        return "RISK_DETECTED" if findings else "UNSUPPORTED_SOURCE"
+    return {"SCAN_FAILED": "REQUIRED_SCAN_FAILED", "ALLOW": "ALL_APPLICABLE_CHECKS_PASSED"}[decision]
 
 
 def combine_decisions(decisions):
