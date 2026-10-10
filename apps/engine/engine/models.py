@@ -55,8 +55,10 @@ class Project(Model):
     targets: list[TargetName]
     secrets: list[Secret]
     last_deployment: dict | None = None
+    runtime: dict | None = None
 
 class CreateProjectRequest(Model):
+    image_only: bool = False
     repo: StrictStr = Field(min_length=1, max_length=4096)
     name: StrictStr | None = Field(default=None, min_length=1, max_length=120)
     targets: list[TargetName] = Field(default_factory=lambda: ['local', 'aws'], min_length=1)

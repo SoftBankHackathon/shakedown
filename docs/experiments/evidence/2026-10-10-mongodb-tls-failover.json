@@ -1,0 +1,100 @@
+{
+  "date": "2026-10-10",
+  "region": "ap-northeast-2",
+  "mongodb_members": 3,
+  "database_azs": 3,
+  "ecs_tasks": 2,
+  "ecs_architecture": "medium",
+  "tls": {
+    "trusted_ca_exit": 0,
+    "missing_ca_exit": 1,
+    "missing_ca_error": "self-signed certificate in certificate chain",
+    "plaintext_connection": "no successful connection within 12s; client timeout",
+    "hostname_negative": "no successful connection within 12s; specific failure cause not resolved"
+  },
+  "failovers": [
+    {
+      "fault": "ec2-stop",
+      "observed_write_recovery_seconds": 2.13,
+      "failed_http_probes": 0,
+      "acknowledged_count_before": 1,
+      "count_after": 3,
+      "old_primary": "10.42.0.50:27017",
+      "new_primary": "10.42.1.50:27017",
+      "trace": [
+        {
+          "seconds": 1.01,
+          "ok": true,
+          "primary": "10.42.0.50:27017",
+          "count": 2
+        },
+        {
+          "seconds": 2.06,
+          "ok": true,
+          "primary": "10.42.1.50:27017",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "fault": "process-kill",
+      "observed_write_recovery_seconds": 12.24,
+      "failed_http_probes": 2,
+      "acknowledged_count_before": 4,
+      "count_after": 5,
+      "old_primary": "10.42.0.50:27017",
+      "new_primary": "10.42.1.50:27017",
+      "trace": [
+        {
+          "seconds": 1.89,
+          "ok": false,
+          "error_type": "HTTPError"
+        },
+        {
+          "seconds": 7.15,
+          "ok": false,
+          "error_type": "HTTPError"
+        },
+        {
+          "seconds": 12.19,
+          "ok": true,
+          "primary": "10.42.1.50:27017",
+          "count": 5
+        }
+      ]
+    }
+  ],
+  "restored_members": [
+    {
+      "name": "10.42.0.50:27017",
+      "state": "PRIMARY",
+      "health": 1
+    },
+    {
+      "name": "10.42.1.50:27017",
+      "state": "SECONDARY",
+      "health": 1
+    },
+    {
+      "name": "10.42.2.50:27017",
+      "state": "SECONDARY",
+      "health": 1
+    }
+  ],
+  "pre_fault_documents_preserved": 2,
+  "backup": "AWS Backup permissions and DLM organization SCP denied; disabled for live TLS/failover test",
+  "bootstrap_fix": "Added rs.initiate readiness retries; corrected initialization suffix rerun via SSM on the same EC2. Full stack was not recreated after this retry fix.",
+  "cleanup": {
+    "state": "completed",
+    "stack": "DELETE_COMPLETE",
+    "retained_resources_removed": {
+      "secrets": 4,
+      "log_groups": 1,
+      "snapshots": 3,
+      "repositories": 1,
+      "task_definitions_deregistered": 1,
+      "instances_terminated": 3
+    },
+    "failed_attempt_stacks": "both DELETE_COMPLETE; retained resources removed"
+  }
+}

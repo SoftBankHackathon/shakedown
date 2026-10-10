@@ -1,0 +1,34 @@
+{
+  "results": [
+    {
+      "language": "node",
+      "mode": "none",
+      "http": 200,
+      "migration_runs": 0,
+      "count": null
+    },
+    {
+      "language": "node",
+      "mode": "postgres",
+      "http": 200,
+      "migration_runs": 2,
+      "count": 1
+    },
+    {
+      "language": "python",
+      "mode": "none",
+      "http": 200,
+      "migration_runs": 0,
+      "count": null
+    },
+    {
+      "language": "python",
+      "mode": "postgres",
+      "http": 200,
+      "migration_runs": 2,
+      "count": 1
+    }
+  ],
+  "cleanup": "completed",
+  "scope": "local composeSpec; no security-gate, public tunnel, LLM or AWS execution"
+}

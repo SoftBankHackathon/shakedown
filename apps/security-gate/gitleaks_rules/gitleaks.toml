@@ -1,0 +1,13 @@
+title = "Security Gate directory secret policy"
+
+# Built-in rules live in the installed binary; no registry/network download.
+[extend]
+useDefault = true
+
+# An explicitly artificial namespace: these tokens are accepted by no service.
+[[rules]]
+id = "security-gate-lab-api-token"
+description = "Artificial lab token exposed in source"
+regex = '''\b(SGLAB_FAKE_TOKEN_[A-Za-z0-9]{24,64})\b'''
+secretGroup = 1
+keywords = ["SGLAB_FAKE_TOKEN_"]

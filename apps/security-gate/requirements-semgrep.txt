@@ -1,0 +1,2 @@
+# Optional dependency: install only in an approved supported environment.
+semgrep>=1.100,<2

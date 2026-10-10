@@ -13,13 +13,18 @@
     "bootstrap": "node --import tsx src/bootstrap.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-application-auto-scaling": "^3.1148.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.0.0",
+    "@aws-sdk/client-ec2": "^3.1148.0",
     "@aws-sdk/client-ecr": "^3.0.0",
     "@aws-sdk/client-ecs": "^3.0.0",
     "@aws-sdk/client-elastic-load-balancing-v2": "^3.0.0",
+    "@aws-sdk/client-rds": "^3.1148.0",
+    "@aws-sdk/client-secrets-manager": "^3.1149.0",
     "@aws-sdk/client-sts": "^3.0.0",
     "@aws-sdk/credential-providers": "^3.0.0",
     "fastify": "^5.0.0",
+    "mongodb-connection-string-url": "^7.0.2",
     "zod": "^4.0.0"
   },
   "devDependencies": {

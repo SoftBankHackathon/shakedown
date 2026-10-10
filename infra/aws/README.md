@@ -60,7 +60,7 @@ node --import tsx infra/aws/scripts/config-from-outputs.ts .data/aws/outputs.jso
   hackathon-adapter "$HACKATHON_ACCOUNT_ID" prj_board > .data/aws/config.json
 ```
 
-3. Outputs의 `AdapterPolicyArn`을 어댑터가 사용할 principal에, `ImagePublisherPolicyArn`을 엔진/이미지 빌드 principal에 부여합니다. 어댑터에는 DB 비밀값 조회 권한이 없습니다. `PassRole`은 이 스택의 실행·앱 역할만 허용합니다. 실행 역할만 ECR pull/로그/해당 DB secret을 사용할 수 있고 앱 task role에는 AWS 관리 권한이 없습니다. ECS 서비스 연결 역할은 첫 사용 때 생성할 수 있도록 범위를 제한했습니다.
+3. Outputs의 `AdapterPolicyArn`을 어댑터가 사용할 principal에, `ImagePublisherPolicyArn`을 엔진/이미지 빌드 principal에 부여합니다. postgres_url 지원을 위해 어댑터는 이 스택의 DB 비밀값을 읽고 전용 URL Secret만 갱신할 수 있습니다. `PassRole`은 이 스택의 실행·앱 역할만 허용합니다. 실행 역할만 ECR pull/로그/해당 DB secret을 사용할 수 있고 앱 task role에는 AWS 관리 권한이 없습니다. ECS 서비스 연결 역할은 첫 사용 때 생성할 수 있도록 범위를 제한했습니다.
 4. 엔진이 이미지를 **한 번** 빌드·업로드하고 반환된 digest 주소를 Local/AWS 모두 사용합니다. 수동 준비용 보조 스크립트는 아래와 같습니다. multiarch/index manifest 대신 단일 AMD64 manifest를 사용합니다.
 
 ```sh
@@ -148,3 +148,81 @@ HTTP 데모라 실제 사용자 개인정보/비밀번호는 사용하지 않습
 - 실제 PostgreSQL 17 + ARM64 앱 컨테이너 2개: memory 모드의 교차 서버 로그인 실패 재현, JDBC 모드 **10회 교차 요청 통과**, 글 작성/양쪽 조회 및 앱 재시작 후 세션·게시글 보존 확인. [실행 결과](test/evidence/session-smoke-postgres-2026-10-08.json).
 - CloudFormation `cfn-lint` 서울 리전 검사 통과. OpenAPI lint 오류 0개, 기존 형식 관련 경고 5개(license, localhost 서버 주소 2건, health/logs의 4xx 응답 표기 2건).
 - 실제 AWS 자원 생성/배포, IAM 권한 실증, ALB 라우팅/403, RDS TLS 및 팀 엔진의 원클릭 연결은 **아직 미검증**.
+
+### ALB traffic gate migration
+
+The listener keeps a permanent default forward to the target group: ECS requires this
+association before `CreateService`. A priority-1 source-IP rule covering IPv4 and IPv6
+returns 403 until the new tasks are healthy; the adapter opens/closes that rule with
+`ModifyRule`. Regenerate the adapter config from outputs to include `GateRuleArn`.
+Existing configs without this field are rejected. Existing stacks need a controlled
+migration: first block ALB ingress during maintenance, add the traffic gate and listener
+association, regenerate config and update adapter IAM permissions, then restore ingress.
+Do not update an existing serving listener to forward before its blocking rule exists.
+
+## 선택한 아키텍처로 배포 (PR #12 후속 연결)
+
+기존 배포의 0.5 vCPU/1 GiB·1~2개 제한은 `architecture` 없는 요청에 적용한다.
+대시보드에서 설계를 선택하고 **선택 구성으로 AWS 배포**를 누르거나, AWS를 포함한
+Action을 실행하면 엔진은 최신 선택 ID를 재검증하고 어댑터에 카탈로그 ID를 전달한다.
+소규모는 .5CPU/1GiB·1개/1AZ·Single-AZ DB, 중규모는 1CPU/2GiB·2~4개/2AZ·Multi-AZ DB,
+대규모는 2CPU/4GiB·3~12개/3AZ·Multi-AZ DB를 적용한다. 읽기 복제본은 검토 항목이며 생성하지 않는다.
+CPU 목표는 60%, 확장/축소 cooldown은 60/300초다. 처리량 보장값은 아니다.
+
+기반 VPC/ALB/ECR/RDS/역할은 기존 provision 절차로 준비해야 한다. 이번 연결이 AWS 계정
+온보딩이나 빈 계정에서 전체 기반 스택을 생성하는 기능은 아니다. `foundation.yaml`은
+3번째 앱 서브넷과 ALB AZ를 준비하며 출력에 `DbInstanceId`가 추가된다. 출력으로 어댑터
+설정을 다시 생성하고 새 AdapterPolicy를 적용한다. 기존 두 서브넷 구성은 small/medium만
+가능하며 large를 요청하면 차단한다. 실제 서브넷 AZ와 DB/VPC 일치도 배포 전에 확인한다.
+
+RDS `MultiAZ` 속성의 운영 소유자는 어댑터다. 템플릿에 고정 false를 두지 않으며 배포가
+필요한 값으로 ModifyDBInstance하고 available/변경 완료를 기다린다. 기존 스택 업데이트는
+인입 차단·DB 변경 사항 검토 후 수행해야 한다. DB의 다른 변경이 대기 중이면 완료까지
+기다리며, RDS 변경은 취소/실패로 자동 되돌리지 않는다. 데이터는 유지한다.
+
+선택 배포는 JDBC 세션과 스키마 초기화 작업을 사용한다. RDS 변경을 포함해 어댑터 최대40분,
+엔진45분 대기 후 실패 처리한다. 배포 전에 이전 자동 확장 등록을 해제하며, 정상 태스크와
+실제 AZ 분포 확인 뒤 새 정책을 등록한다. 중지/실패 정리는 확장 등록을 제거하고 앱을 멈춘다.
+**DB/스택/로그는 계속 유지되어 요금이 발생할 수 있다.** DB 변경 실패 또는 중지 시 확인이 필요하다.
+
+현재 실행 지원은 Spring/PostgreSQL 샘플이다. 다른 스택의 설계 저장·이미지 생성 지원과
+실제 배포 지원을 혼동하지 않는다. 대시보드 선택 저장 자체는 자원을 변경하지 않는다.
+최신 선택이 아닌 ID, 다른 프로젝트 ID, 분석 근거 변경, replicas 직접 override는 배포 전에 거절한다.
+
+AWS API 기준: [RDS DB 식별자·ARN](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-rds-dbinstance.html),
+[Application Auto Scaling 권한](https://docs.aws.amazon.com/service-authorization/latest/reference/list_application-autoscaling.html).
+
+
+### PostgreSQL URL / 외부 DB Secret 설정
+
+`runtime.database.bindings`에 `{"DATABASE_URL":"postgres_url"}`을 지정하면
+관리형 PostgreSQL URI를 자동 생성해 ECS `secrets`로 주입합니다. 기존 스택은
+foundation 템플릿을 업데이트한 후 outputs에서 어댑터 설정을 재생성해야 합니다.
+새 `DbUrlSecretArn` → `dbUrlSecretArn`은 비밀번호 Secret과 다른 전용 Secret입니다.
+특수문자는 표준 URL 인코딩하고, AWS URL에는 `sslmode=require`를 사용합니다.
+비밀번호/URL은 응답이나 task definition의 일반 environment에 저장하지 않습니다.
+
+외부 Secret은 config.secrets 등록과 별도로 실행 역할 읽기 권한이 필요합니다.
+provision.sh에서 `HACKATHON_ADDITIONAL_SECRET_ARNS`에 정확한 ARN을 쉼표로 연결해
+전달합니다. 고객 관리 KMS 키는 `HACKATHON_ADDITIONAL_SECRET_KMS_KEY_ARNS`도 지정하고
+키 정책을 확인합니다. 이 값들은 각각 AdditionalSecretArns/AdditionalSecretKmsKeyArns
+스택 파라미터입니다. 환경변수를 생략하면 기존 스택 값을 유지하고, 빈 값은 권한을
+제거합니다. DB 네트워크 연결/외부 DB 계정 권한은 별도 준비가 필요합니다.
+
+암호 회전 후 재배포하면 URL Secret을 갱신하며, 동일한 값은 새 버전을 만들지 않습니다.
+태스크 정의에 Secret 버전을 고정하므로 실행 중 태스크는 자동 갱신되지 않습니다.
+마이그레이션·배포 중 회전은 피하고, 완료 후 새 배포로 반영합니다.
+URL Secret도 Retain 대상이므로 실험 종료 후 별도 정리해야 합니다.
+위 PostgreSQL URL 변경은 SDK 테스트/템플릿 lint로 검증했고 실제 AWS 재배포는 수행하지 않았습니다. 이후 MongoDB TLS 경로의 실측은 아래 기록을 참조하세요.
+
+
+### MySQL / TLS MongoDB replica set
+
+[구성·드라이버 설정·백업/복구](../../docs/managed-databases.md)를 참조하세요.
+`HACKATHON_DATABASE_ENGINE=mysql|mongodb`로 새 전용 스택을 준비하고 outputs/config를
+재생성합니다. 기존 DB 엔진 변경은 provisioning helper가 거부합니다.
+MongoDB는 3 AZ TLS replica set이며 CA를 ECS 앱에 읽기 전용 파일로 전달합니다.
+[실제 TLS/장애 전환 실험](../../docs/experiments/2026-10-10-mongodb-tls-failover.md)에서
+EC2 중지와 primary 프로세스 강제 종료 후 쓰기 복구를 확인했습니다.
+DLM 일일 스냅샷/최근 7개 보존 설정은 제공하지만 실험 계정 SCP로 활성화하지 못했고
+복구는 미검증입니다. AWS MySQL은 SDK 경로 검증이며 이번에 실제 RDS를 만들지는 않았습니다.

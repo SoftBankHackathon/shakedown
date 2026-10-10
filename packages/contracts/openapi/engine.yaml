@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Engine API
-  version: 0.1.1
+  version: 0.1.3
   description: |
-    > **상태: 통합 제안 (v0.1.1, 2026-10-08)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 통합 제안 (v0.1.3, 2026-10-09)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     엔진(apps/engine, 김도경)이 구현하고 대시보드(apps/web, 서동옥)가 호출하는 API.
@@ -59,6 +59,7 @@ paths:
               type: object
               required: [repo]
               properties:
+                image_only: { type: boolean, default: false, description: "이미지 생성 전용 등록: 미지원 단일 앱 스택 허용" }
                 repo: { type: string, description: "GitHub URL 또는 로컬 경로. 이미 등록된 레포면 기존 프로젝트를 돌려줌" }
                 name: { type: string }
                 targets:
@@ -92,6 +93,24 @@ paths:
               schema: { $ref: "#/components/schemas/Project" }
         "404":
           description: 없음
+  /api/projects/{project_id}/runtime:
+    post:
+      summary: Save explicit HTTP container runtime and DB bindings
+      parameters:
+        - {name: project_id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/HttpRuntime'}
+      responses:
+        '200':
+          description: Updated project
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Project'}
+        '400': {description: Invalid runtime; use secret references, not secret values}
+        '404': {description: Project not found}
   /api/projects/{project_id}/deployments:
     post:
       operationId: deploy
@@ -112,6 +131,7 @@ paths:
                   uniqueItems: true
                   default: [local]
                   items: { type: string, enum: [local, aws] }
+                architecture_plan_id: { type: string, pattern: "^arch_[a-f0-9]{32}$", description: "최신 선택 설계 ID. AWS 필수, replicas 직접 지정 금지. 실행 시 저장소 근거 재검증." }
                 shakedown: { type: boolean, default: false }
                 autofix: { type: boolean, const: false, default: false }
                 comparison: { $ref: "#/components/schemas/Endpoint" }
@@ -212,8 +232,420 @@ paths:
           content:
             text/event-stream:
               schema: { type: string }
+  /api/settings/llm:
+    get:
+      summary: 키를 제외한 Claude 연결 상태 조회
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  provider:
+                    const: anthropic
+                  configured:
+                    type: boolean
+                  model:
+                    type: string
+                  verified:
+                    type: boolean
+                  source:
+                    enum:
+                    - none
+                    - environment
+                    - memory
+        '400': &id001
+          description: 설정 또는 요청 오류
+  /api/settings/llm/connect:
+    post:
+      summary: 짧은 유료 API 테스트 후 메모리에 키와 모델 적용
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+        '400': *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - model
+              additionalProperties: false
+              properties:
+                model:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                api_key:
+                  type: string
+                  writeOnly: true
+                  format: password
+  /api/settings/llm/disconnect:
+    post:
+      summary: 현재 엔진의 메모리 연결 해제
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+        '400': *id001
+  /api/projects/{project_id}/image-plans:
+    post:
+      summary: 소스 복사본과 Dockerfile 계획 생성, 빌드는 실행하지 않음
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - id
+                - project_id
+                - source
+                - dockerfile
+                - build_status
+                properties:
+                  id:
+                    type: string
+                  project_id:
+                    type: string
+                  source:
+                    enum:
+                    - existing
+                    - rule
+                    - ai-fallback
+                  prompt_version:
+                    type: string
+                    const: dockerfile-fallback.v1
+                  fallback_diagnostic:
+                    type: object
+                    required: [code, stage, message, details]
+                    properties:
+                      code: { type: string }
+                      stage: { type: string, const: rule_generation }
+                      message: { type: string }
+                      details: { type: object, additionalProperties: true }
+                  fallback_reason:
+                    type: string
+                    description: 규칙 생성 실패로 AI를 호출한 이유
+                  dockerfile:
+                    type: string
+                  warnings:
+                    type: array
+                    items:
+                      type: string
+                  build_status:
+                    const: not_built
+        '400': *id001
+        '404':
+          description: 프로젝트 또는 계획 없음/만료
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                use_ai:
+                  type: boolean
+                  default: true
+                runtime:
+                  type: string
+                  maxLength: 16
+                entrypoint:
+                  type: string
+                  maxLength: 120
+  /api/projects/{project_id}/image-plans/{plan_id}/build:
+    post:
+      summary: 검토한 계획으로 이미지 생성, 배포·실행은 수행하지 않음
+      responses:
+        '202':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+        '400': *id001
+        '404':
+          description: 프로젝트 또는 계획 없음/만료
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: plan_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/image-builds/{build_id}:
+    get:
+      summary: 이미지 빌드 상태 조회; built는 앱 실행 성공을 의미하지 않음
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  status:
+                    enum:
+                    - queued
+                    - building
+                    - built
+                    - failed
+                  image:
+                    type: string
+                  error:
+                    type: string
+        '400': *id001
+        '404':
+          description: 프로젝트 또는 계획 없음/만료
+      parameters:
+      - name: build_id
+        in: path
+        required: true
+        schema:
+          type: string
+
+  /api/projects/{project_id}/architecture-plans:
+    post:
+      summary: 저장소와 운영 요구로 AWS 설계안을 판단하고 저장 (배포하지 않음)
+      parameters:
+      - &arch001
+        name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchitectureRequest'
+      responses:
+        '200':
+          description: 소·중·대 판단 결과; ready=false
+          content:
+            application/json:
+              schema: &arch002
+                $ref: '#/components/schemas/ArchitecturePlan'
+        '400':
+          description: 입력·분석·AI 판단 오류
+        '404':
+          description: 프로젝트 없음
+  /api/projects/{project_id}/architecture-plans/latest:
+    get:
+      summary: 최근 설계안과 선택 상태 조회; 없으면 null
+      parameters:
+      - *arch001
+      responses:
+        '200':
+          description: 최근 설계안
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - *arch002
+                - type: 'null'
+        '404':
+          description: 프로젝트 없음
+  /api/projects/{project_id}/architecture-plans/{plan_id}/select:
+    post:
+      summary: 운영 요구를 충족하는 최신 설계안 선택 저장; 배포 설정 미변경
+      parameters:
+      - *arch001
+      - name: plan_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchitectureSelection'
+      responses:
+        '200':
+          description: 선택 상태가 저장된 설계안
+          content:
+            application/json:
+              schema: *arch002
+        '400':
+          description: 누락 입력·차단 조건·다른 프로젝트·오래된 계획·허용되지 않은 설계안
+        '404':
+          description: 프로젝트 없음
 components:
   schemas:
+    ArchitectureRequest:
+      additionalProperties: false
+      properties:
+        workload:
+          default: auto
+          enum:
+          - auto
+          - http
+          - worker
+          - batch
+          - static
+          title: Workload
+          type: string
+        peak_rps:
+          anyOf:
+          - maximum: 10000000
+            minimum: 0
+            type: integer
+          - type: 'null'
+          default: null
+          title: Peak Rps
+        availability:
+          default: unknown
+          enum:
+          - unknown
+          - best_effort
+          - high
+          title: Availability
+          type: string
+        traffic:
+          default: unknown
+          enum:
+          - unknown
+          - steady
+          - bursty
+          title: Traffic
+          type: string
+        priority:
+          default: balanced
+          enum:
+          - balanced
+          - cost
+          - availability
+          title: Priority
+          type: string
+        use_ai:
+          default: true
+          title: Use Ai
+          type: boolean
+      title: ArchitectureRequest
+      type: object
+    ArchitectureSelection:
+      additionalProperties: false
+      properties:
+        template_id:
+          enum:
+          - small
+          - medium
+          - large
+          title: Template Id
+          type: string
+      required:
+      - template_id
+      title: ArchitectureSelection
+      type: object
+    ArchitecturePlan:
+      type: object
+      required:
+      - id
+      - project_id
+      - schema_version
+      - created
+      - source
+      - status
+      - recommended_template
+      - selected_template
+      - templates
+      - assessment
+      - facts
+      - requirements
+      - deployment
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        schema_version:
+          const: aws-architecture.v1
+        created:
+          type: number
+        source:
+          enum:
+          - rule
+          - ai
+        status:
+          enum:
+          - needs_input
+          - proposed
+          - selected
+        recommended_template:
+          enum:
+          - small
+          - medium
+          - large
+          - null
+        selected_template:
+          enum:
+          - small
+          - medium
+          - large
+          - null
+        requirements:
+          $ref: '#/components/schemas/ArchitectureRequest'
+        reasons:
+          type: array
+          items:
+            type: string
+        evidence_ids:
+          type: array
+          items:
+            type: string
+        templates:
+          type: array
+          items:
+            type: object
+          description: '고정 설계안: CPU/메모리/최소·최대 태스크/AZ/자동 확장/DB/검토 사항'
+        assessment:
+          type: object
+          description: minimum_tier, eligible_templates, missing_inputs, blockers, warnings,
+            reasons
+        facts:
+          type: object
+          description: 소스 분석과 운영 입력 근거; 원본 코드·README 본문·환경값 미포함
+        evidence_fingerprint:
+          type: string
+        deployment:
+          type: object
+          required:
+          - ready
+          - reason
+          properties:
+            ready:
+              type: boolean
+              description: "선택 설계가 현재 실행 지원 범위인지 표시. AWS 계정/기반 스택 준비 보장은 아님."
+            reason:
+              type: string
     Endpoint:
       type: object
       required: [name, url]
@@ -245,6 +677,7 @@ components:
             properties:
               name: { type: string }
               value: { type: string, example: "••••••••" }
+        runtime: {oneOf: [{$ref: '#/components/schemas/HttpRuntime'}, {type: 'null'}]}
         last_deployment: { oneOf: [{ $ref: "#/components/schemas/Deployment" }, { type: "null" }] }
     Deployment:
       type: object
@@ -274,3 +707,82 @@ components:
       type: object
       properties:
         detail: { type: string }
+
+    HttpRuntime:
+      additionalProperties: false
+      properties:
+        version:
+          const: http-runtime.v1
+          default: http-runtime.v1
+          title: Version
+          type: string
+        port:
+          maximum: 65535
+          minimum: 1
+          title: Port
+          type: integer
+        health_path:
+          default: /
+          maxLength: 256
+          pattern: ^/(?!/)[^\s?#\\]*$
+          title: Health Path
+          type: string
+        env:
+          additionalProperties:
+            type: string
+          maxProperties: 64
+          title: Env
+          type: object
+        secret_refs:
+          additionalProperties:
+            type: string
+          maxProperties: 32
+          title: Secret Refs
+          type: object
+        database:
+          $ref: '#/components/schemas/RuntimeDatabase'
+        init_command:
+          items:
+            type: string
+          maxItems: 32
+          title: Init Command
+          type: array
+      required:
+      - port
+      title: HttpRuntime
+      type: object
+    RuntimeDatabase:
+      additionalProperties: false
+      properties:
+        mode:
+          default: none
+          enum:
+          - none
+          - postgres
+          - mysql
+          - mongodb
+          - external
+          title: Mode
+          type: string
+        name:
+          default: app
+          pattern: ^[a-z][a-z0-9_]{0,62}$
+          title: Name
+          type: string
+        bindings:
+          additionalProperties:
+            enum:
+            - host
+            - port
+            - name
+            - username
+            - password
+            - jdbc_url
+            - postgres_url
+            - mysql_url
+            - mongodb_url
+            type: string
+          title: Bindings
+          type: object
+      title: RuntimeDatabase
+      type: object

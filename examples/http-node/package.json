@@ -1,0 +1,1 @@
+{"name":"shakedown-http-node","private":true,"scripts":{"start":"node app.mjs"},"dependencies":{"pg":"8.16.3"}}

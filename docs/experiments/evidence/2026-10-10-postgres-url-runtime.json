@@ -1,0 +1,46 @@
+{
+  "results": [
+    {
+      "language": "node",
+      "mode": "none",
+      "variant": "none",
+      "http": 200,
+      "migration_runs": 0,
+      "count": null
+    },
+    {
+      "language": "node",
+      "mode": "postgres",
+      "variant": "postgres",
+      "http": 200,
+      "migration_runs": 2,
+      "count": 1
+    },
+    {
+      "language": "node",
+      "mode": "postgres",
+      "variant": "postgres_url",
+      "http": 200,
+      "migration_runs": 2,
+      "count": 1
+    },
+    {
+      "language": "python",
+      "mode": "none",
+      "variant": "none",
+      "http": 200,
+      "migration_runs": 0,
+      "count": null
+    },
+    {
+      "language": "python",
+      "mode": "postgres",
+      "variant": "postgres",
+      "http": 200,
+      "migration_runs": 2,
+      "count": 1
+    }
+  ],
+  "cleanup": "completed",
+  "scope": "local composeSpec; no security-gate, public tunnel, LLM or AWS execution"
+}

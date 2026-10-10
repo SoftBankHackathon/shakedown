@@ -1,0 +1,4 @@
+services:
+  admin:
+    image: example/admin
+    privileged: true

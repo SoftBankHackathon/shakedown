@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:security-gate:integrated-report:v3",
+  "title": "Security Gate STEP 3 report",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "scope", "target_path", "decision", "scan_status", "reason_code", "docker_compose", "semgrep", "gitleaks", "findings"],
+  "properties": {
+    "schema_version": {"const": "3.0"}, "scope": {"const": "docker_semgrep_and_gitleaks_text_secrets"},
+    "target_path": {"type": "string"}, "decision": {"enum": ["ALLOW", "DENY", "REVIEW", "SCAN_FAILED"]},
+    "scan_status": {"enum": ["SUCCESS", "FAILED"]},
+    "reason_code": {"enum": ["ALL_APPLICABLE_CHECKS_PASSED", "RISK_DETECTED", "REVIEW_REQUIRED", "REQUIRED_SCAN_FAILED"]},
+    "docker_compose": {"$ref": "urn:security-gate:docker-report:v1"},
+    "semgrep": {"$ref": "urn:security-gate:integrated-report:v2#/$defs/semgrep"},
+    "gitleaks": {"$ref": "#/$defs/gitleaks"},
+    "findings": {"type": "array", "items": {"anyOf": [
+      {"$ref": "urn:security-gate:integrated-report:v2#/$defs/finding"}, {"$ref": "#/$defs/finding"}
+    ]}}
+  },
+  "allOf": [
+    {"if": {"properties": {"decision": {"const": "ALLOW"}}}, "then": {"properties": {
+      "scan_status": {"const": "SUCCESS"}, "reason_code": {"const": "ALL_APPLICABLE_CHECKS_PASSED"},
+      "findings": {"maxItems": 0},
+      "docker_compose": {"anyOf": [
+        {"properties": {"decision": {"const": "ALLOW"}, "scan_status": {"const": "SUCCESS"}}},
+        {"properties": {"decision": {"const": "REVIEW"}, "scan_status": {"const": "NOT_APPLICABLE"}}}
+      ]},
+      "semgrep": {"properties": {"decision": {"const": "ALLOW"}}},
+      "gitleaks": {"properties": {"decision": {"const": "ALLOW"}}}
+    }}},
+    {"if": {"properties": {"decision": {"const": "SCAN_FAILED"}}}, "then": {"properties": {
+      "scan_status": {"const": "FAILED"}, "reason_code": {"const": "REQUIRED_SCAN_FAILED"}
+    }}},
+    {"if": {"anyOf": [
+      {"properties": {"docker_compose": {"properties": {"decision": {"const": "SCAN_FAILED"}}}}},
+      {"properties": {"semgrep": {"properties": {"decision": {"const": "SCAN_FAILED"}}}}},
+      {"properties": {"gitleaks": {"properties": {"decision": {"const": "SCAN_FAILED"}}}}}
+    ]}, "then": {"properties": {"decision": {"const": "SCAN_FAILED"}}}}
+  ],
+  "$defs": {
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tool", "rule_id", "file_path", "line", "severity", "reason_code", "decision"],
+      "properties": {
+        "tool": {"const": "gitleaks"}, "rule_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,127}$"},
+        "file_path": {"type": "string"}, "line": {"type": "integer", "minimum": 1},
+        "severity": {"const": "HIGH"}, "reason_code": {"const": "SECRET_EXPOSURE"}, "decision": {"const": "DENY"}
+      }
+    },
+    "gitleaks": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tool", "scope", "target_path", "scan_status", "decision", "version", "scanned_files", "findings", "errors"],
+      "properties": {
+        "tool": {"const": "gitleaks"}, "scope": {"const": "local_directory_text_secrets"},
+        "target_path": {"type": "string"}, "scan_status": {"enum": ["SUCCESS", "FAILED", "NOT_APPLICABLE"]},
+        "decision": {"enum": ["ALLOW", "DENY", "REVIEW", "SCAN_FAILED"]},
+        "version": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^8\\.[0-9]{1,3}\\.[0-9]{1,3}$"}]},
+        "scanned_files": {"type": "integer", "minimum": 0},
+        "excluded_binary_files": {"type": "integer", "minimum": 0},
+        "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+        "errors": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z_]+$"}}
+      },
+      "allOf": [
+        {"if": {"properties": {"decision": {"const": "ALLOW"}}}, "then": {"properties": {
+          "scan_status": {"const": "SUCCESS"}, "scanned_files": {"minimum": 1},
+          "version": {"type": "string"}, "findings": {"maxItems": 0}, "errors": {"maxItems": 0}
+        }}},
+        {"if": {"properties": {"scan_status": {"const": "FAILED"}}}, "then": {"properties": {
+          "decision": {"const": "SCAN_FAILED"}, "errors": {"minItems": 1}
+        }}},
+        {"if": {"properties": {"scan_status": {"const": "NOT_APPLICABLE"}}}, "then": {"properties": {
+          "decision": {"const": "REVIEW"}, "scanned_files": {"const": 0}
+        }}}
+      ]
+    }
+  }
+}

@@ -235,5 +235,6 @@
   "targets": [
     "local",
     "aws"
-  ]
+  ],
+  "runtime": null
 }

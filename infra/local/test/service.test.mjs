@@ -92,3 +92,50 @@ test('invalid requests and unknown secret refs never start Docker',async t=>{
   assert.equal((await api('POST','/deployments',request)).status,400);
   assert.equal((await api('GET','/deployments/dep_test1')).status,404);
 });
+
+test('generic HTTP app without DB has no database, secret or Spring dependency',()=>{
+  const runtime={version:'http-runtime.v1',port:3000,health_path:'/health',env:{NODE_ENV:'production'},secret_refs:{},database:{mode:'none',name:'app',bindings:{}},init_command:[]};
+  const request={deployment_id:'dep_generic',project_id:'test',image:'test:app',port:3000,health_path:'/health',runtime};
+  validate(request);
+  new DockerRuntime('/tmp/unused').validate(request);
+  const spec=composeSpec(request);
+  assert.equal(spec.services.db,undefined);assert.equal(spec.volumes,undefined);
+  assert.equal(spec.services.app.environment.PORT,'3000');
+  assert.ok(!Object.keys(spec.services.app.environment).some(k=>k.startsWith('SPRING')));
+});
+
+test('generic PostgreSQL binds app-specific names and excludes secrets from plain environment contract',()=>{
+  const runtime={version:'http-runtime.v1',port:8000,health_path:'/',env:{},secret_refs:{},database:{mode:'postgres',name:'app',bindings:{CUSTOM_HOST:'host',CUSTOM_PASS:'password',PGUSER:'username'}},init_command:['python','migrate.py']};
+  const request={deployment_id:'dep_generic',project_id:'test',image:'test:app',port:8000,health_path:'/',runtime};
+  validate(request);
+  const spec=composeSpec(request,'p$a');
+  assert.equal(spec.services.app.environment.CUSTOM_PASS,'p$$a');
+  assert.equal(spec.services.app.environment.CUSTOM_HOST,'db');
+  assert.equal(spec.services.db.environment.POSTGRES_USER,'app');
+  assert.ok(!Object.keys(spec.services.app.environment).some(k=>k.startsWith('SPRING')));
+  assert.throws(()=>validate({...request,runtime:{...runtime,secret_refs:{CUSTOM_HOST:'bad'}}}));
+});
+
+test('managed PostgreSQL URL binding encodes credentials and stays out of logs',()=>{
+  const password='p@ss:/?#%$ 한글';
+  const runtime={version:'http-runtime.v1',port:3000,health_path:'/',env:{},secret_refs:{},database:{mode:'postgres',name:'app',bindings:{DATABASE_URL:'postgres_url'}},init_command:[]};
+  const spec=composeSpec({runtime,image:'test:app'},password);
+  const uri=new URL(spec.services.app.environment.DATABASE_URL);
+  assert.equal(decodeURIComponent(uri.password),password);
+  assert.equal(uri.hostname,'db');assert.equal(uri.searchParams.get('sslmode'),'disable');
+  assert.equal(spec.services.db.environment.POSTGRES_PASSWORD,password.replaceAll('$',()=> '$$'));
+  assert.ok(!('PGPASSWORD' in spec.services.app.environment));
+  const runner=new DockerRuntime('/tmp',{password});
+  assert.ok(!runner.redact(uri.href).includes(encodeURIComponent(password)));
+});
+
+for(const mode of ['mysql','mongodb'])test(`${mode} creates isolated database, matching URL and persistent volume`,()=>{
+ const r={version:'http-runtime.v1',port:3000,health_path:'/',env:{},secret_refs:{},database:{mode,name:'app',bindings:{DATABASE_URL:mode+'_url'}},init_command:[]};
+ const spec=composeSpec({runtime:r,image:'test'},'test@%$');
+ const url=new URL(spec.services.app.environment.DATABASE_URL);
+ assert.equal(decodeURIComponent(url.password),'test@%$');assert.equal(url.protocol,mode+':');
+ assert.equal(spec.services.db.ports,undefined);assert.ok(spec.services.db.volumes.length);
+ assert.equal(spec.services.app.depends_on.db.condition,'service_healthy');
+ if(mode==='mongodb'){assert.equal(url.searchParams.get('authSource'),'app');assert.ok(spec.configs['mongo-init'].content.includes("role:'readWrite'"));}
+ assert.throws(()=>composeSpec({runtime:{...r,database:{...r.database,bindings:{DATABASE_URL:'postgres_url'}}},image:'test'},'test'));
+});
