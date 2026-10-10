@@ -40,11 +40,11 @@ require its DSN API rather than a URI: use host/port/name/username/password
 bindings and construct its configuration in the app. MongoDB JDBC URLs are rejected.
 
 AWS MySQL URI includes a mysql2-compatible JSON `ssl` option requiring certificate
-verification. The app must configure trust for the RDS CA (e.g. the driver's
+and hostname verification (`rejectUnauthorized` and `verifyIdentity`). The app must configure trust for the RDS CA (e.g. the driver's
 Amazon RDS profile or CA bundle); other drivers need their equivalent TLS
 configuration. Java JDBC binding uses `sslMode=REQUIRED`. No certificate checks
-are disabled to make a connection succeed. AWS MySQL TLS has not been live-tested
-in this change. See [mysql2 TLS documentation](https://sidorares.github.io/node-mysql2/docs/documentation/ssl).
+are disabled to make a connection succeed. AWS MySQL TLS and hostname-mismatch rejection were live-tested with the
+`examples/http-mysql` probe and the RDS CA bundle. See [mysql2 TLS documentation](https://sidorares.github.io/node-mysql2/docs/documentation/ssl).
 
 ## AWS provisioning
 
@@ -63,7 +63,7 @@ Run `infra/aws/scripts/provision.sh`, save its stack outputs and run the existin
 `config-from-outputs.ts` converter. `dbEngine` and the new engine's address/id,
 DB name and URL/password Secret ARNs populate the adapter configuration. This is
 an operator provisioning command, not automatic onboarding of an empty AWS account
-through the Deploy button. The MongoDB TLS replica-set stack was exercised in the linked live experiment; the new MySQL RDS path was SDK-tested without creating live RDS.
+through the Deploy button. The MongoDB TLS replica-set stack was exercised in the linked live experiment; the MySQL RDS path was also deployed with the actual AWS adapter and verified TLS.
 
 MySQL follows the existing RDS small/medium/large workflow including Multi-AZ
 changes. RDS remains private. PostgreSQL is the default for legacy configuration.
@@ -137,7 +137,9 @@ Recovery runbook:
    redeploy ECS if needed. Reseed/rejoin the remaining replica members and recheck snapshot selection tags on all volumes.
 
 ECS DELETE stops the application only. EC2/EBS/snapshots/RDS and retained Secrets or
-snapshots continue to incur costs until separately cleaned up. Backup restoration was **not** exercised. TLS/replica-set AWS results are recorded in [the live experiment](experiments/2026-10-10-mongodb-tls-failover.md).
+snapshots continue to incur costs until separately cleaned up. A cleanly stopped secondary EBS snapshot was restored to a separate encrypted volume,
+and an isolated MongoDB process verified the original document plus a new write.
+This validates manual single-member recovery, not scheduled backup or full replica-set reseeding. TLS/replica-set AWS results are recorded in [the live experiment](experiments/2026-10-10-mongodb-tls-failover.md).
 
 ## Reused upstream software
 
@@ -158,4 +160,7 @@ MySQL and MongoDB read/write, special-character credentials, wrong-password
 rejection and data after a restart passed. Mongo app admin operations were denied.
 Temporary test resources were removed. AWS SDK tests cover MySQL architecture
 commands and Mongo secret-only injection/EC2 checks; template lint and bootstrap
-shell syntax are checked. The separate [AWS TLS/failover experiment](experiments/2026-10-10-mongodb-tls-failover.md) records live AWS results; backup restore remains unverified.
+shell syntax are checked. The follow-up also live-tested RDS MySQL small deployment,
+verified TLS and hostname-mismatch rejection, RDS snapshot restoration with the
+original record preserved and new writes working, and Mongo manual volume restoration. The separate [AWS TLS/failover experiment](experiments/2026-10-10-mongodb-tls-failover.md) records live AWS results; see [follow-up live validation](experiments/2026-10-10-database-live-validation.md)
+for manual recovery evidence and remaining limitations.
