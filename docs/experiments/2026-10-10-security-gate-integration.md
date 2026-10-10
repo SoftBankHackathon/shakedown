@@ -14,9 +14,9 @@ Baseline: main `de3261d` (PR #25, including #26); PR #11 remains the base of #12
 
 Installed project-local Semgrep 1.180.0 and official Gitleaks 8.30.0; verified the release archive checksum. Tools and temporary files are ignored by Git.
 
-- #11 engine: 199 passed, including 10 real scanner integration cases. Safe/risky Python, Java, JavaScript and TypeScript produce ALLOW/DENY; a Java project without Compose reaches image planning with an existing Dockerfile. Invalid Java also blocks image planning before Docker/LLM calls.
+- #11 engine: 203 passed, including 14 real scanner integration cases. Safe/risky Python, Java, JavaScript and TypeScript produce ALLOW/DENY; a Java project without Compose reaches image planning with an existing Dockerfile. Invalid Java also blocks image planning before Docker/LLM calls.
 - #12 additionally verifies real scanner → architecture create → select → resolve, then changing the source to a dangerous eval causes DENY. This tests the rule path without LLM or AWS.
-- Gate regression after the Java parser fix: **352 passed, 1 skipped**, including real Semgrep/Gitleaks. The skip is Windows-profile handling on macOS. Both previously failing Java syntax cases pass without changing their expected SCAN_FAILED result.
+- Gate regression after the Java parser fix: **424 passed, 1 skipped**, including real Semgrep/Gitleaks. The skip is Windows-profile handling on macOS. Both previously failing Java syntax cases pass without changing their expected SCAN_FAILED result.
 - Existing Java board: REVIEW (exit 2), Compose NOT_APPLICABLE, Java+JavaScript 30 files scanned; Gitleaks ALLOW, validated wrapper JAR excluded (1). Remaining coverage gaps: EXTERNAL_SCRIPT_REFERENCE and TEMPLATE_EXPRESSION. The engine must continue to block it.
 
 ## Java syntax regression and fix
@@ -30,4 +30,16 @@ Reproduce from `apps/security-gate` with `.venv/bin/python -m pytest tests/test_
 
 The previous blanket “Python-only / absent Compose blocks / any wrapper binary fails” description is obsolete for #25. Unsupported source/template coverage remains a blocker; the two Java syntax regressions are now fixed. No actual AWS redeployment was performed for this integration revision.
 
-Additional parser checks cover missing braces, invalid assignments, unavailable classpath dependencies, records, sealed classes, switch expressions, no static initializer execution, missing parser and shared Python/Java timeout budget. Tested on macOS with scanner Python 3.12.13 and engine Python 3.14.5; Windows was not executed. Java grammar support is bounded by the pinned library; JS/TS still lack independent syntax preflight.
+Additional parser checks cover missing braces, invalid assignments, unavailable classpath dependencies, records, sealed classes, switch expressions, no static initializer execution, missing parser and shared Python/Java timeout budget. Tested on macOS with scanner Python 3.12.13 and engine Python 3.14.5; Windows was not executed. Grammar support is bounded by the pinned libraries. The later multi-language update below adds JS/TS preflight.
+
+## Multi-language parser extension
+
+Reuses pinned upstream Tree-sitter grammars for JavaScript/JSX, TypeScript/TSX, Go, Rust, C/C++, C#, Ruby and PHP. Python keeps ast.parse and Java keeps tree-sitter-java. No custom grammar or target execution is introduced.
+
+Discovery collects syntax-only languages under the existing size/link/total limits. They remain unsupported for Semgrep security rules, so valid syntax yields REVIEW and invalid syntax yields SCAN_FAILED; neither permits image building or deployment. Scanned-file counters continue to describe security-rule coverage. Mixed repositories cannot hide these unsupported files.
+
+Extracted HTML/SVG scripts/handlers use their effective JS/TS suffix. A dynamic template expression that is not valid JavaScript now produces SCAN_FAILED while retaining its coverage gap. Headers ending .h accept either C or C++ syntax. New/preview language constructs outside pinned grammar support can still fail.
+
+Language/extension fixtures cover valid and invalid inputs, JSX/TSX and TypeScript angle assertions, PHP with HTML, C/C++ headers, extraction failures, mixed supported/unsupported sources and input size limits. Engine integration checks JS/TS syntax failure and valid/invalid Go never being approved. No AWS resources were created.
+
+Latest validation: gate 424 passed / 1 Windows-only skip; #11 engine 203 passed. The new language suite contributes 72 real-parser/contract cases. Python 3.12 scanner and Python 3.14 engine environments both have pinned grammar dependencies installed.

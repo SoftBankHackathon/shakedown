@@ -179,8 +179,8 @@ def test_java_parser_never_executes_static_initializers(tmp_path):
 
 def test_java_parser_missing_dependency_fails_closed(monkeypatch):
     # Keep stdlib but remove installed packages from the real isolated worker.
-    program = 'import sys\n' + source_syntax.JAVA_CHECK_PROGRAM.split('\n', 2)[2]
-    monkeypatch.setattr(source_syntax, "JAVA_CHECK_PROGRAM", program)
+    program = 'import sys\n' + source_syntax.TREE_SITTER_CHECK_PROGRAM.split('\n', 2)[2]
+    monkeypatch.setattr(source_syntax, "TREE_SITTER_CHECK_PROGRAM", program)
     with pytest.raises(ScanError, match="^SOURCE_SYNTAX_CHECK_FAILED$"):
         source_syntax.validate_sources([(Path("App.java"), "class App {}")], timeout_seconds=5)
 

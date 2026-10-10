@@ -95,7 +95,8 @@ def test_mixed_snapshot_preserves_both_languages_and_checks_all_files(tmp_path):
 def test_unsupported_sources_block_allow(tmp_path, filename, language, with_java):
     if with_java:
         java_project(tmp_path)
-    (tmp_path / filename).write_text("unscanned code", encoding="utf-8")
+    source = {"go": "package main\nfunc main() {}", "csharp": "class App {}", "ruby": "puts 1"}.get(language, "unscanned code")
+    (tmp_path / filename).write_text(source, encoding="utf-8")
     report = mock_scan(tmp_path)
     assert report["decision"] == "REVIEW"
     assert report["semgrep"]["unsupported_languages"] == [language]
