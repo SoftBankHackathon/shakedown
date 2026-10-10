@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useT } from "@/components/i18n";
+import { useLang, useT } from "@/components/i18n";
 import { ActionCard } from "@/components/action-card";
 import { api, ApiError, DONE, errorMessage, MOCK, type Deployment, type TargetName } from "@/lib/api";
 import { DEFAULT_TARGETS, pickTarget, TARGETS } from "@/lib/targets";
@@ -16,6 +16,7 @@ const progressKey = (d: Deployment) =>
 
 export default function Home() {
   const t = useT();
+  const lang = useLang();
   const router = useRouter();
   const [comparisonUrl, setComparisonUrl] = useState("");
   const [repo, setRepo] = useState("");
@@ -87,7 +88,7 @@ export default function Home() {
     try {
       const project = await api.createProject({ repo: repo.trim(), targets });
       name = project.name;
-      const deployment = await api.deploy(project.id, { shakedown: MOCK || targets.length >= 2 || !!comparisonUrl.trim(), autofix: MOCK, options: {}, targets, comparison: !MOCK && targets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined });
+      const deployment = await api.deploy(project.id, { shakedown: MOCK || targets.length >= 2 || !!comparisonUrl.trim(), autofix: MOCK, options: {}, targets, comparison: !MOCK && targets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined, lang });
       setActions((cur) => [{ deployment, projectName: project.name }, ...cur]);
     } catch (err) {
       // The engine owns the "one running deployment per project" rule and answers 409.
