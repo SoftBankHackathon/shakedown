@@ -428,3 +428,91 @@ test('when the scale-to-0 PATCH is refused, stop logs how to scale down by hand,
   assert.ok(run.actions.includes('setPublic:false'));
   await provider.settled();
 });
+
+// 범용 런타임: 엔진은 database·secret_refs·env를 빼고 port·health_path를 runtime 값으로 보낸다.
+const SECRET = { secretKeyRef: { secret: 'shakedown-db-password', version: 'latest' } };
+function runtimeInput(runtime: Record<string, unknown>, patch: Record<string, unknown> = {}): DeployRequest {
+  const r = { version: 'http-runtime.v1', port: 3000, health_path: '/healthz', env: { NODE_ENV: 'production' }, secret_refs: {},
+    database: { mode: 'none', name: 'app', bindings: {} }, init_command: [], ...runtime };
+  return requestSchema.parse({ deployment_id: 'dep_rt', project_id: config.projectId, image, port: r.port, health_path: r.health_path, runtime: r, options: { replicas: 2 }, ...patch });
+}
+const postgresRuntime = {
+  secret_refs: { APP_DB_PASSWORD: 'db_password' }, init_command: ['npm', 'run', 'migrate'],
+  database: { mode: 'postgres', name: 'board_db', bindings: { DB_URL: 'jdbc_url', DB_HOST: 'host', DB_PORT: 'port', DB_NAME: 'name', DB_USER: 'username', DB_PASSWORD: 'password' } },
+};
+
+test('a runtime PostgreSQL deploy sends app env, TZ, plain DB bindings and Secret Manager references, never PORT, on the runtime port', async () => {
+  const { run, requests, provider } = setup();
+  await provider.deploy(runtimeInput(postgresRuntime), AbortSignal.timeout(2_000), () => {});
+  const env = [
+    { name: 'NODE_ENV', value: 'production' },
+    { name: 'TZ', value: 'UTC' },
+    // 지금 Cloud SQL은 사설 IP의 평문 연결을 받는다(옛 JDBC URL도 sslmode가 없다).
+    { name: 'DB_URL', value: 'jdbc:postgresql://10.20.0.3:5432/board_db' },
+    { name: 'DB_HOST', value: '10.20.0.3' },
+    { name: 'DB_PORT', value: '5432' },
+    { name: 'DB_NAME', value: 'board_db' },
+    { name: 'DB_USER', value: 'board' },
+    { name: 'APP_DB_PASSWORD', valueSource: SECRET },
+    { name: 'DB_PASSWORD', valueSource: SECRET },
+  ];
+  const container = run.services[0].template.containers[0];
+  assert.equal(JSON.stringify(container.env), JSON.stringify(env));
+  assert.deepEqual(container.ports, [{ containerPort: 3000 }]);
+  // init_command는 같은 이미지·같은 env로 Job에서 한 번 돈다. 셸을 거치지 않고 첫 칸이 실행 파일, 나머지가 인자다.
+  assert.equal(JSON.stringify(run.jobs[0].template.template.containers[0]), JSON.stringify({
+    name: 'init', image, command: ['npm'], args: ['run', 'migrate'], env, resources: { limits: { memory: '1Gi', cpu: '1' } },
+  }));
+  assert.deepEqual(run.actions, ['getService', 'setPublic:true', 'runSchemaJob', 'putService', 'getService', 'fetch']);
+  assert.equal(requests[0].url, PUBLIC_URL + '/healthz');
+});
+
+test('a runtime without init_command skips the schema job and says so in the deployment log', async () => {
+  const { run, provider } = setup();
+  const lines: string[] = [];
+  await provider.deploy(runtimeInput({}), AbortSignal.timeout(2_000), line => lines.push(line));
+  assert.deepEqual(run.actions, ['getService', 'setPublic:true', 'putService', 'getService', 'fetch']);
+  assert.ok(lines.includes('phase=schema_job skipped: runtime has no init_command'));
+  assert.ok(!lines.some(l => l.startsWith('phase=schema_job started')));
+  assert.equal(JSON.stringify(run.services[0].template.containers[0].env), JSON.stringify([{ name: 'NODE_ENV', value: 'production' }, { name: 'TZ', value: 'UTC' }]));
+});
+
+test('runtime deploys report the database the app uses and app-defined sessions', async () => {
+  const none = setup();
+  const noDb = await none.provider.deploy(runtimeInput({}), AbortSignal.timeout(2_000), () => {});
+  assert.equal(noDb.info.database, 'none');
+  assert.equal(noDb.info.session, 'app-defined');
+  const pg = setup();
+  const withDb = await pg.provider.deploy(runtimeInput(postgresRuntime), AbortSignal.timeout(2_000), () => {});
+  assert.equal(withDb.info.database, 'Cloud SQL PostgreSQL');
+  assert.equal(withDb.info.session, 'app-defined');
+});
+
+test('a runtime plan deploy takes the catalog size and scaling but not the Spring pool env', async () => {
+  const { run, provider } = setup();
+  await provider.deploy(runtimeInput(postgresRuntime, { architecture: { version: 'gcp-architecture.v1', template_id: 'medium' }, options: { replicas: 2 } }), AbortSignal.timeout(2_000), () => {});
+  const service = run.services[0], container = service.template.containers[0];
+  assert.deepEqual(container.resources, { limits: { memory: '2Gi', cpu: '1' }, cpuIdle: true });
+  assert.deepEqual(service.scaling, { scalingMode: 'AUTOMATIC', minInstanceCount: 2, maxInstanceCount: 4 });
+  assert.ok(!(container.env ?? []).some(e => e.name.startsWith('SPRING_')));
+});
+
+test('a failed init_command leaves a pointer to the job output in the deployment log', async () => {
+  // 앱 리비전이 생기기 전이라 앱 로그는 비어 있다. 사용자 명령이 왜 실패했는지 볼 곳을 배포 로그에 남긴다.
+  const { run, provider } = setup();
+  run.jobError = new Error('init job failed: projects/p/locations/l/jobs/shakedown-board-schema/executions/e-1');
+  const lines: string[] = [];
+  await assert.rejects(provider.deploy(runtimeInput(postgresRuntime), AbortSignal.timeout(2_000), line => lines.push(line)), /job failed/);
+  // 같은 Job을 매 배포가 다시 쓰므로 이번 실행 이름도 남긴다(콘솔의 그 실행 Logs 탭으로 바로 간다).
+  assert.ok(lines.includes('init_command failed; read its output in Cloud Logging: resource.type="cloud_run_job" AND resource.labels.job_name="shakedown-board-schema" (this run: execution e-1)'), lines.join('\n'));
+  // 명령이 실행되기 전에 실패하면(Job 갱신 거절 등) 볼 Job 로그가 없으므로 남기지 않는다.
+  const refused = setup(), refusedLines: string[] = [];
+  refused.run.jobError = new GcpError(400, 'Cloud Run job update failed: HTTP 400');
+  await assert.rejects(refused.provider.deploy(runtimeInput(postgresRuntime), AbortSignal.timeout(2_000), line => refusedLines.push(line)));
+  assert.ok(!refusedLines.some(l => l.startsWith('init_command failed')), refusedLines.join('\n'));
+  // 옛 방식(Spring schema-init) 실패에는 이 줄을 남기지 않는다.
+  const legacy = setup(), legacyLines: string[] = [];
+  legacy.run.jobError = new Error('schema-init job failed');
+  await assert.rejects(legacy.provider.deploy(input(), AbortSignal.timeout(2_000), line => legacyLines.push(line)));
+  assert.ok(!legacyLines.some(l => l.startsWith('init_command failed')));
+});

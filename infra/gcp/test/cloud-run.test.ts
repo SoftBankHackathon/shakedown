@@ -128,7 +128,7 @@ test('setPublic skips the write when the policy already matches', async () => {
 
 const JOB = `${RUN}/projects/shakedown-511106/locations/asia-northeast3/jobs/shakedown-board-schema`;
 const EXECUTION = 'projects/shakedown-511106/locations/asia-northeast3/jobs/shakedown-board-schema/executions/exec-1';
-const job: RunJob = { template: { taskCount: 1, template: { containers: [{ image: 'img@sha256:' + 'b'.repeat(64) }], maxRetries: 0 } } };
+const job: RunJob = { template: { taskCount: 1, template: { containers: [{ name: 'schema-init', image: 'img@sha256:' + 'b'.repeat(64) }], maxRetries: 0 } } };
 
 test('runSchemaJob updates the job, runs it and waits for the execution to succeed', async () => {
   const { run, calls } = fake(
@@ -151,6 +151,27 @@ test('runSchemaJob rejects when the execution has a failed task', async () => {
     { status: 200, data: { name: EXECUTION, taskCount: 1, failedCount: 1 } },
   );
   await assert.rejects(run.runSchemaJob(job, signal), /schema-init job failed/);
+});
+
+test('a failed runtime init job is named after its container, not schema-init', async () => {
+  // runtime의 init_command는 사용자 명령이다. 오류가 Spring schema-init을 가리키면 원인을 잘못 짚는다.
+  const { run } = fake(
+    { status: 200, data: { name: OPERATION, done: true } },
+    { status: 200, data: { name: OPERATION, done: false, metadata: { name: EXECUTION } } },
+    { status: 200, data: { name: EXECUTION, taskCount: 1, failedCount: 1 } },
+  );
+  const init: RunJob = { template: { taskCount: 1, template: { containers: [{ name: 'init', image: 'img@sha256:' + 'b'.repeat(64) }], maxRetries: 0 } } };
+  await assert.rejects(run.runSchemaJob(init, signal), (e: unknown) => e instanceof Error && e.message === `init job failed: ${EXECUTION}`);
+});
+
+test('a failed job without a container name is not reported as schema-init', async () => {
+  const { run } = fake(
+    { status: 200, data: { name: OPERATION, done: true } },
+    { status: 200, data: { name: OPERATION, done: false, metadata: { name: EXECUTION } } },
+    { status: 200, data: { name: EXECUTION, taskCount: 1, failedCount: 1 } },
+  );
+  const unnamed: RunJob = { template: { taskCount: 1, template: { containers: [{ image: 'img@sha256:' + 'b'.repeat(64) }], maxRetries: 0 } } };
+  await assert.rejects(run.runSchemaJob(unnamed, signal), (e: unknown) => e instanceof Error && e.message === `Cloud Run job failed: ${EXECUTION}`);
 });
 
 test('runSchemaJob rejects when the execution completes without success', async () => {
