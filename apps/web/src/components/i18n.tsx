@@ -234,7 +234,8 @@ export function LangProvider({ children }: { children: ReactNode }) {
     try {
       wanted ??= localStorage.getItem("lang");
     } catch {}
-    if (wanted && wanted in LANGS) {
+    // in은 상속 속성(constructor 등)까지 참으로 본다. 화면 언어가 배포·비교 요청의 lang으로도 가므로 목록에 있는 값만 받는다.
+    if (wanted && Object.hasOwn(LANGS, wanted)) {
       setLangState(wanted as Lang);
       document.documentElement.lang = wanted;
     }
@@ -272,6 +273,11 @@ const TRANSLATORS = Object.fromEntries((Object.keys(LANGS) as Lang[]).map((l) =>
 
 export function useT() {
   return TRANSLATORS[useContext(LangContext).lang];
+}
+
+/** 지금 화면 언어. 배포·비교 요청에 넣어 시운전 보고서도 같은 언어로 받는다. */
+export function useLang(): Lang {
+  return useContext(LangContext).lang;
 }
 
 export function LangSwitcher() {

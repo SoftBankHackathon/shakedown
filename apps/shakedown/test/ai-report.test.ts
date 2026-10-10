@@ -303,3 +303,17 @@ test("BLOCKED가 아니면 호출하지 않고 null을 돌려준다", async (t) 
   assert.deepEqual(result, { report: null, cost: zero });
   assert.equal(f.seen.length, 0);
 });
+
+test("lang: 요청 언어로 답하라고 지시하고(기본 영어), 그 언어의 서버 전환 근거 줄도 지킨다", async (t) => {
+  const names = { en: "English", ko: "Korean", ja: "Japanese" } as const;
+  for (const lang of ["en", "ko", "ja"] as const) {
+    const fallback = ruleReport(blocked, judge(blocked), { lang })!;
+    const f = await fake(t, json(200, answered(answer)));
+    const { report } = await aiReport({ ...input, fallback, lang }, { apiKey: KEY, baseURL: f.baseURL });
+    assert.match(f.seen[0].body.system, new RegExp(`Answer in ${names[lang]}`), lang);
+    assert.deepEqual(report?.evidence, [...answer.evidence, fallback.evidence.at(-1)], lang);
+  }
+  const f = await fake(t, json(200, answered(answer)));
+  await aiReport(input, { apiKey: KEY, baseURL: f.baseURL });
+  assert.match(f.seen[0].body.system, /Answer in English/);
+});

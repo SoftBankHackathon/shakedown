@@ -569,3 +569,58 @@ test("다시 쓴 시나리오가 기준 환경에서 실패하면 버리고, 그
   assert.equal(third.status, "done", third.error);
   assert.equal(third.scenario_source, "fallback");
 });
+
+test("lang이 ko·en·ja가 아니면 400", async () => {
+  const base = await api();
+  for (const lang of ["fr", "KO", 1, ""]) {
+    const res = await post(base, request("http://127.0.0.1:1", "http://127.0.0.1:2", { lang }));
+    assert.equal(res.status, 400, JSON.stringify(lang));
+    assert.deepEqual(res.body, { error: "invalid request", detail: "lang must be ko, en or ja" });
+  }
+});
+
+test("lang: ko면 규칙 보고서를 한국어로 쓰고, 판정 요약은 영어 그대로 둔다", async () => {
+  const base = await api();
+  const { body } = await post(base, request(await board(), await board({ instances: 2 }), { lang: "ko" }));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.report?.headline, "aws에서 로그인이 풀립니다: 요청이 서로 다른 인스턴스로 갑니다");
+  assert.equal(done.verdict?.summary, "Step 4 (Sign in) led to different pages (/board on local, / on aws).");
+});
+
+test("lang이 없거나 null이면 영어", async () => {
+  const base = await api();
+  for (const extra of [{}, { lang: null }]) {
+    const { body } = await post(base, request(await board(), await board({ instances: 2 }), extra));
+    assert.equal((await waitDone(base, body.shakedown_id)).report?.headline, "Login is lost on aws: requests land on different instances");
+  }
+});
+
+test("lang: ja면 AI 시나리오와 AI 보고서에 일본어로 쓰라고 지시한다", async () => {
+  const claude = await fakeClaude(answered(aiSteps(["language"])));
+  const ai = { apiKey: AI_KEY, baseURL: claude.baseURL };
+  const base = await api({ ai, aiScenario: ai });
+  const { body } = await post(base, request((await app()).url, (await app({ status: 500 })).url, { lang: "ja", hints: { health_path: "/healthz" } }));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.verdict?.status, "BLOCKED", done.error);
+  assert.equal(claude.seen.length, 2);
+  for (const seen of claude.seen) assert.match(seen.body.system, /Japanese/);
+  // AI에게 힌트로 주는 규칙 보고서도 같은 언어다.
+  assert.equal(JSON.parse(claude.seen[1].body.messages[0].content).rule_report.headline, "aws でサーバーエラーが発生します（HTTP 500）");
+});
+
+test("같은 배포라도 lang이 다르면 그 언어로 시나리오를 새로 고른다", async () => {
+  let calls = 0;
+  const claude = await fakeClaude((res, seen) => {
+    calls++;
+    answered(aiSteps(["language"]))(res, seen);
+  });
+  const base = await api({ aiScenario: { apiKey: AI_KEY, baseURL: claude.baseURL } });
+  const baseline = (await app()).url;
+  for (const lang of ["ko", "ja", "ja"]) {
+    const { body } = await post(base, request(baseline, (await app()).url, { lang }));
+    assert.equal((await waitDone(base, body.shakedown_id)).scenario_source, "ai");
+  }
+  // ko 한 번, ja 한 번만 부르고 두 번째 ja는 다시 쓴다.
+  assert.equal(calls, 2);
+  assert.deepEqual(claude.scenarioCalls().map((s) => /Korean/.test(s.body.system) ? "ko" : "ja"), ["ko", "ja"]);
+});

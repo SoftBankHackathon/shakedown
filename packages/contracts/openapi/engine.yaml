@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Engine API
-  version: 0.1.6
+  version: 0.1.7
   description: |
-    > **상태: 통합 제안 (v0.1.6, 2026-10-10)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 통합 제안 (v0.1.7, 2026-10-10)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     엔진(apps/engine, 김도경)이 구현하고 대시보드(apps/web, 서동옥)가 호출하는 API.
@@ -140,6 +140,7 @@ paths:
                   type: object
                   description: "대상 이름 → TargetOptions (target.yaml 참고)"
                   additionalProperties: true
+                lang: { $ref: "#/components/schemas/ReportLang" }
       responses:
         "202":
           description: 접수된 배포
@@ -173,6 +174,7 @@ paths:
               properties:
                 baseline: { $ref: "#/components/schemas/Endpoint" }
                 candidate: { $ref: "#/components/schemas/Endpoint" }
+                lang: { $ref: "#/components/schemas/ReportLang" }
       responses:
         "202":
           description: 비교 접수
@@ -719,6 +721,11 @@ components:
               value: { type: string, example: "••••••••" }
         runtime: {oneOf: [{$ref: '#/components/schemas/HttpRuntime'}, {type: 'null'}]}
         last_deployment: { oneOf: [{ $ref: "#/components/schemas/Deployment" }, { type: "null" }] }
+    ReportLang:
+      type: string
+      enum: [ko, en, ja]
+      default: en
+      description: "시운전 원인 보고서 언어(shakedown.yaml ShakedownRequest.lang). 배포 기록에 저장하고 그 배포의 모든 시운전(수정 적용 뒤 2회차 포함)에 같은 값을 넘김"
     Deployment:
       type: object
       description: "전체 필드는 packages/contracts/src/index.ts의 Deployment"
@@ -731,6 +738,9 @@ components:
           enum: [queued, building, deploying, shakedown, analyzing, fixing, deployed, promoted, warned, blocked, failed]
           description: "deployed·promoted·warned·blocked·failed에서 엔진은 스스로 더 진행하지 않음. blocked는 POST /fix로 한 번 fixing으로 재개될 수 있음"
         mode: { type: string, enum: [comparison] }
+        lang:
+          $ref: "#/components/schemas/ReportLang"
+          description: "요청의 시운전 보고서 언어. 이 필드가 생기기 전에 저장된 기록에는 없음(en으로 봄)"
         shakedown_id: { type: string }
         release_gate: { type: string, enum: [passed, review, blocked] }
         traffic_blocked: { type: boolean, description: "관리 AWS DELETE 차단 확인 시 true. 기존 외부 URL 트래픽은 차단하지 않음." }

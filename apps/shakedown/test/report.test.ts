@@ -2,7 +2,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fixture from "@shakedown/contracts/fixtures/deployment-blocked-then-fixed.json" with { type: "json" };
 import type { Hop, StepDiff } from "@shakedown/contracts";
-import { ruleReport } from "../src/report.ts";
+import { ruleReport, switchLine } from "../src/report.ts";
 import { runShakedown } from "../src/shakedown.ts";
 import type { Verdict } from "../src/verdict.ts";
 import { startFakeBoard, type FakeBoardOptions } from "./fake-board.ts";
@@ -307,4 +307,80 @@ test("이야기 5: 알려진 원인이 아니면 처음 달라진 단계로 일�
     confidence: "low",
     by: "rule",
   });
+});
+
+// fixture 시도 1(로그인 풀림)을 언어별로. 문장만 바뀌고 경로·hop 사슬·단계 제목·환경 이름과 수정안의 기계 값은 그대로다.
+const fixtureSteps = () => withNames(fixture.attempts[0].steps);
+const fixtureVerdict = fixture.attempts[0].verdict as Verdict;
+
+test("lang: ko면 로그인 풀림 보고서를 한국어로 쓴다", () => {
+  assert.deepEqual(ruleReport(fixtureSteps(), fixtureVerdict, { lang: "ko" }), {
+    headline: "aws에서 로그인이 풀립니다: 요청이 서로 다른 인스턴스로 갑니다",
+    cause:
+      "앱이 로그인 상태를 서버 메모리(HttpSession)에 둡니다. aws에서는 로드 밸런서 뒤에 인스턴스가 여러 대인데 " +
+      "세션 고정(session affinity)이 없어서, 로그인 다음 요청이 로그인을 모르는 인스턴스로 갑니다.",
+    evidence: [
+      "4단계(Sign in): local에서는 됨(ended on /board), aws에서는 안 됨(ended on /).",
+      "aws 요청 경로: POST /login 302 → GET /board 302 → GET / 200",
+      "aws에서는 POST /login 바로 뒤 GET /board 요청이 로그인 화면(/)으로 되돌아갔습니다. local에서는 그러지 않았습니다.",
+      "POST /login 요청은 인스턴스 172.23.0.3:8080, GET /board 요청은 인스턴스 172.23.0.4:8080에서 처리했습니다. 한 사용자의 요청을 서로 다른 인스턴스 2대가 받았습니다.",
+    ],
+    fix: { ...loginLost.fix, description: "로그인 상태를 공유 DB(Spring Session JDBC)에 두어 모든 인스턴스가 보게 합니다." },
+    confidence: "high",
+    by: "rule",
+  });
+});
+
+test("lang: ja면 로그인 풀림 보고서를 일본어로 쓴다", () => {
+  assert.deepEqual(ruleReport(fixtureSteps(), fixtureVerdict, { lang: "ja" }), {
+    headline: "aws でログインが切れます: リクエストが別々のインスタンスに届いています",
+    cause:
+      "アプリはログイン状態をサーバーのメモリ（HttpSession）に保持しています。aws ではロードバランサーの後ろに複数のインスタンスがあり、" +
+      "セッションアフィニティがないため、ログイン後のリクエストがログインを知らないインスタンスに届きます。",
+    evidence: [
+      "ステップ 4（Sign in）は local では通りましたが（ended on /board）、aws では通りませんでした（ended on /）。",
+      "aws のリクエスト経路: POST /login 302 → GET /board 302 → GET / 200",
+      "aws では POST /login の直後に GET /board がログイン画面（/）に戻されました。local ではそうなりませんでした。",
+      "POST /login はインスタンス 172.23.0.3:8080、GET /board はインスタンス 172.23.0.4:8080 で処理されました。同じユーザーのリクエストを別々のインスタンス2台が受けています。",
+    ],
+    fix: { ...loginLost.fix, description: "ログイン状態を共有データベース（Spring Session JDBC）に保存し、すべてのインスタンスから見えるようにします。" },
+    confidence: "high",
+    by: "rule",
+  });
+});
+
+test("lang: 언어마다 다른 원인 보고서도 문장만 바뀌고 수정안의 기계 값(target·option·value·native)은 같다", async () => {
+  const stories: FakeBoardOptions[] = [{ instances: 2, sharedSessions: true, sharedPosts: false }, { failJoin: 500 }, { failJoin: 400 }];
+  for (const candidate of stories) {
+    const base = await startFakeBoard();
+    const cand = await startFakeBoard(candidate);
+    boards.push(base, cand);
+    const result = await runShakedown({ baseline: { name: "local", url: base.url }, candidate: { name: "aws", url: cand.url }, runId: "abc123" });
+    const [en, ko, ja] = (["en", "ko", "ja"] as const).map((lang) => ruleReport(result.steps, result.verdict, { lang })!);
+    assert.deepEqual(ruleReport(result.steps, result.verdict), en, "기본은 영어");
+    for (const other of [ko, ja]) {
+      assert.notEqual(other.headline, en.headline);
+      assert.notEqual(other.cause, en.cause);
+      const machine = (r: typeof en) => r.fix && { target: r.fix.target, option: r.fix.option, value: r.fix.value, native: r.fix.native, auto_applicable: r.fix.auto_applicable };
+      assert.deepEqual(machine(other), machine(en));
+      if (en.fix) assert.notEqual(other.fix!.description, en.fix.description);
+      assert.equal(other.evidence.length, en.evidence.length);
+      assert.equal(other.confidence, en.confidence);
+    }
+  }
+  const down = await startFakeBoard();
+  const base = await startFakeBoard();
+  boards.push(base);
+  await down.close();
+  const result = await runShakedown({ baseline: { name: "local", url: base.url }, candidate: { name: "aws", url: down.url }, timeoutMs: 2000 });
+  assert.equal(ruleReport(result.steps, result.verdict, { lang: "ko" })?.headline, "aws에 접속할 수 없습니다");
+  assert.equal(ruleReport(result.steps, result.verdict, { lang: "ja" })?.headline, "aws に接続できません");
+});
+
+test("switchLine은 세 언어의 서버 전환 근거 줄을 모두 알아본다", () => {
+  for (const lang of ["en", "ko", "ja"] as const) {
+    const report = ruleReport(fixtureSteps(), fixtureVerdict, { lang })!;
+    assert.equal(switchLine(report.evidence), report.evidence.at(-1), lang);
+    assert.equal(switchLine(report.evidence.slice(0, -1)), undefined, lang);
+  }
 });

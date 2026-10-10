@@ -2,7 +2,7 @@
 // AI는 선택 기능이다. 꺼져 있거나 실패하면 규칙 보고서(fallback)를 그대로 돌려준다.
 import Anthropic from "@anthropic-ai/sdk";
 import type { CostLedger, Fix, Report, StepDiff, StepResult } from "@shakedown/contracts";
-import { switchLine } from "./report.ts";
+import { switchLine, type Lang } from "./report.ts";
 import type { Verdict } from "./verdict.ts";
 
 // 가격 출처: claude-api 스킬 shared/models.md 모델 표(2026-09-25 캐시). claude-opus-5-5는 100만 토큰당 입력 $4, 출력 $20
@@ -45,18 +45,24 @@ const REPORT_SCHEMA = {
   additionalProperties: false,
 };
 
-const SYSTEM = [
+/** 보고서·시나리오를 쓸 언어의 영어 이름. 지시문은 영어로 두고 답만 이 언어로 받는다. */
+export const LANG_NAME: Record<Lang, string> = { ko: "Korean", en: "English", ja: "Japanese" };
+
+const system = (lang: Lang) => [
   "You explain why a web app behaves differently on a candidate deploy environment than on the baseline environment during an automated shakedown run.",
   "Use only the data in the user message. If the data does not show something, do not claim it; lower the confidence instead.",
   "rule_report is a rule-based guess that you may confirm or correct.",
-  "Answer in English with: headline (one sentence), cause (two or three sentences), evidence (short facts taken from the data),",
+  `Answer in ${LANG_NAME[lang]} with: headline (one sentence), cause (two or three sentences), evidence (short facts taken from the data),`,
   "fix (one setting change on the candidate environment, or null if the data does not support one) and confidence (high, medium or low).",
+  // 경로·hop·단계 제목은 데이터라 번역하면 원본 기록과 맞춰 볼 수 없다. 수정안의 기계 값은 엔진·사람이 그대로 쓴다.
+  "Keep paths, HTTP methods, hop chains, step titles, environment names and fix.target, fix.option, fix.value and fix.native as they appear in the data.",
   "In fix, target is the environment name. Always set auto_applicable to false; a person reviews and applies the fix.",
   // aiReport는 자동 적용 가능한 규칙 수정안을 그대로 유지한다. AI가 다른 수정안을 권하는 문장을 쓰지 않게 미리 알린다.
   "If rule_report.fix.auto_applicable is true, that fix is applied as is, so explain the cause consistently with it.",
 ].join(" ");
 
-export type AiInput = { diffs: StepDiff[]; verdict: Verdict; fallback: Report | null; hints?: Record<string, unknown> };
+/** lang: 보고서 언어(없으면 en). fallback(규칙 보고서)도 같은 언어로 만들어 넘긴다. */
+export type AiInput = { diffs: StepDiff[]; verdict: Verdict; fallback: Report | null; hints?: Record<string, unknown>; lang?: Lang };
 export type AiOptions = {
   client?: Anthropic;
   apiKey?: string;
@@ -167,7 +173,7 @@ export async function aiReport(input: AiInput, options: AiOptions): Promise<{ re
         betas: [FALLBACK_BETA],
         fallbacks: "default",
         output_config: { effort: "low", format: { type: "json_schema", schema: REPORT_SCHEMA } },
-        system: SYSTEM,
+        system: system(input.lang ?? "en"),
         messages: [{ role: "user", content: promptData(input) }],
       },
       { timeout: options.timeoutMs ?? TIMEOUT_MS },

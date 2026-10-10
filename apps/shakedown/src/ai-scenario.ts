@@ -3,7 +3,8 @@
 // 호출 방식(모델·구조화 출력·fallback·재시도 없음·APIError면 포기)은 AI 보고서(ai-report.ts)와 같다.
 import Anthropic from "@anthropic-ai/sdk";
 import type { CostLedger, Scenario, Step } from "@shakedown/contracts";
-import { clientOf, costOf, FALLBACK_BETA, isObject, MODEL, noCost, type AiOptions } from "./ai-report.ts";
+import { clientOf, costOf, FALLBACK_BETA, isObject, LANG_NAME, MODEL, noCost, type AiOptions } from "./ai-report.ts";
+import type { Lang } from "./report.ts";
 import { isScenario } from "./scenario.ts";
 import { fillStep, makeValues } from "./placeholders.ts";
 import { follow, isDataPath, type CrawledPage } from "./crawl.ts";
@@ -56,7 +57,7 @@ const SCENARIO_SCHEMA = {
   additionalProperties: false,
 };
 
-const SYSTEM = [
+const system = (lang: Lang) => [
   "You write a short end-to-end test scenario for a web app. The same scenario runs on a baseline and a candidate deploy environment to check that they behave the same.",
   "The user message has pages crawled from the baseline with GET requests only (path, final_path, status, title, text, links, forms) and hints from a repo analysis.",
   `Use only paths, links and forms from the data. Write at most ${MAX_STEPS} steps and start with a visit step.`,
@@ -69,7 +70,10 @@ const SYSTEM = [
   "Each environment has its own database and the scenario runs more than once on the same database, so do not expect text that depends on stored data",
   "(empty lists, counts, dates, other users' content) and do not visit paths that contain record ids.",
   "Set expect.path_startswith only when the step must end on a known path. app_understanding: one sentence on what the app does and what the scenario covers.",
-  "Write titles as short English imperative phrases.",
+  // 제목·설명은 대시보드에 그대로 보이므로 요청 언어로 받는다. 경로·폼 값·링크 글자·expect 글자는 화면의 데이터라
+  // 번역하면 기준 환경에서도 맞지 않아 시나리오가 버려진다(ko·ja에서만 생기는 손해).
+  `Write step titles (short imperative phrases) and app_understanding in ${LANG_NAME[lang]}.`,
+  "Do not translate paths, form actions, field names, field values, link texts, expected text or placeholders; copy them exactly as they appear on the pages.",
 ].join(" ");
 
 /** ANTHROPIC_API_KEY가 있을 때만 켠다. SHAKEDOWN_AI_SCENARIO=off는 AI 시나리오만 끈다(AI 보고서 스위치 SHAKEDOWN_AI_REPORT와 따로). */
@@ -153,7 +157,7 @@ function parseScenario(raw: string, pages: CrawledPage[]): Scenario | null {
  * signal은 시운전 마감이다. 취소되면 요청도 끊어서 마감 뒤까지 기다리지 않는다.
  */
 export async function aiScenario(
-  input: { pages: CrawledPage[]; hints?: Record<string, unknown> },
+  input: { pages: CrawledPage[]; hints?: Record<string, unknown>; lang?: Lang },
   options: AiOptions & { signal?: AbortSignal },
 ): Promise<{ scenario: Scenario | null; cost: CostLedger }> {
   const cost = noCost();
@@ -168,7 +172,7 @@ export async function aiScenario(
         betas: [FALLBACK_BETA],
         fallbacks: "default",
         output_config: { effort: "low", format: { type: "json_schema", schema: SCENARIO_SCHEMA } },
-        system: SYSTEM,
+        system: system(input.lang ?? "en"),
         messages: [{ role: "user", content: JSON.stringify({ pages: input.pages, hints: input.hints ?? {} }) }],
       },
       { timeout: options.timeoutMs ?? AI_SCENARIO_TIMEOUT_MS, signal: options.signal },
