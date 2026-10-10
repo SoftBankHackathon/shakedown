@@ -209,3 +209,42 @@ test('readiness accepts more replicas than the start count once autoscaling has 
   const result = await provider.deploy(planned, AbortSignal.timeout(5_000), () => {});
   assert.equal(result.instances, 3);
 });
+
+// 범용 HTTP 런타임: 엔진이 project.runtime을 그대로 보낸다. Spring 기본값 대신 앱이 정한 env·바인딩을 쓴다.
+const runtime = {
+  version: 'http-runtime.v1', port: 8080, health_path: '/healthz', env: { APP_MODE: 'demo' }, secret_refs: { DB_PASSWORD_REF: 'db_password' },
+  database: { mode: 'postgres', name: config.dbName, bindings: { DB_HOST: 'host', DB_PORT: 'port', DB_NAME: 'name', DB_USER: 'username', DB_PASS: 'password', JDBC_URL: 'jdbc_url' } },
+  init_command: [],
+} as const;
+
+test('a generic runtime maps env, PORT, TZ and database bindings; only password-like values become Key Vault secret refs', async t => {
+  const { api, provider } = setup(t);
+  const planned = requestSchema.parse({ deployment_id: 'dep_rt', project_id: config.projectId, image, port: 8080, health_path: '/healthz', runtime, options: { replicas: 1 } });
+  const result = await provider.deploy(planned, AbortSignal.timeout(5_000), () => {});
+  const container = api.puts[0].template!.containers![0];
+  const env = Object.fromEntries(container.env!.map(e => [e.name, e.value ?? `secretRef:${e.secretRef}`]));
+  assert.deepEqual(env, {
+    APP_MODE: 'demo', PORT: '8080', TZ: 'UTC',
+    DB_HOST: config.dbHost, DB_PORT: '5432', DB_NAME: config.dbName, DB_USER: config.dbUsername,
+    JDBC_URL: `jdbc:postgresql://${config.dbHost}:5432/${config.dbName}?sslmode=require`,
+    DB_PASS: 'secretRef:db-password', DB_PASSWORD_REF: 'secretRef:db-password',
+  });
+  assert.ok(!Object.keys(env).some(k => k.startsWith('SPRING_')));
+  assert.deepEqual(container.probes![0].httpGet, { path: '/healthz', port: 8080 });
+  assert.equal(result.info.session, 'app-defined');
+});
+
+test('runtimes this stack cannot serve are rejected before any Azure change', async t => {
+  const { api, provider } = setup(t);
+  const attempt = (patch: Record<string, unknown>) => {
+    const request = requestSchema.parse({ deployment_id: 'dep_bad', project_id: config.projectId, image, port: 8080, health_path: '/', options: { replicas: 1 }, runtime: { ...runtime, ...patch } });
+    assert.throws(() => provider.validate(request), (e: Error) => e.message.length > 0);
+  };
+  attempt({ database: { mode: 'mysql', name: 'app', bindings: { DB_PASS: 'password' } } });                 // MySQL 스택 없음
+  attempt({ database: { ...runtime.database, name: 'other_db' } });                                          // 준비된 DB 이름만
+  attempt({ database: { ...runtime.database, bindings: { DATABASE_URL: 'postgres_url' } } });               // 비밀번호가 든 URL은 만들 수 없음
+  attempt({ secret_refs: { TOKEN: 'api_token' } });                                                          // Key Vault에는 db_password뿐
+  attempt({ init_command: ['sh', '-c', 'migrate'] });                                                        // 초기화는 schema-init 작업으로
+  assert.ok(!requestSchema.safeParse({ deployment_id: 'dep_bad', project_id: config.projectId, image, port: 8080, health_path: '/', runtime: { ...runtime, version: 'other' } }).success);
+  assert.deepEqual(api.puts, []);
+});

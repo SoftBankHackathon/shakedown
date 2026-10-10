@@ -51,6 +51,7 @@ flowchart LR
 | 로그 | 최근 로그는 Container Apps 로그 스트림(거의 실시간), 이전 로그는 Log Analytics 한 번 조회 (반영이 수 분 늦음) |
 | `info` | AWS와 같은 키: `runtime: Azure Container Apps`, `database: Azure PostgreSQL Flexible 17`, `session`, `timezone`, `sticky_sessions`, `image_digest`, `revision`, `transport: HTTPS` |
 | `commands` | AWS와 같게 비움 (SDK로 호출하므로 실행하지 않은 CLI 명령을 적지 않음) |
+| `runtime` (범용 HTTP 런타임) | 엔진이 `project.runtime`을 보내면 `database`·`secret_refs` 대신 사용. **PostgreSQL(또는 DB 없음)만**, 바인딩의 `password`와 `secret_refs`의 `db_password`만 Key Vault 비밀로 연결. `postgres_url` 바인딩(비밀번호 포함 URL)·`init_command`·다른 secret 참조는 400 |
 
 어댑터 시작 시 한 번: 구독·테넌트가 설정과 같은지 확인(다르면 실행 거부, 회사 계정 보호), SDK 클라이언트 생성, PostgreSQL 서버가 중지 상태가 아닌지 확인.
 

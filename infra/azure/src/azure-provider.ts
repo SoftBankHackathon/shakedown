@@ -7,6 +7,7 @@ import { validateRequest } from './config.js';
 import type { DeployRequest, Provider, ReadyResult, Log, LogLine } from './model.js';
 import { ApiError } from './model.js';
 import { HTTP_CONCURRENCY, PLANNED_POOL_SIZE, shapeOf } from './architecture.js';
+import { databaseEnvironment } from '../../../packages/contracts/runtime.mjs';
 
 // ingress를 끈 뒤 공개 주소가 돌려주는 상태 코드 (2026-10-09 실측)
 const CLOSED_STATUS = 404;
@@ -72,7 +73,7 @@ export class AzureProvider implements Provider {
         containers: [{
           // 매번 전체 템플릿을 보내므로 자원도 이번 모양으로 다시 쓴다(이전 계획 배포의 자원이 남지 않게).
           name: 'app', image: request.image, resources: { cpu: shape.cpu, memory: shape.memory },
-          env: [
+          env: request.runtime ? this.runtimeEnv(request) : [
             { name: 'SPRING_DATASOURCE_URL', value: `jdbc:postgresql://${c.dbHost}:5432/${c.dbName}?sslmode=require` },
             { name: 'SPRING_DATASOURCE_USERNAME', value: c.dbUsername },
             { name: 'SPRING_DATASOURCE_PASSWORD', secretRef: 'db-password' },
@@ -91,6 +92,14 @@ export class AzureProvider implements Provider {
       },
     };
   }
+  // 범용 런타임의 환경변수: 앱 env + PORT·TZ + DB 바인딩. password 바인딩과 db_password 참조만 Key Vault 비밀로 연결한다.
+  private runtimeEnv(request: DeployRequest) {
+    const c = this.config, runtime = request.runtime!;
+    const plain: Record<string, string> = { ...runtime.env, PORT: String(c.port), TZ: request.options.tz,
+      ...(runtime.database.mode === 'postgres' ? databaseEnvironment(runtime, { host: c.dbHost, username: c.dbUsername, ssl: true }) : {}) };
+    const secretNames = [...Object.keys(runtime.secret_refs), ...Object.entries(runtime.database.bindings).filter(([, v]) => v === 'password').map(([k]) => k)];
+    return [...Object.entries(plain).map(([name, value]) => ({ name, value })), ...secretNames.map(name => ({ name, secretRef: 'db-password' }))];
+  }
   async deploy(request: DeployRequest, signal: AbortSignal, log: Log): Promise<ReadyResult> {
     const c = this.config, revision = revisionName(c, request.deployment_id), shape = shapeOf(request);
     await this.verifySubscription(signal); signal.throwIfAborted();
@@ -102,7 +111,7 @@ export class AzureProvider implements Provider {
     log('public health check passed: HTTPS 200 without cookies');
     return { url: c.publicUrl, instances: actual.replicas, info: {
       runtime: 'Azure Container Apps', database: 'Azure PostgreSQL Flexible 17', timezone: actual.tz,
-      session: actual.profile.includes('session-jdbc') ? 'jdbc' : 'memory', sticky_sessions: String(request.options.sticky_sessions),
+      session: request.runtime ? 'app-defined' : actual.profile.includes('session-jdbc') ? 'jdbc' : 'memory', sticky_sessions: String(request.options.sticky_sessions),
       image_digest: request.image.split('@')[1], revision, transport: 'HTTPS',
       // AWS·GCP와 같은 키. scaling은 GCP와 같은 형식, DB 값은 배포 전에 읽은 실제 서버 값이다.
       architecture: request.architecture?.template_id ?? 'legacy',

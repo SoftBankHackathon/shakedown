@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { validateRuntime, type HttpRuntime } from '../../../packages/contracts/runtime.mjs';
 import { architectures, AZURE_ARCHITECTURE_VERSION, type Tier } from './architecture.js';
 
 const tiers = Object.keys(architectures) as [Tier, ...Tier[]];
@@ -14,6 +15,8 @@ export const requestSchema = z.object({
   env: z.record(z.string(), z.string().max(4096)).default({}),
   secret_refs: z.record(z.string(), z.string()).default({}),
   database: z.object({ engine: z.literal('postgres'), name: z.string() }).strict().optional(),
+  // 범용 HTTP 런타임(엔진이 project.runtime을 그대로 보냄). 있으면 database·secret_refs 대신 이 값을 쓴다.
+  runtime: z.custom<HttpRuntime>(v => { try { validateRuntime(v); return true; } catch { return false; } }).optional(),
   // 계획 배포. AWS·GCP와 같은 모양이지만 버전은 Azure 카탈로그만 받는다. 다른 클라우드의 계획이 오면 400.
   architecture: z.object({ version: z.literal(AZURE_ARCHITECTURE_VERSION), template_id: z.enum(tiers) }).strict().optional(),
   options: z.object({
