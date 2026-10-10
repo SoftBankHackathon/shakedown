@@ -12,7 +12,7 @@
 | --- | --- |
 | main.py, security_gate/__main__.py, cli.py | 로컬 경로·옵션 입력, JSON 출력, 종료 코드 |
 | scanner.py, discovery.py, parsing.py, rules/privileged.py | 제한된 탐색, 안전 YAML 파싱, Docker privileged 검사 |
-| source_targets.py, source_units.py, source_syntax.py | 다중 언어 수집·템플릿 추출·미검사 범위 식별, Python 전용 AST 검증 |
+| source_targets.py, source_units.py, source_syntax.py | 다중 언어 수집·템플릿 추출·미검사 범위 식별, Python AST 및 Java tree-sitter 구문 검증 |
 | semgrep.py, semgrep_rules/*.yml | 로컬 고정 규칙 Semgrep 실행, 실패 처리, 결과 정규화 |
 | secret_targets.py, gitleaks.py, gitleaks_rules/gitleaks.toml | UTF-8 텍스트 수집, Gitleaks dir 검사, Secret 비노출·정리 |
 | models.py, gate.py, gate3.py | 각각 JSON 1.0, Docker+Semgrep 2.0, 세 검사 3.0 집계 |
@@ -36,7 +36,7 @@ $env:TMP = $env:TEMP
 .\.venv\Scripts\semgrep.exe --version
 ```
 
-`requirements.txt`는 PyYAML, `requirements-dev.txt`는 pytest·jsonschema, `requirements-semgrep.txt`는 선택적 Semgrep 의존성입니다.
+`requirements.txt`는 PyYAML, `requirements-dev.txt`는 pytest·jsonschema, `requirements-semgrep.txt`는 선택적 Semgrep 및 Java tree-sitter 의존성입니다.
 
 macOS·Linux에서는 임시 폴더가 심볼릭 링크(`/var` → `/private/var`)라 스캔이 `SYMLINK_OR_REPARSE_POINT`로 거부됩니다. 테스트와 실행 전에 `export TMPDIR="$PWD/.tmp"`로 프로젝트 안 `.tmp`를 쓰세요(`.tmp`는 gitignore 대상). 원본에서 검증한 버전은 Python 3.12.10, Semgrep 1.180.0, Gitleaks 8.30.0입니다. 의존성 범위가 완전 고정된 lockfile은 아니므로 설치 버전을 기록하고 실제 테스트를 다시 실행하세요.
 
@@ -195,7 +195,7 @@ Semgrep의 native exit 1은 유효한 탐지 결과가 있으면 DENY입니다. 
 
 이는 MVP의 직접 호출 패턴 검사입니다. 입력의 실제 신뢰도, 복잡한 별칭·래퍼, 동적으로 계산한 `shell` 값, 다른 언어, 전체 취약점 범주를 판단하지 않습니다.
 `eval`의 상수 입력도 차단할 수 있습니다. 정상 fixture는 `ast.literal_eval`과 `shell=False`를 사용합니다.
-외부 Repository를 새로 가져오지 않고, 허가된 로컬 디렉터리의 `.py`, `.java`, `.js/.jsx/.mjs/.cjs`, `.ts/.tsx/.mts/.cts`를 수집합니다. 스냅샷에는 해당 언어의 `.py/.java/.js/.jsx/.ts/.tsx` 확장자를 사용하며 AST 사전 검증은 `.py`에만 적용합니다. Java 규칙은 정규화된 타입명도 다루지만 javac 빌드·타입 검증, SQL injection, Spring 인증/인가, XSS, 역직렬화, 파일 간 데이터 흐름은 검사하지 않습니다. 명령이 상수여도 실행 패턴은 차단합니다. 규칙 문법은 [Semgrep 공식 문서](https://semgrep.dev/docs/writing-rules/pattern-syntax)를 따릅니다.
+외부 Repository를 새로 가져오지 않고, 허가된 로컬 디렉터리의 `.py`, `.java`, `.js/.jsx/.mjs/.cjs`, `.ts/.tsx/.mts/.cts`를 수집합니다. 스냅샷에는 해당 언어의 `.py/.java/.js/.jsx/.ts/.tsx` 확장자를 사용하며 구문 사전 검증은 `.py`(AST)와 `.java`(tree-sitter)에 적용합니다. Java 규칙은 정규화된 타입명도 다루지만 javac 빌드·타입 검증, SQL injection, Spring 인증/인가, XSS, 역직렬화, 파일 간 데이터 흐름은 검사하지 않습니다. 명령이 상수여도 실행 패턴은 차단합니다. 규칙 문법은 [Semgrep 공식 문서](https://semgrep.dev/docs/writing-rules/pattern-syntax)를 따릅니다.
 
 Kotlin, Go, Ruby, PHP, C/C++, C#, Rust, Scala, Swift, Groovy, 셸, Vue/Svelte 전용 파일 등은 미지원으로 REVIEW합니다. 알려지지 않은 확장자·확장자 없는 파일도 명시된 데이터/빌드 파일명이 아니면 `unknown`으로 REVIEW합니다. 언어 추가 시 확장자 분류·고정 규칙·정규화 허용 목록·스키마·실제 CLI fixture를 함께 확장해야 합니다.
 
@@ -216,10 +216,12 @@ HTML/SVG의 인라인 script, `on*`/`th:on*` 이벤트 코드, javascript URL은
 - 시간 초과/출력 제한 시 프로세스를 중단합니다. Windows는 `taskkill /T /F`, POSIX는 프로세스 그룹 종료를 사용합니다. 종료·임시 폴더 정리 시간이 추가될 수 있으며 OS 권한 때문에 자식 프로세스 종료가 실패하는 상황까지 보안 격리로 보장하지 않습니다.
 - CLI stdout 8 MiB, stderr 1 MiB, 탐지 결과 1,000개로 제한합니다. raw 출력은 임시 파일에만 보관하고 정리합니다. 보고서에는 `extra.message`, 코드 줄, metavars, trace, stdout/stderr, 예외 원문을 전달하지 않습니다.
 - Semgrep의 `paths.scanned`가 복사한 전체 검사 단위와 일치해야 성공합니다. 누락·범위 밖 경로·알 수 없는 규칙·JSON 구조 오류·파싱 오류·Semgrep 오류는 SCAN_FAILED입니다. 동일 원본 파일의 다른 script 단위 누락도 검사합니다.
-- Python 소스는 Semgrep 전에 아래 AST 사전 검증도 통과해야 합니다. `scanned` 포함과 빈 `errors`만으로 Python 문법의 유효성을 판단하지 않습니다.
+- Python과 Java 소스는 Semgrep 전에 각각 AST와 tree-sitter 구문 검증을 통과해야 합니다. `scanned` 포함과 빈 `errors`만으로 Python 문법의 유효성을 판단하지 않습니다.
 - 신뢰된 로컬 규칙과 위 옵션으로 네트워크 동작을 억제합니다. 이 Python 어댑터 자체는 운영체제 수준의 네트워크/파일시스템 샌드박스를 제공하지 않습니다. 소스 동시 변경에 대한 완전한 격리도 보장하지 않습니다.
 
-### Python AST 사전 검증
+### Python AST 및 Java tree-sitter 사전 검증
+
+Java 소스는 tree-sitter-java로 구문을 사전 검증합니다. 구문 오류가 발견되면 SOURCE_SYNTAX_INVALID 및 최종 SCAN_FAILED로 처리하며, 검사 대상 Java 코드는 실행하지 않습니다.
 
 Semgrep 1.180.0이 실제 Python 문법 오류 fixture를 scanned에 포함하고 errors 없이 exit 0을 반환한 원본 진단을 근거로, Python 구문 검증을 별도로 수행합니다.
 
@@ -228,14 +230,14 @@ Semgrep 1.180.0이 실제 Python 문법 오류 fixture를 scanned에 포함하�
 
 | 오류 코드 | 의미 |
 | --- | --- |
-| SOURCE_SYNTAX_INVALID | 실행 중인 Python 문법으로 AST를 생성할 수 없음 |
+| SOURCE_SYNTAX_INVALID | Python AST 또는 Java tree-sitter 구문 검증 실패 |
 | SOURCE_SYNTAX_TIMEOUT | 구문 검증에 배정한 시간이 만료됨 |
 | SOURCE_SYNTAX_CHECK_FAILED | 검증 프로세스 시작 실패, 자원 오류, 비정상 종료 등 |
 
-별도 Python 프로세스를 `-I -S -B`와 `shell=False`로 실행하고, 대상은 stdin의 JSON 문자열 데이터로만 전달합니다.
+별도 Python 프로세스를 `-I -B`와 `shell=False`로 실행합니다. Python AST 검증은 `-S`를 추가하며, Java tree-sitter 검증은 설치된 패키지를 사용합니다. 대상 소스는 stdin의 JSON 문자열 데이터로만 전달합니다.
 검증 프로세스는 대상 파일을 열거나 import/실행하지 않으며, 대상의 bytecode 또는 pyc를 만들지 않습니다.
 `-I -S`는 환경변수·사용자 모듈·site 초기화의 영향을 줄이고 `-B`는 모듈 캐시 쓰기를 막습니다. 이는 OS 권한 격리를 추가하는 옵션은 아닙니다.
-소스의 크기·누적 크기 제한과 심볼릭 링크 거부는 기존 읽기 단계에 그대로 적용됩니다. AST 검증은 전체 Semgrep 시간 예산에서 남은 시간을 사용합니다.
+소스의 크기·누적 크기 제한과 심볼릭 링크 거부는 기존 읽기 단계에 그대로 적용됩니다. 구문 검증은 전체 Semgrep 시간 예산에서 남은 시간을 사용합니다.
 stderr와 소스 원문은 보고하지 않습니다. 복잡한 AST 입력이 Python 프로세스를 비정상 종료시켜도 부모 검사기는 자동 승인하지 않습니다.
 
 검사 문법은 Security Gate를 실행하는 Python 버전에 따릅니다. 현재 검증 버전은 Python 3.12.10입니다.
