@@ -23,10 +23,9 @@ export const TARGETS: TargetInfo[] = [
 
 export const DEFAULT_TARGETS = TARGETS.filter((t) => t.default).map((t) => t.id);
 
-/** Live selection with `id` turned on. The engine never deploys GCP together with another cloud, so picking GCP drops AWS/Azure and picking either drops GCP. */
+/** Live selection with `id` turned on, kept in catalog order. Any clouds can go together: the engine builds once and copies the same digest to the others. */
 export function pickTarget(current: TargetName[], id: TargetName): TargetName[] {
-  const clash = (x: TargetName) => x !== "local" && id !== "local" && (x === "gcp" || id === "gcp");
-  return TARGETS.filter((t) => t.id === id || (current.includes(t.id) && !clash(t.id))).map((t) => t.id);
+  return TARGETS.filter((t) => t.id === id || current.includes(t.id)).map((t) => t.id);
 }
 
 /** Starting options for a compared target: two instances in UTC, the setup that exposes environment differences. */

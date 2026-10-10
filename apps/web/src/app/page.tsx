@@ -158,7 +158,7 @@ export default function Home() {
                   onClick={() =>
                     setTargets((cur) =>
                       on ? cur.filter((x) => x !== tg.id)
-                        : MOCK ? TARGETS.map((x) => x.id).filter((id) => id === tg.id || cur.includes(id)) : pickTarget(cur, tg.id),
+                        : pickTarget(cur, tg.id),
                     )
                   }
                   className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm transition-colors ${

@@ -39,6 +39,15 @@ ENV_FIX_TARGETS = {'gcp'}
 ENV_FIXES = {'SPRING_PROFILES_ACTIVE=demo,session-jdbc': {'SPRING_PROFILES_ACTIVE': 'demo,session-jdbc'}}
 VERDICT_RANK = ('PASS', 'WARN', 'BLOCKED')
 
+def fix_cloud(options):
+    """엔진이 env 수정안을 적용할 클라우드. Local과 자동 수정 대상 클라우드 하나만 배포했을 때 그 이름, 아니면 None.
+
+    d['options']를 넘긴다. 엔진이 배포한 대상만 들어 있다(d['targets']에는 비교 모드의 외부 대상도 섞인다)."""
+    # 수정 재배포는 Local과 그 클라우드 하나만 다시 비교한다. 클라우드가 둘 이상이면 다른 클라우드의 결과가 덮이므로 받지 않는다.
+    # 시운전 힌트(can_apply_env)와 수정 적용(apply_fix)이 이 함수 하나로 같은 규칙을 쓴다.
+    clouds = [name for name in options if name != 'local']
+    return clouds[0] if 'local' in options and len(clouds) == 1 and clouds[0] in ENV_FIX_TARGETS else None
+
 class Endpoint(Model):
     name: str = Field(min_length=1, max_length=40, pattern=r'^[a-z][a-z0-9_-]*$')
     url: str
@@ -61,7 +70,8 @@ class DeployRequest(Model):
     shakedown: bool = False
     autofix: bool = False
     comparison: Endpoint | None = None
-    targets: list[Literal['local', 'aws', 'azure', 'gcp']] = Field(default_factory=lambda: ['local'], min_length=1, max_length=3)
+    # Local과 세 클라우드를 한 번에 고를 수 있다. 빌드는 첫 클라우드에서 한 번, 나머지는 같은 digest를 복사한다.
+    targets: list[Literal['local', 'aws', 'azure', 'gcp']] = Field(default_factory=lambda: ['local'], min_length=1, max_length=4)
     options: dict[str, dict] = Field(default_factory=dict)
 
 class DeploymentError(Exception):
@@ -228,10 +238,6 @@ class DeploymentStore:
         targets = [name for name in TARGETS if name in request.targets]
         if len(targets) != len(request.targets):
             raise DeploymentError('Targets must be unique.')
-        clouds = [name for name in targets if name in CLOUDS]
-        if 'gcp' in clouds and len(clouds) > 1:
-            # GCP는 다른 클라우드 저장소로 같은 digest를 복사(publish)하지 않는다. 지금은 Local + GCP만 받는다.
-            raise DeploymentError('GCP cannot be combined with another cloud yet; select Local and GCP only.')
         if request.comparison and (len(targets) != 1 or request.comparison.name in targets):
             raise DeploymentError('An external comparison requires one deployed target and a distinct name.')
         if request.shakedown != (request.comparison is not None or len(targets) >= 2):
@@ -377,7 +383,7 @@ class DeploymentStore:
                 # 외부 비교 URL은 엔진이 배포한 게 아니라서 env를 바꿀 수 없다. 엔진이 Local과 함께 배포한 클라우드 하나만 자동 수정 대상이다.
                 # 수정안 env(SPRING_PROFILES_ACTIVE=demo,session-jdbc)는 Spring 샘플 전용이라 runtime 프로젝트는 대상이 아니다.
                 results = self.compare(d, Endpoint(name=baseline, url=d['targets'][baseline]['url']), candidates, project,
-                                       can_apply_env=len(others) == 1 and others[0] in ENV_FIX_TARGETS and not project.runtime)
+                                       can_apply_env=fix_cloud(d['options']) is not None and not project.runtime)
                 # Close only the managed clouds that failed; with an external comparison the deployed side is judged.
                 failed = {name for name, result in results.items() if result == 'BLOCKED'}
                 if comparison and failed: failed = set(submitted)
@@ -400,9 +406,9 @@ class DeploymentStore:
         # GCP 어댑터는 서비스 하나만 다룬다. 옛 차단 배포를 고치면 더 새 배포가 쓰는 서비스를 덮어쓴다.
         if self.list(d['project_id'])[0]['id'] != id:
             raise Busy('Only the latest deployment of this project can be fixed; start a new deployment instead.')
-        cloud = next((name for name in d['options'] if name != 'local'), None)
+        cloud = fix_cloud(d['options'])
         target = d['targets'].get(cloud, {})
-        if 'local' not in d['options'] or cloud not in ENV_FIX_TARGETS or 'request' not in target:
+        if cloud is None or 'request' not in target:
             raise DeploymentError('Fixes are applied only to a Local + GCP deployment made by the engine; apply this fix manually.')
         if len(d['attempts']) != 1:
             raise DeploymentError('This deployment was already fixed once; start a new deployment.')
