@@ -14,6 +14,8 @@ const resolveTunnel = async (host: string): Promise<string[]> => {
 /** Same fallback as Local Target publicHealth: only a Quick Tunnel DNS miss.
  * Keep the original HTTPS hostname/SNI and certificate verification. No OS DNS changes.
  * Resolution happens before connection; never retry a submitted POST.
+ * (DNS 조회는 연결 전에 끝나므로 이 우회 때문에 POST가 다시 가는 일은 없다는 뜻이다.
+ *  POST를 다시 보내는 경우는 앱에 넘어가지 않은 엣지 530(아래 tunnelNotReady) 하나뿐이고, http.ts의 send가 맡는다.)
  */
 export function createTunnelLookup(
   system: (host: string) => Promise<LookupAddress[]> = host => lookup(host, { all: true }),
@@ -33,6 +35,14 @@ export function createTunnelLookup(
     })().catch(error => callback(error, "", 0));
   };
 }
+
+/** Cloudflare 엣지가 앱에 넘기기 전에 직접 만든 530인지 본다.
+ * 터널 연결기가 아직 없거나(1033) Quick Tunnel 주소가 아직 등록되지 않은(1016) 상태라서, 앱은 이 요청을 받은 적이 없다.
+ * 실측(2026-10-09): HTTP 530, server: cloudflare, text/html 'Error 1016' 페이지.
+ * 터널을 거친 앱 응답에도 server: cloudflare가 붙으므로 상태 코드 530까지 같이 봐야 앱 오류(500 등)와 구분된다.
+ */
+export const tunnelNotReady = (res: { status: number; headers: { get(name: string): string | null } }) =>
+  res.status === 530 && res.headers.get("server") === "cloudflare";
 
 const tunnelAgent = new Agent({ connect: { lookup: createTunnelLookup() } });
 export function targetFetch(url: string | URL, options: RequestInit = {}) {

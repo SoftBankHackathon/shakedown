@@ -42,7 +42,8 @@ HOST=0.0.0.0 PORT=9201 npm start -w @shakedown/shakedown   # 엔진이 다른 PC
 - 요청에 `scenario`가 없거나 null이면 kty-board 기본 시나리오로 실행하고 `scenario_source: "fallback"`
 - 비교 대상(`candidates`)은 지금 1개만 받습니다. 2개 이상이면 422
 - 잘못된 요청은 400 `{error, detail}` (target.yaml과 같은 모양)
-- 시작 전에 두 주소가 응답하는지 최대 20초 다시 시도합니다(터널 주소가 늦게 잡히는 경우)
+- 시작 전에 두 주소가 응답하는지 최대 20초 다시 시도합니다(터널 주소가 늦게 잡히는 경우). 앱이 낸 응답은 500이어도 닿은 것으로 봅니다. Cloudflare 엣지가 낸 530(`server: cloudflare`, 터널 미준비 1033·1016)은 앱 응답이 아니라서 계속 기다립니다
+- 접속 확인 뒤 실행 중에도 Cloudflare 엣지 530을 받으면 같은 요청을 1초 간격으로 다시 보냅니다. 기다리는 시간은 단계 하나(리다이렉트 포함)에 모두 합쳐 최대 10초입니다. 엣지가 앱에 넘기기 전에 만든 응답이라 POST도 다시 보냅니다. 10초가 지나도 530이면 그 단계는 `HTTP 530`으로 실패합니다
 - 기준 환경이 닿지 않거나 기준 환경에서 시나리오가 실패하면 비교할 수 없으므로 `status: "failed"`와 `error`
 - 비교 환경만 실패하면 `status: "done"`과 `verdict: BLOCKED`
 - 전체 실행은 150초 안에 끝냅니다. 넘으면 `status: "failed"`, `error: "timed out after 150s"` (엔진은 3분이 지나면 실패로 봅니다)
@@ -101,4 +102,4 @@ npm test -w @shakedown/shakedown
 
 ### Quick Tunnel DNS
 
-Local Target과 동일하게 HTTPS `*.trycloudflare.com`의 로컬 DNS miss에만 1.1.1.1/1.0.0.1 조회를 사용합니다. 정상 시스템 DNS와 다른 호스트는 그대로 사용합니다. 원래 hostname/SNI 및 TLS 인증서 검증을 유지하며 OS DNS 설정을 바꾸거나 이미 전송한 POST를 재시도하지 않습니다.
+Local Target과 동일하게 HTTPS `*.trycloudflare.com`의 로컬 DNS miss에만 1.1.1.1/1.0.0.1 조회를 사용합니다. 정상 시스템 DNS와 다른 호스트는 그대로 사용합니다. 원래 hostname/SNI 및 TLS 인증서 검증을 유지하며 OS DNS 설정을 바꾸지 않습니다. DNS 조회는 연결 전에 끝나므로 이 DNS 우회 때문에 이미 전송한 POST가 다시 가는 일은 없습니다. POST를 다시 보내는 경우는 앱에 넘어가지 않은 Cloudflare 엣지 530(위 '실행 중 530' 항목) 하나뿐입니다.
