@@ -89,8 +89,7 @@ def test_mixed_snapshot_preserves_both_languages_and_checks_all_files(tmp_path):
 
 @pytest.mark.parametrize("filename,language", [
     ("app.vue", "vue"), ("app.svelte", "svelte"), ("App.kt", "kotlin"),
-    ("app.c", "c"), ("app.cs", "csharp"), ("app.rb", "ruby"),
-    ("app.mystery", "unknown"), ("executable", "unknown")])
+    ("app.c", "c"), ("app.cs", "csharp"), ("app.rb", "ruby")])
 @pytest.mark.parametrize("with_java", [False, True])
 def test_unsupported_sources_block_allow(tmp_path, filename, language, with_java):
     if with_java:
@@ -110,6 +109,15 @@ def test_unsupported_sources_do_not_hide_secret_denial(tmp_path):
     report = validate(scan_full_repository(tmp_path, semgrep_runner=output_runner(),
                                           gitleaks_runner=secret_runner(secret=True)))
     assert report["decision"] == "DENY"
+
+
+@pytest.mark.parametrize("filename", ["app.mystery", "executable", "styles.scss", "Procfile", "schema.sql", ".editorconfig"])
+def test_unknown_file_types_are_not_source_and_do_not_block(tmp_path, filename):
+    java_project(tmp_path)
+    (tmp_path / filename).write_text("not application source", encoding="utf-8")
+    report = mock_scan(tmp_path)
+    assert report["decision"] == "ALLOW"
+    assert report["semgrep"]["unsupported_files"] == 0 and report["semgrep"]["unsupported_languages"] == []
 
 
 @pytest.mark.parametrize("content,units,unscanned", [("<script>alert(1)</script>", 2, 0),

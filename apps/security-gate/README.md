@@ -199,13 +199,13 @@ Semgrep의 native exit 1은 유효한 탐지 결과가 있으면 DENY입니다. 
 `eval`의 상수 입력도 차단할 수 있습니다. 정상 fixture는 `ast.literal_eval`과 `shell=False`를 사용합니다.
 외부 Repository를 새로 가져오지 않고, 허가된 로컬 디렉터리의 `.py`, `.java`, `.js/.jsx/.mjs/.cjs`, `.ts/.tsx/.mts/.cts`를 수집합니다. 스냅샷에는 해당 언어의 `.py/.java/.js/.jsx/.ts/.tsx` 확장자를 사용하며 AST 사전 검증은 `.py`에만 적용합니다. Java 규칙은 정규화된 타입명도 다루지만 javac 빌드·타입 검증, SQL injection, Spring 인증/인가, XSS, 역직렬화, 파일 간 데이터 흐름은 검사하지 않습니다. 명령이 상수여도 실행 패턴은 차단합니다. 규칙 문법은 [Semgrep 공식 문서](https://semgrep.dev/docs/writing-rules/pattern-syntax)를 따릅니다.
 
-검사 가능한 언어는 허용 목록(`source_targets.py`의 `SUPPORTED`: Python, Java, JavaScript, TypeScript, Go, Rust)입니다. Kotlin, Ruby, PHP, C/C++, C#, Scala, Swift, Groovy, 셸, Vue/Svelte 전용 파일 등 목록 밖의 소스가 하나라도 있으면 DENY(`UNSUPPORTED_SOURCE`)입니다. 알려지지 않은 확장자·확장자 없는 파일도 명시된 데이터/빌드 파일명이 아니면 `unknown`으로 막습니다. `.sql`(스키마·마이그레이션)과 확장자 없는 점 파일(`.editorconfig` 등)은 데이터로 봅니다. 언어 추가 시 확장자 분류·고정 규칙·정규화 허용 목록·스키마·실제 CLI fixture를 함께 확장해야 합니다.
+검사 가능한 언어는 허용 목록(`source_targets.py`의 `SUPPORTED`: Python, Java, JavaScript, TypeScript, Go, Rust)입니다. Kotlin, Ruby, PHP, C/C++, C#, Scala, Swift, Groovy, 셸, Vue/Svelte 전용 파일 등 목록 밖의 소스가 하나라도 있으면 DENY(`UNSUPPORTED_SOURCE`)입니다. 목록에 없는 확장자(설정·문서·이미지·`.sql`·`Procfile`·`.editorconfig` 등)는 소스로 보지 않고 막지도 않으며, Secret 검사만 합니다. 언어 추가 시 확장자 분류·고정 규칙·정규화 허용 목록·스키마·실제 CLI fixture를 함께 확장해야 합니다.
 
 HTML/SVG의 인라인 script, `on*`/`th:on*` 이벤트 코드, javascript URL은 별도 JavaScript 단위로 추출합니다. 한 파일의 여러 단위 중 하나라도 `paths.scanned`에서 빠지면 SCAN_FAILED입니다. 근거는 원본 파일·행으로 매핑하며, 이벤트 속성은 해당 속성 시작 행을 가리킵니다. script의 TypeScript MIME도 구분합니다. JSON 데이터 script는 실행 소스 대상이 아니며 Secret 검사는 유지합니다.
 
 로컬 script 참조는 수집된 소스와 대조하고 원격 URL은 내려받지 않습니다. 외부/누락/동적 참조와 Thymeleaf 표현식은 `coverage_gaps`에 남기고 막지 않습니다(ALLOW에 함께 보고). 알 수 없는 script 타입(`UNSUPPORTED_SCRIPT_TYPE`, 미지원 언어)과 손상·중복 속성 템플릿(`MALFORMED_TEMPLATE`, 검사기를 속일 수 있는 형태)은 DENY입니다. Thymeleaf의 알려진 `[[${...}]]`/`[(${...})]` 표현식은 실행하지 않고 고정 식별자로 치환해 나머지 코드만 검사하고 `TEMPLATE_EXPRESSION`을 남깁니다. 그 외 파서가 처리하지 못하는 구문은 SCAN_FAILED입니다. 전체 브라우저 DOM 또는 템플릿 렌더링 검증은 제공하지 않습니다.
 
-정적 HTML/CSS, 설정·문서, Gradle 빌드 스크립트(`.gradle`, `.gradle.kts`), 명시된 빌드 파일과 wrapper 런처(`gradlew`, `gradlew.bat`, `mvnw`, `mvnw.cmd`)는 애플리케이션 소스 규칙 범위 밖이며 텍스트 Secret 검사만 수행합니다. 정확한 분류 목록은 `source_targets.py`의 상수에 있습니다. 파일 확장자/이름을 위장한 코드를 전부 식별한다고 보장하지 않습니다. 언어 목록은 발견 기준이며 실제 검사 성공 여부는 `scan_status`, `scanned_files`, 미지원 파일 수를 함께 확인합니다.
+정적 HTML/CSS, 설정·문서, Gradle 빌드 스크립트(`.gradle`, `.gradle.kts`), 명시된 빌드 파일과 wrapper 런처(`gradlew`, `gradlew.bat`, `mvnw`, `mvnw.cmd`)는 애플리케이션 소스 규칙 범위 밖이며 텍스트 Secret 검사만 수행합니다. 정확한 분류는 `source_targets.py`의 `SUPPORTED`·`UNSUPPORTED`에 있습니다. 파일 확장자/이름을 위장한 코드를 전부 식별한다고 보장하지 않습니다. 언어 목록은 발견 기준이며 실제 검사 성공 여부는 `scan_status`, `scanned_files`, 미지원 파일 수를 함께 확인합니다.
 `.git`, `.venv`, `venv`, `__pycache__`, `.pytest_cache`, `.pytest-tmp`, `.tmp`, `.pip-cache` 이름은 소스 탐색에서 제외됩니다. 이 제외는 기존 Docker 탐색에는 적용되지 않습니다.
 
 ### 실행 제한과 비밀값 보호
