@@ -226,3 +226,21 @@ MongoDB는 3 AZ TLS replica set이며 CA를 ECS 앱에 읽기 전용 파일로 �
 EC2 중지와 primary 프로세스 강제 종료 후 쓰기 복구를 확인했습니다.
 DLM 일일 스냅샷/최근 7개 보존 설정은 제공하지만 실험 계정 SCP로 활성화하지 못했고
 복구는 미검증입니다. AWS MySQL은 SDK 경로 검증이며 이번에 실제 RDS를 만들지는 않았습니다.
+
+## Terraform (`terraform/`, CloudFormation과 같은 기반 스택)
+
+`cloudformation/foundation.yaml` + `scripts/provision.sh` + `config-from-outputs.ts`가 하던 일을 Terraform으로도 할 수 있다. CloudFormation은 지우지 않고 같이 둔다(테스트가 YAML을 직접 읽는다). 설계와 판단 근거는 `docs/terraform-migration-aws-gcp.md` 1절.
+
+```sh
+export HACKATHON_PROVISION_PROFILE=<profile> HACKATHON_ACCOUNT_ID=<12자리> HACKATHON_STACK=shakedown-tf HACKATHON_POSTGRES_VERSION=17.x
+bash infra/aws/scripts/terraform.sh plan     # 바뀔 내용만
+bash infra/aws/scripts/terraform.sh apply    # 생성 → .data/aws/shakedown-tf.json, loadConfig 검증까지
+bash infra/aws/scripts/terraform.sh destroy  # 어댑터 DELETE로 ECS 서비스를 먼저 내린 뒤
+```
+
+- PostgreSQL·MySQL·MongoDB. MongoDB는 CFN과 같은 `scripts/mongodb-node.sh`로 EC2 3대를 띄우고, WaitCondition 대신 래퍼가 DbUrlSecret이 `mongodb://`가 될 때까지(최대 30분) 기다린다. 스냅샷(DLM)은 기본 꺼짐(`HACKATHON_MONGO_SNAPSHOTS=true`로 켬).
+- ECS 서비스·태스크 정의·오토스케일링(어댑터)과 ACM·443 리스너(infra/https)는 Terraform이 만들지 않는다. 어댑터와 HTTPS 서비스가 바꾸는 게이트 규칙 action, TG health path, RDS MultiAZ는 `ignore_changes`다.
+- apply는 plan을 먼저 보여 주고, RDS나 Mongo EC2·EBS가 지워지거나 교체되는 계획이면 멈춘다(엔진·DB 이름 변경 포함, `HACKATHON_ALLOW_DATA_LOSS=1`로만 통과). `HACKATHON_AUTO_APPROVE=1`이면 확인을 묻지 않는다.
+- 같은 이름의 CloudFormation 스택이 있으면 래퍼가 멈춘다(ECR·로그 그룹 이름 충돌). 시험은 `shakedown-tf`처럼 다른 이름으로 한다.
+- CFN과 다른 점: DB 비밀번호를 Terraform이 만들어 상태 파일(`.data/aws/terraform/`, 700)에 들어간다. RDS 식별자는 `<스택>-db`, destroy 때 최종 스냅샷 `<스택>-db-final`. 같은 스택을 두 번 destroy하려면 앞의 스냅샷을 지우거나 `-var skip_final_snapshot=true`.
+- 실계정 없이 하는 시험: `cd infra/aws/terraform && terraform init -backend=false && terraform test` (AWS provider를 가짜로 바꿔 postgres·mysql·mongodb·DB 없음·입력 거부 6개 시나리오와 설정 파일 내용을 확인). **실제 AWS에서는 아직 돌려 보지 않았다.**
