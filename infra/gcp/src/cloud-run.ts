@@ -11,17 +11,19 @@ const INVOKER = 'roles/run.invoker';
 const PUBLIC = 'allUsers';
 
 export type RunEnv = { name: string; value?: string; valueSource?: { secretKeyRef: { secret: string; version: string } } };
+// command는 이미지의 ENTRYPOINT를, args는 CMD를 대신한다(셸을 거치지 않는다).
 export type RunContainer = {
-  name?: string; image: string; env?: RunEnv[];
+  name?: string; image: string; command?: string[]; args?: string[]; env?: RunEnv[];
   ports?: { containerPort: number }[];
   resources?: { limits?: Record<string, string>; cpuIdle?: boolean };
 };
 export type RunVpcAccess = { networkInterfaces: { network: string; subnetwork: string }[]; egress: 'PRIVATE_RANGES_ONLY' | 'ALL_TRAFFIC' };
 export type RunCondition = { type?: string; state?: string; message?: string };
 // Cloud Run v2 Service 중 우리가 쓰는 칸만 적는다. uri부터는 GCP가 채우는 읽기 전용 값이다(int64는 JSON에서 문자열).
+// scaling(서비스 수준)과 template.scaling(리비전 수준)은 따로다. 자동 확장의 실제 상한은 두 max 중 작은 값이다.
 export type RunService = {
-  template: { revision?: string; containers: RunContainer[]; vpcAccess?: RunVpcAccess; sessionAffinity?: boolean };
-  scaling?: { scalingMode?: 'AUTOMATIC' | 'MANUAL'; manualInstanceCount?: number };
+  template: { revision?: string; containers: RunContainer[]; vpcAccess?: RunVpcAccess; sessionAffinity?: boolean; scaling?: { minInstanceCount?: number; maxInstanceCount?: number } };
+  scaling?: { scalingMode?: 'AUTOMATIC' | 'MANUAL'; manualInstanceCount?: number; minInstanceCount?: number; maxInstanceCount?: number };
   invokerIamDisabled?: boolean;
   uri?: string; generation?: string; observedGeneration?: string; reconciling?: boolean;
   latestReadyRevision?: string; latestCreatedRevision?: string; terminalCondition?: RunCondition;
@@ -66,9 +68,14 @@ export class CloudRun {
     await this.wait(ok<Operation>(response, 'Cloud Run service update'), 'Cloud Run service update', signal);
   }
 
-  // 대수만 바꾼다. 수동 스케일링의 대수 변경은 새 리비전을 만들지 않아 빨리 끝난다.
-  async setInstances(count: number, signal: AbortSignal): Promise<void> {
-    const response = await this.http({ method: 'PATCH', url: `${RUN}/${this.servicePath}?updateMask=scaling.manualInstanceCount`, body: { scaling: { manualInstanceCount: count } }, signal });
+  // 대수만 바꾼다. 수동 스케일링의 대수 변경은 새 리비전을 만들지 않아 빨리 끝난다. 이 마스크는 2026-10-09에 실측했다.
+  // clearAutomatic이면 수동 모드로 바꾸면서 계획 배포(자동 확장)가 남긴 서비스 min/max를 마스크에 넣고 본문에서 빼서 지운다.
+  // API 문서가 MANUAL을 "min 대수로 정확히 맞춤"이라고도 설명해서, min이 남으면 0대로 내려가지 않을 수 있기 때문이다.
+  // 모드 전환도 새 리비전을 만들지 않는다(manual-scaling 문서). 넓은 마스크는 2026-10-10 medium 내리기로 실측했고, 수동 서비스는 바뀌는 범위를 줄이려고 실측해 둔 좁은 마스크를 그대로 쓴다.
+  async setInstances(count: number, signal: AbortSignal, clearAutomatic = false): Promise<void> {
+    const mask = clearAutomatic ? 'scaling.scalingMode,scaling.manualInstanceCount,scaling.minInstanceCount,scaling.maxInstanceCount' : 'scaling.manualInstanceCount';
+    const scaling = clearAutomatic ? { scalingMode: 'MANUAL', manualInstanceCount: count } : { manualInstanceCount: count };
+    const response = await this.http({ method: 'PATCH', url: `${RUN}/${this.servicePath}?updateMask=${mask}`, body: { scaling }, signal });
     await this.wait(ok<Operation>(response, 'Cloud Run scaling update'), 'Cloud Run scaling update', signal);
   }
 
@@ -98,13 +105,15 @@ export class CloudRun {
     // RunJob 작업의 metadata는 Execution이다(job.proto). 작업이 언제 done이 되는지는 문서에 없어서 Execution을 직접 지켜본다.
     const name = run.metadata?.name;
     if (!name) throw new Error('Cloud Run job run: execution name missing');
+    // 오류는 컨테이너 이름으로 부른다. 옛 방식은 schema-init, runtime의 init_command는 init이다.
+    const label = job.template.template.containers[0]?.name ?? 'Cloud Run';
     while (true) {
       const execution = ok<Execution>(await this.http({ method: 'GET', url: `${RUN}/${name}`, signal }), 'Cloud Run execution get');
       // 재시도 0회로 돌리므로 실패한 task가 하나라도 있으면 끝까지 기다릴 이유가 없다.
-      if (execution.failedCount || execution.cancelledCount) throw new Error(`schema-init job failed: ${name}`);
+      if (execution.failedCount || execution.cancelledCount) throw new Error(`${label} job failed: ${name}`);
       if (execution.completionTime) {
         if ((execution.succeededCount ?? 0) >= (execution.taskCount ?? 1)) return;
-        throw new Error(`schema-init job did not succeed: ${name}`);
+        throw new Error(`${label} job did not succeed: ${name}`);
       }
       await sleep(2_000, undefined, { signal });
     }

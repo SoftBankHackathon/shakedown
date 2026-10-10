@@ -2,7 +2,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { StepResult } from "@shakedown/contracts";
+import type { Step, StepResult } from "@shakedown/contracts";
 import { createSession } from "../src/http.ts";
 import { runScenario, runStep } from "../src/steps.ts";
 import { defaultScenario } from "../src/scenario.ts";
@@ -88,4 +88,70 @@ test("onResult는 skipped를 포함해 단계 결과가 나올 때마다 순서�
   const results = await runScenario(createSession(url), steps("ggg777"), (r) => seen.push(r));
   assert.equal(seen.length, 8);
   assert.deepEqual(seen, results);
+});
+
+test("고른 링크나 폼이 삭제·로그아웃이면 보내지 않고 실패한다(링크는 글자 일부만 맞아도 첫 링크를 고르므로)", async () => {
+  const hits: string[] = [];
+  const server = createServer((req, res) => {
+    hits.push(`${req.method} ${req.url}`);
+    res.end(`<a href="/posts/3/delete">Delete post</a><a href="/posts/3">My post</a><a href="/logout">Sign out</a>
+      <form action="/posts/3" method="post"><input type="hidden" name="_method" value="DELETE"></form>
+      <form action="/posts/3/remove" method="post"><input name="why"></form>
+      <form action="/posts/3/edit" method="post"><input name="title"></form>`);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  boards.push({ close: () => new Promise<void>((resolve) => server.close(() => resolve())) });
+  const session = createSession(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+  await session.request("GET", "/");
+
+  const click = await runStep(session, { title: "Open the post", action: "click_link", link_text: "post", fields: [], expect: { text_contains: [] } }, 1);
+  assert.equal(click.error, 'request failed: link "post" goes to /posts/3/delete, which looks unsafe (delete, log out, admin or payment); not followed');
+  const signOut = await runStep(session, { title: "Out", action: "click_link", link_text: "Sign out", fields: [], expect: { text_contains: [] } }, 2);
+  assert.equal(signOut.status, "failed");
+  for (const formAction of ["/posts/3", "/posts/3/remove"]) {
+    const submit = await runStep(session, { title: "Submit", action: "submit_form", form_action: formAction, fields: [], expect: { text_contains: [] } }, 3);
+    assert.equal(submit.error, `request failed: form ${formAction} looks unsafe (delete, log out, admin or payment); not submitted`);
+  }
+  // 시나리오가 _method를 직접 넣어도 같다.
+  const sneaky = await runStep(session, { title: "Edit", action: "submit_form", form_action: "/posts/3/edit", fields: [{ name: "_method", value: "delete" }], expect: { text_contains: [] } }, 4);
+  assert.equal(sneaky.status, "failed");
+  assert.deepEqual(hits, ["GET /"]);
+});
+
+test("관리자·결제 링크·폼도 보내지 않는다(\"Upgrade\"가 /billing/upgrade를 고를 수 있으므로)", async () => {
+  const hits: string[] = [];
+  const server = createServer((req, res) => {
+    hits.push(`${req.method} ${req.url}`);
+    res.end(`<a href="/billing/upgrade">Upgrade plan</a><a href="/admin/users">Users</a><form action="/checkout" method="post"><input name="qty"></form>`);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  boards.push({ close: () => new Promise<void>((resolve) => server.close(() => resolve())) });
+  const session = createSession(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+  await session.request("GET", "/");
+  const step = (over: Pick<Step, "action"> & Partial<Step>): Step => ({ title: "t", fields: [], expect: { text_contains: [] }, ...over });
+  assert.equal((await runStep(session, step({ action: "click_link", link_text: "Upgrade" }), 1)).status, "failed");
+  assert.equal((await runStep(session, step({ action: "click_link", link_text: "Users" }), 2)).status, "failed");
+  assert.equal(
+    (await runStep(session, step({ action: "submit_form", form_action: "/checkout" }), 3)).error,
+    "request failed: form /checkout looks unsafe (delete, log out, admin or payment); not submitted",
+  );
+  assert.deepEqual(hits, ["GET /"]);
+});
+
+test("삭제·로그아웃은 낱말로만 본다: /blog-outline·/catalog_output은 보내고, camelCase deleteAccount는 막는다", async () => {
+  const server = createServer((req, res) => {
+    res.end(req.url === "/" ? `<a href="/blog-outline">Blog outline</a>
+      <form action="/catalog_output" method="post"><input name="q"></form>
+      <form action="/deleteAccount" method="post"><input name="q"></form>` : `ok ${req.method} ${req.url}`);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  boards.push({ close: () => new Promise<void>((resolve) => server.close(() => resolve())) });
+  const session = createSession(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+  const step = (over: Pick<Step, "action"> & Partial<Step>): Step => ({ title: "t", fields: [], expect: { text_contains: [] }, ...over });
+  await session.request("GET", "/");
+  assert.equal((await runStep(session, step({ action: "click_link", link_text: "Blog outline" }), 1)).status, "passed");
+  await session.request("GET", "/");
+  assert.equal((await runStep(session, step({ action: "submit_form", form_action: "/catalog_output" }), 2)).status, "passed");
+  await session.request("GET", "/");
+  assert.equal((await runStep(session, step({ action: "submit_form", form_action: "/deleteAccount" }), 3)).error, "request failed: form /deleteAccount looks unsafe (delete, log out, admin or payment); not submitted");
 });

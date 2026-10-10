@@ -1,15 +1,15 @@
 import { AzureCliCredential } from '@azure/identity';
-import { ContainerAppsAPIClient, type ContainerApp, type Revision } from '@azure/arm-appcontainers';
+import { ContainerAppsAPIClient, type ContainerApp, type Job, type JobExecutionContainer, type Revision } from '@azure/arm-appcontainers';
 import { ContainerRegistryClient, KnownContainerRegistryAudience } from '@azure/container-registry';
 import { LogsQueryClient, LogsQueryResultStatus } from '@azure/monitor-query-logs';
 import type { Config } from './config.js';
-import { registryServer, repositoryName } from './config.js';
+import { DATABASE_ENGINES, registryServer, repositoryName } from './config.js';
 
 export type Manifest = { architecture?: string; operatingSystem?: string; multiArch: boolean };
 export type LogRow = { ts: string; source: string; line: string };
 export type Identity = { tenantId: string; subscriptionId: string; subscriptionTenantId: string; state: string };
-// PostgreSQL Flexible Server의 상태와, info에 그대로 보여 줄 고가용성 모드·등급.
-export type DatabaseStatus = { state: string; highAvailability: string; tier: string };
+// DB 서버의 상태와, info에 그대로 보여 줄 버전·고가용성 모드·등급 (엔진마다 리소스가 다르지만 같은 모양으로 맞춘다).
+export type DatabaseStatus = { state: string; version: string; highAvailability: string; tier: string };
 
 // azure-provider가 쓰는 Azure 호출만 모은 얇은 계층. 테스트에서는 가짜로 바꾼다.
 export interface AzureApi {
@@ -19,6 +19,11 @@ export interface AzureApi {
   putApp(app: ContainerApp, signal: AbortSignal): Promise<ContainerApp>;
   getRevision(name: string, signal: AbortSignal): Promise<Revision | undefined>;
   deactivateRevision(name: string, signal: AbortSignal): Promise<void>;
+  // runtime.init_command용 Container Apps 작업: 조회·(비밀이 바뀔 때만) 갱신 → 이번 실행의 컨테이너로 시작 → 실행 상태 조회
+  getJob(signal: AbortSignal): Promise<Job>;
+  putJob(job: Job, signal: AbortSignal): Promise<Job>;
+  startJob(container: JobExecutionContainer, signal: AbortSignal): Promise<string>;
+  jobExecutionStatus(execution: string, signal: AbortSignal): Promise<string | undefined>;
   manifest(digest: string, signal: AbortSignal): Promise<Manifest | undefined>;
   // 최근 로그: Container Apps 로그 스트림 (거의 실시간)
   streamLogs(revision: string, signal: AbortSignal): Promise<LogRow[]>;
@@ -27,6 +32,10 @@ export interface AzureApi {
 }
 
 const ARM = 'https://management.azure.com';
+type DatabaseResource = { sku?: { name?: string }; properties?: {
+  state?: string; version?: string; highAvailability?: { mode?: string; targetMode?: string };
+  clusterStatus?: string; serverVersion?: string; compute?: { tier?: string };
+} };
 const notFound = (error: unknown) => (error as { statusCode?: number }).statusCode === 404;
 
 export class AzureClient implements AzureApi {
@@ -57,10 +66,13 @@ export class AzureClient implements AzureApi {
     const subscription = await this.arm<{ subscriptionId: string; tenantId: string; state: string }>(`/subscriptions/${this.config.subscriptionId}`, '2022-12-01', signal);
     return { tenantId: claims.tid ?? '', subscriptionId: subscription.subscriptionId, subscriptionTenantId: subscription.tenantId, state: subscription.state };
   }
-  async databaseState(signal: AbortSignal) {
-    const c = this.config, server = c.dbHost.split('.')[0];
-    const result = await this.arm<{ sku?: { name?: string }; properties?: { state?: string; highAvailability?: { mode?: string } } }>(`/subscriptions/${c.subscriptionId}/resourceGroups/${c.resourceGroup}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${server}`, '2024-08-01', signal);
-    return { state: result.properties?.state ?? 'Unknown', highAvailability: result.properties?.highAvailability?.mode ?? 'unknown', tier: result.sku?.name ?? 'unknown' };
+  async databaseState(signal: AbortSignal): Promise<DatabaseStatus> {
+    const c = this.config, { resource, apiVersion } = DATABASE_ENGINES[c.dbEngine];
+    const r = await this.arm<DatabaseResource>(`/subscriptions/${c.subscriptionId}/resourceGroups/${c.resourceGroup}/providers/${resource}/${c.dbHost.split('.')[0]}`, apiVersion, signal);
+    // Flexible Server와 Cosmos vCore는 같은 정보를 다른 이름으로 준다.
+    const p = r.properties ?? {};
+    return { state: p.state ?? p.clusterStatus ?? 'Unknown', version: p.version ?? p.serverVersion ?? 'unknown',
+      highAvailability: p.highAvailability?.mode ?? p.highAvailability?.targetMode ?? 'unknown', tier: r.sku?.name ?? p.compute?.tier ?? 'unknown' };
   }
   getApp(signal: AbortSignal) { return this.apps.containerApps.get(this.config.resourceGroup, this.config.containerApp, { abortSignal: signal }); }
   putApp(app: ContainerApp, signal: AbortSignal) { return this.apps.containerApps.beginCreateOrUpdateAndWait(this.config.resourceGroup, this.config.containerApp, app, { abortSignal: signal }); }
@@ -69,6 +81,20 @@ export class AzureClient implements AzureApi {
     catch (error) { if (notFound(error)) return undefined; throw error; }
   }
   async deactivateRevision(name: string, signal: AbortSignal) { await this.apps.containerAppsRevisions.deactivateRevision(this.config.resourceGroup, this.config.containerApp, name, { abortSignal: signal }); }
+  // validateRequest가 init_command 요청을 initJob이 있는 설정에만 통과시킨다.
+  private get initJob() { return this.config.initJob!; }
+  getJob(signal: AbortSignal) { return this.apps.jobs.get(this.config.resourceGroup, this.initJob, { abortSignal: signal }); }
+  putJob(job: Job, signal: AbortSignal) { return this.apps.jobs.beginCreateOrUpdateAndWait(this.config.resourceGroup, this.initJob, job, { abortSignal: signal }); }
+  async startJob(container: JobExecutionContainer, signal: AbortSignal) {
+    const execution = await this.apps.jobs.beginStartAndWait(this.config.resourceGroup, this.initJob, { template: { containers: [container] }, abortSignal: signal });
+    if (!execution.name) throw new Error('Container Apps 작업 실행 이름을 받지 못했습니다.');
+    return execution.name;
+  }
+  async jobExecutionStatus(execution: string, signal: AbortSignal) {
+    // 시작 직후에는 실행이 아직 조회되지 않을 수 있다 (404 → 아직 모름).
+    try { return (await this.apps.jobExecution(this.config.resourceGroup, this.initJob, execution, { abortSignal: signal })).status; }
+    catch (error) { if (notFound(error)) return undefined; throw error; }
+  }
   async manifest(digest: string, signal: AbortSignal) {
     try {
       const properties = await this.registry.getArtifact(repositoryName(this.config), digest).getManifestProperties({ abortSignal: signal });

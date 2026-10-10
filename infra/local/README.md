@@ -2,7 +2,7 @@
 
 팀원용 [담당 범위·연동 인수인계](HANDOFF.md): 완료 항목, 호출 예제, 검증 결과와 남은 통합 작업.
 
-PostgreSQL 17 + sample app + Cloudflare Quick Tunnel. Requires Docker Compose v2,
+PostgreSQL 17 + sample app + Cloudflare Quick Tunnel (default) or an operator-configured direct endpoint. Requires Docker Compose,
 Node.js 22+ and outbound HTTPS. Java is built inside Docker; host Java is optional.
 
 ## Run today: app + PostgreSQL
@@ -53,7 +53,7 @@ curl -sS http://127.0.0.1:9101/deployments/dep_localdemo/logs
 Implements `packages/contracts/openapi/target.yaml` v0.1.1:
 
 - POST returns 202; poll GET every 2–3 seconds. Status: pending → deploying → ready/failed.
-- `ready` requires the public Tunnel URL + `health_path` to return **200**, without following redirects.
+- `ready` requires the advertised Tunnel/direct URL + `health_path` to return **200**, without following redirects.
 - The engine supplies a prebuilt `image`; both targets should run the same image.
 - Legacy sample requests remain PostgreSQL-only. Explicit HTTP runtime supports PostgreSQL, MySQL and MongoDB; see [managed databases](../../docs/managed-databases.md).
 - App DB URL/user/password are set consistently with the managed PG service. Password
@@ -125,3 +125,44 @@ new project/ID. Removing that profile restores normal persistence. Do not overri
 SPRING_JPA_HIBERNATE_DDL_AUTO in the bug demo; environment variables override profiles.
 
 `node infra/local/smoke-databases.mjs` (from repository root) verifies real MySQL/MongoDB connectivity, authentication and restart persistence without a tunnel or AWS.
+
+## Direct endpoint and automatic startup
+
+Set `LOCAL_DELIVERY_MODE=direct`, `LOCAL_PUBLIC_URL=http://SERVER_IP:18080`,
+`LOCAL_APP_PORT=18080`, and (for access from other machines)
+`LOCAL_BIND_ADDRESS=0.0.0.0` in the target's environment. Bind defaults to
+`127.0.0.1`. The operator must configure routing, firewall and optional reverse
+proxy/TLS. Only the app port is published; DB and the loopback control API stay
+private. The target requires HTTP 200 **at the configured advertised URL** before
+reporting ready; redirects and invalid TLS certificates do not pass. The host must
+be able to reach that URL too. Direct mode does not start cloudflared or use its DNS
+fallback. It supports HTTP or HTTPS origins (no path/query/credentials).
+
+Set matching `LOCAL_DELIVERY_MODE=direct` and `LOCAL_PUBLIC_URL` on the engine.
+The engine accepts only that exact direct origin, not arbitrary URLs returned by
+an adapter. Runtime settings are server-side; API clients cannot choose host ports
+or bypass the endpoint allowlist. The engine and Docker target normally run on the
+same host (image builds must reach the target Docker daemon); remote control requires
+an existing secure transport, never a public port 9101.
+
+One direct endpoint permits one non-deleted deployment at a time, including a
+failed deployment that may still own resources. Delete it before deploying a new
+ID; a competing request returns 409 and cannot replace its containers. DELETE
+removes app/DB containers and the network but preserves the DB volume. A new ID
+gets a new isolated volume; this is not rolling deployment or automatic data reuse.
+
+Generated app/DB/tunnel services use `restart: unless-stopped`. Existing deployment
+Compose files need redeployment to acquire this setting. Docker starts the
+containers after host reboot; applications must retry DB connectivity or exit on
+startup failure so Docker can restart them. Compose `depends_on` is not a reboot
+readiness supervisor. A manually stopped container stays stopped. One-shot schema
+initialization is still explicitly run during deployment, not on each reboot.
+
+On a dedicated Linux server installed at `/opt/shakedown`, install the example
+`systemd/shakedown-local.service`, create `/etc/shakedown-local.env` (root-owned
+0600, `LOCAL_DATA_DIR=/var/lib/shakedown-local`, DB secret and endpoint settings),
+and run `systemctl enable --now docker shakedown-local`. The unit runs as root
+because it controls Docker; treat it as a privileged local service. It does not
+install or expose the engine. Adapt the paths/Node installation for other hosts.
+The persisted target records survive API restarts. `ready` is the last successful
+probe, not continuous monitoring or an SLA.

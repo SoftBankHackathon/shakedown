@@ -23,7 +23,7 @@ export const TARGETS: TargetInfo[] = [
 
 export const DEFAULT_TARGETS = TARGETS.filter((t) => t.default).map((t) => t.id);
 
-/** Selection with `id` turned on, kept in catalog order. Every available target can be selected together (UI mockup; the engine still answers 400 for more than one cloud). */
+/** Live selection with `id` turned on, kept in catalog order. Any clouds can go together: the engine builds once and copies the same digest to the others. */
 export function pickTarget(current: TargetName[], id: TargetName): TargetName[] {
   return TARGETS.filter((t) => t.id === id || current.includes(t.id)).map((t) => t.id);
 }

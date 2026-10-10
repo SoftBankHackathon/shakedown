@@ -1,4 +1,5 @@
 """Local and pre-provisioned cloud (AWS, Azure, GCP) orchestration. Never fabricates a shakedown verdict."""
+import re
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import json
@@ -38,6 +39,15 @@ ENV_FIX_TARGETS = {'gcp'}
 ENV_FIXES = {'SPRING_PROFILES_ACTIVE=demo,session-jdbc': {'SPRING_PROFILES_ACTIVE': 'demo,session-jdbc'}}
 VERDICT_RANK = ('PASS', 'WARN', 'BLOCKED')
 
+def fix_cloud(options):
+    """엔진이 env 수정안을 적용할 클라우드. Local과 자동 수정 대상 클라우드 하나만 배포했을 때 그 이름, 아니면 None.
+
+    d['options']를 넘긴다. 엔진이 배포한 대상만 들어 있다(d['targets']에는 비교 모드의 외부 대상도 섞인다)."""
+    # 수정 재배포는 Local과 그 클라우드 하나만 다시 비교한다. 클라우드가 둘 이상이면 다른 클라우드의 결과가 덮이므로 받지 않는다.
+    # 시운전 힌트(can_apply_env)와 수정 적용(apply_fix)이 이 함수 하나로 같은 규칙을 쓴다.
+    clouds = [name for name in options if name != 'local']
+    return clouds[0] if 'local' in options and len(clouds) == 1 and clouds[0] in ENV_FIX_TARGETS else None
+
 class Endpoint(Model):
     name: str = Field(min_length=1, max_length=40, pattern=r'^[a-z][a-z0-9_-]*$')
     url: str
@@ -50,9 +60,13 @@ class Endpoint(Model):
             raise ValueError('Use an HTTP(S) origin without credentials, path, query or fragment.')
         return value.rstrip('/')
 
+# 시운전 원인 보고서 언어. 시운전 요청에 그대로 넘긴다(shakedown.yaml ShakedownRequest.lang).
+ReportLang = Literal['ko', 'en', 'ja']
+
 class CompareRequest(Model):
     baseline: Endpoint
     candidate: Endpoint
+    lang: ReportLang = 'en'
 
 
 class DeployRequest(Model):
@@ -60,8 +74,10 @@ class DeployRequest(Model):
     shakedown: bool = False
     autofix: bool = False
     comparison: Endpoint | None = None
-    targets: list[Literal['local', 'aws', 'azure', 'gcp']] = Field(default_factory=lambda: ['local'], min_length=1, max_length=3)
+    # Local과 세 클라우드를 한 번에 고를 수 있다. 빌드는 첫 클라우드에서 한 번, 나머지는 같은 digest를 복사한다.
+    targets: list[Literal['local', 'aws', 'azure', 'gcp']] = Field(default_factory=lambda: ['local'], min_length=1, max_length=4)
     options: dict[str, dict] = Field(default_factory=dict)
+    lang: ReportLang = 'en'
 
 class DeploymentError(Exception):
     pass
@@ -78,6 +94,24 @@ class LocalRunner:
         # Deliberately fixed loopback destination; caller input cannot select an HTTP endpoint.
         from engine.https_client import target_address
         self.base = target_address('local', 'http://127.0.0.1:9101')
+
+    @staticmethod
+    def valid_url(value):
+        try:
+            parsed = urlsplit(value)
+            if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ('', '/'):
+                return False
+            configured = os.environ.get('LOCAL_PUBLIC_URL', '').rstrip('/')
+            if os.environ.get('LOCAL_DELIVERY_MODE', 'tunnel') == 'direct':
+                expected = urlsplit(configured)
+                return (expected.scheme in ('http', 'https') and bool(expected.hostname)
+                        and not expected.username and not expected.password
+                        and expected.path == '' and not expected.query and not expected.fragment
+                        and (parsed.scheme, parsed.hostname, parsed.port if parsed.port is not None else (443 if parsed.scheme == 'https' else 80))
+                        == (expected.scheme, expected.hostname, expected.port if expected.port is not None else (443 if expected.scheme == 'https' else 80)))
+            return parsed.scheme == 'https' and bool(re.fullmatch(r'[a-z0-9-]+\.trycloudflare\.com', parsed.hostname or '')) and parsed.port in (None, 443)
+        except (ValueError, TypeError):
+            return False
 
     @contextmanager
     def source(self, repo):
@@ -149,7 +183,7 @@ class ShakedownClient:
             raise DeploymentError('Shakedown request failed; check 127.0.0.1:9201. No PASS was recorded.') from None
 
 class DeploymentStore:
-    def __init__(self, path: Path, runner=None, poll_seconds=1, timeout=300, shakedown=None, shakedown_timeout=180, aws=None, azure=None, gcp=None):
+    def __init__(self, path: Path, runner=None, poll_seconds=1, timeout=300, shakedown=None, shakedown_timeout=180, aws=None, azure=None, gcp=None, ready_timeouts=None):
         from engine.https_client import HttpsClient
         self.https = HttpsClient()
         self.shakedown = shakedown or ShakedownClient()
@@ -165,6 +199,10 @@ class DeploymentStore:
         self.azure = azure or AzureRunner()
         self.gcp = gcp or GcpRunner()
         self.poll_seconds, self.timeout = poll_seconds, timeout
+        # 대상별 준비 대기(초). 없으면 timeout. GCP 어댑터는 Cloud Run이 인스턴스를 늦게 잡는 날(2026-10-10, 4분 15초)을 견디려고
+        # 420초를 넘기면 0대로 내린 뒤(최대 19초) failed를 낸다. 엔진이 먼저 끊으면 늘린 어댑터 한도가 소용없고 정리 중인 서비스에
+        # DELETE가 겹치므로 420 + 19초에 폴링 여유를 더해 450초. 넘긴 값은 이 기본값 위에 덮어써 GCP 예외가 빠지지 않게 한다.
+        self.ready_timeouts = {'gcp': 450, **(ready_timeouts or {})}
         self.pool = ThreadPoolExecutor(max_workers=2)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS deployments (id TEXT PRIMARY KEY, project_id TEXT, status TEXT, payload TEXT)')
@@ -205,10 +243,6 @@ class DeploymentStore:
         targets = [name for name in TARGETS if name in request.targets]
         if len(targets) != len(request.targets):
             raise DeploymentError('Targets must be unique.')
-        clouds = [name for name in targets if name in CLOUDS]
-        if 'gcp' in clouds and len(clouds) > 1:
-            # GCP는 다른 클라우드 저장소로 같은 digest를 복사(publish)하지 않는다. 지금은 Local + GCP만 받는다.
-            raise DeploymentError('GCP cannot be combined with another cloud yet; select Local and GCP only.')
         if request.comparison and (len(targets) != 1 or request.comparison.name in targets):
             raise DeploymentError('An external comparison requires one deployed target and a distinct name.')
         if request.shakedown != (request.comparison is not None or len(targets) >= 2):
@@ -246,7 +280,8 @@ class DeploymentStore:
         if architecture: self.aws.validate_architecture(architecture, project)
         d = dict(id='dep_' + uuid.uuid4().hex, project_id=project.id, created=time.time(), status='queued',
                  shakedown=request.shakedown, autofix=False, options=options, targets={name: {'status':'pending','label': TARGETS[name]['label']} for name in targets},
-                 architecture=architecture, architecture_plan_id=request.architecture_plan_id, attempts=[], timings={}, ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0))
+                 architecture=architecture, architecture_plan_id=request.architecture_plan_id, attempts=[], timings={}, ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0),
+                 lang=request.lang)
         try:
             with self.connect() as db:
                 db.execute('INSERT INTO deployments VALUES (?,?,?,?)', (d['id'], project.id, d['status'], json.dumps(d)))
@@ -268,13 +303,12 @@ class DeploymentStore:
 
     def wait_ready(self, d, target):
         runner = self.runner_for(target)
-        deadline = time.monotonic() + (max(self.timeout, 2700) if target == 'aws' and d.get('architecture') else self.timeout)
+        deadline = time.monotonic() + (max(self.timeout, 2700) if target == 'aws' and d.get('architecture') else self.ready_timeouts.get(target, self.timeout))
         while time.monotonic() < deadline:
             state = runner.call('GET', '/deployments/' + self.target_id(d, target))
             if state.get('status') == 'failed': raise DeploymentError(f'{target} deployment failed; inspect its logs.')
             if state.get('status') == 'ready':
-                url = urlsplit(state.get('url', ''))
-                valid = (url.scheme == 'https' and (url.hostname or '').endswith('.trycloudflare.com')) if target == 'local' else runner.valid_url(state.get('url', ''))
+                valid = LocalRunner.valid_url(state.get('url', '')) if target == 'local' else runner.valid_url(state.get('url', ''))
                 # 사용자 도메인 HTTPS 바인딩이 준비돼 있으면 공개 주소를 그 주소로 바꾼다. 없으면 기존 검증(valid)대로 처리한다.
                 from engine.https_client import HttpsError
                 try:
@@ -353,8 +387,9 @@ class DeploymentStore:
             candidates = [Endpoint(name=t, url=d['targets'][t]['url']) for t in others] or ([comparison] if comparison else [])
             if candidates:
                 # 외부 비교 URL은 엔진이 배포한 게 아니라서 env를 바꿀 수 없다. 엔진이 Local과 함께 배포한 클라우드 하나만 자동 수정 대상이다.
+                # 수정안 env(SPRING_PROFILES_ACTIVE=demo,session-jdbc)는 Spring 샘플 전용이라 runtime 프로젝트는 대상이 아니다.
                 results = self.compare(d, Endpoint(name=baseline, url=d['targets'][baseline]['url']), candidates, project,
-                                       can_apply_env=len(others) == 1 and others[0] in ENV_FIX_TARGETS)
+                                       can_apply_env=fix_cloud(d['options']) is not None and not project.runtime)
                 # Close only the managed clouds that failed; with an external comparison the deployed side is judged.
                 failed = {name for name, result in results.items() if result == 'BLOCKED'}
                 if comparison and failed: failed = set(submitted)
@@ -377,9 +412,9 @@ class DeploymentStore:
         # GCP 어댑터는 서비스 하나만 다룬다. 옛 차단 배포를 고치면 더 새 배포가 쓰는 서비스를 덮어쓴다.
         if self.list(d['project_id'])[0]['id'] != id:
             raise Busy('Only the latest deployment of this project can be fixed; start a new deployment instead.')
-        cloud = next((name for name in d['options'] if name != 'local'), None)
+        cloud = fix_cloud(d['options'])
         target = d['targets'].get(cloud, {})
-        if 'local' not in d['options'] or cloud not in ENV_FIX_TARGETS or 'request' not in target:
+        if cloud is None or 'request' not in target:
             raise DeploymentError('Fixes are applied only to a Local + GCP deployment made by the engine; apply this fix manually.')
         if len(d['attempts']) != 1:
             raise DeploymentError('This deployment was already fixed once; start a new deployment.')
@@ -454,7 +489,7 @@ class DeploymentStore:
             raise DeploymentError('Use two distinct environments with distinct names.')
         d = dict(id='dep_' + uuid.uuid4().hex, project_id=project.id, created=time.time(), status='queued',
                  shakedown=True, autofix=False, options={}, targets={}, attempts=[], timings={},
-                 ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0), mode='comparison')
+                 ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0), mode='comparison', lang=request.lang)
         try:
             with self.connect() as db:
                 db.execute('INSERT INTO deployments VALUES (?,?,?,?)', (d['id'], project.id, d['status'], json.dumps(d)))
@@ -504,11 +539,15 @@ class DeploymentStore:
         # 시운전은 이번 실행의 AI 비용만 알려 준다. 앞 회차·앞 클라우드 비용을 잃지 않게 시작 전까지의 합에 더한다.
         cost_before = d['ai_cost']
         hints = {'uses_server_session': project.analysis.uses_server_session}
+        if project.runtime:
+            # 시운전은 시나리오가 없으면 기준 환경을 둘러본다. runtime 프로젝트는 사용자가 정한 상태 확인 경로도 열게 알려 준다.
+            hints['health_path'] = project.runtime['health_path']
         if can_apply_env:
             # 시운전은 이 힌트가 있을 때만 env 수정안을 자동 적용 가능(auto_applicable)으로 표시한다.
             hints['can_apply_env'] = True
+        # 수정 적용 뒤 2회차도 배포 기록의 같은 언어로 보고한다. lang이 생기기 전에 저장된 기록은 영어.
         body = dict(deployment_id=d['id'], project_id=project.id, baseline=baseline.model_dump(),
-                    candidates=[candidate.model_dump()], hints=hints)
+                    candidates=[candidate.model_dump()], hints=hints, lang=d.get('lang', 'en'))
         started = time.monotonic()
         state = self.shakedown.call('POST', '/shakedowns', body)
         id = state.get('shakedown_id', '')

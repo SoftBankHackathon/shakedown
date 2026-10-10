@@ -4,12 +4,16 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile, chmod, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { publicHealth } from './probe.mjs';
+import { publicHealth, directHealth } from './probe.mjs';
+import { deliveryConfig, applyDelivery } from './delivery.mjs';
 const exec = promisify(execFile);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const literal = value => String(value).replaceAll('$', () => '$$');
 
-export function composeSpec(request, password, secrets = {}) {
+export function composeSpec(request, password, secrets = {}, delivery = deliveryConfig()) {
+  return applyDelivery(baseComposeSpec(request,password,secrets),request,delivery);
+}
+function baseComposeSpec(request, password, secrets) {
   if (request.runtime) {
     const r=validateRuntime(request.runtime), managed=managedDatabase(r.database.mode);
     const env={...r.env,...secrets,PORT:String(r.port),TZ:request.options?.tz??'UTC',
@@ -55,7 +59,8 @@ export function composeSpec(request, password, secrets = {}) {
 }
 
 export class DockerRuntime {
-  constructor(root, { password, secrets = {}, timeout = 170000 } = {}) {
+  constructor(root, { password, secrets = {}, timeout = 170000, delivery = deliveryConfig() } = {}) {
+    this.delivery = delivery; this.singleDeployment = delivery.mode === 'direct';
     this.root = root; this.password = password; this.secrets = secrets; this.timeout = timeout;
   }
   dir(id) { return path.join(this.root, id); }
@@ -85,7 +90,7 @@ export class DockerRuntime {
   }
   async deploy(request, log) {
     const secrets = this.resolved(request);
-    const spec = composeSpec(request, secrets.SPRING_DATASOURCE_PASSWORD || this.password, secrets);
+    const spec = composeSpec(request, secrets.SPRING_DATASOURCE_PASSWORD || this.password, secrets, this.delivery);
     this.generatedSecrets=Object.entries(spec.services.db?.environment??{}).filter(([k])=>/password/i.test(k)).map(([,v])=>String(v).replaceAll('$$','$'));
     await mkdir(this.dir(request.deployment_id), { recursive: true, mode: 0o700 });
     const file = path.join(this.dir(request.deployment_id), 'compose.json');
@@ -104,6 +109,15 @@ export class DockerRuntime {
     } catch (e) {
       // exec errors may contain environment data; expose only redacted diagnostics.
       throw new Error(this.redact(e.stderr || e.message));
+    }
+    if (this.delivery.mode === 'direct') {
+      const target = this.delivery.publicUrl + request.health_path;
+      const deadline = Date.now() + 90000;
+      while (Date.now() < deadline) {
+        if (await directHealth(target)) return {url:this.delivery.publicUrl,instances:1,info:{runtime:'Docker Compose',delivery:'direct',database:request.runtime?.database.mode??'postgres',replicas:'1',sticky_sessions:'false'}};
+        await sleep(2000);
+      }
+      throw new Error('Direct URL health check timed out; check public URL, firewall and routing');
     }
     const deadline = Date.now() + 90000;
     let url;
@@ -126,7 +140,7 @@ export class DockerRuntime {
   async logs(id) {
     const lines = [];
     const spec=JSON.parse(await readFile(path.join(this.dir(id),'compose.json'),'utf8'));
-    for (const service of ['app',...(spec.services.db?['db']:[]),'tunnel']) {
+    for (const service of ['app',...(spec.services.db?['db']:[]),...(spec.services.tunnel?['tunnel']:[])]) {
       const output = await this.command(id, ['logs', '--no-color', '--no-log-prefix', '--timestamps', '--tail', '200', service]);
       for (const line of output.split('\n').filter(Boolean)) {
         const match = line.match(/^(\S+)\s+(.*)$/);

@@ -26,3 +26,13 @@ export function publicHealth(url, timeout = 5000) {
     request.on('close',()=>clearTimeout(timer));
   });
 }
+
+// Only called with the operator-configured direct origin, never request input.
+// No redirects, alternate DNS resolvers or TLS verification bypass.
+export async function directHealth(url, timeout=5000) {
+ try {
+  const response=await fetch(url,{redirect:'manual',signal:AbortSignal.timeout(timeout)});
+  await response.body?.cancel();
+  return response.status===200;
+ }catch{return false;}
+}

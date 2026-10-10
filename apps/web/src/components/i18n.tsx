@@ -84,9 +84,9 @@ const DICT = {
   },
   "project.autofix": { ko: "차단 뒤 수정 적용", en: "Fix after a block", ja: "ブロック後の修正適用" },
   "project.autofixDesc": {
-    ko: "GCP에서 로그인이 풀려 차단되면, 원인 보고서의 버튼으로 세션 저장소를 공유 DB(session-jdbc)로 바꿔 같은 이미지로 GCP만 다시 배포하고 다시 시운전합니다. 코드와 데이터는 건드리지 않습니다.",
-    en: "If GCP is blocked because the login is lost, a button in the cause report moves sessions to the shared database (session-jdbc), redeploys only GCP with the same image and reruns the shakedown. Never code or data.",
-    ja: "GCP でログインが切れてブロックされたら、原因レポートのボタンでセッション保存先を共有 DB(session-jdbc)に変え、同じイメージで GCP だけ再デプロイして再試運転します。コードとデータは変更しません。",
+    ko: "Local과 GCP만 골라 배포했을 때 GCP에서 로그인이 풀려 차단되면, 원인 보고서의 버튼으로 세션 저장소를 공유 DB(session-jdbc)로 바꿔 같은 이미지로 GCP만 다시 배포하고 다시 시운전합니다. 코드와 데이터는 건드리지 않습니다.",
+    en: "When only Local and GCP are deployed and GCP is blocked because the login is lost, a button in the cause report moves sessions to the shared database (session-jdbc), redeploys only GCP with the same image and reruns the shakedown. Never code or data.",
+    ja: "Local と GCP だけを配備して GCP でログインが切れてブロックされたら、原因レポートのボタンでセッション保存先を共有 DB(session-jdbc)に変え、同じイメージで GCP だけ再デプロイして再試運転します。コードとデータは変更しません。",
   },
   "project.deployments": { ko: "배포 기록", en: "Deployments", ja: "デプロイ履歴" },
   "project.noDeployments": { ko: "아직 배포가 없습니다.", en: "No deployments yet.", ja: "デプロイはまだありません。" },
@@ -101,7 +101,7 @@ const DICT = {
   "dep.aiCost": { ko: "AI 비용", en: "AI cost", ja: "AI コスト" },
   "dep.calls": { ko: "호출 {n}회", en: "{n} calls", ja: "{n} 回呼び出し" },
   "live.needLocal": { ko: "배포 대상을 하나 이상 선택하세요.", en: "Select at least one deployment target.", ja: "配備先を選択してください。" },
-  "live.scope": { ko: "Local / AWS / GCP / Azure 배포를 지원합니다. 클라우드는 미리 준비한 스택(AWS ECS, GCP Cloud Run·Cloud SQL, Azure Container Apps)과 DB 초기화가 필요합니다. 여러 클라우드를 함께 고를 수 있고, Local과 함께 고르면 클라우드마다 Local 기준으로 자동 비교합니다. 세션 고정은 GCP·Azure만 지원합니다. GCP에서 로그인이 풀려 차단되면 원인 보고서의 버튼으로 세션 저장소 수정(session-jdbc)을 적용해 다시 시운전할 수 있습니다.", en: "Deploy to Local / AWS / GCP / Azure. Clouds need a prepared stack (AWS ECS, GCP Cloud Run with Cloud SQL, Azure Container Apps) and an initialized database. Select as many clouds as you like; with Local selected, each cloud is compared against Local. Sticky sessions are GCP/Azure-only. If GCP is blocked because the login is lost, apply the session-store fix (session-jdbc) from the cause report and rerun.", ja: "Local / AWS / GCP / Azure に配備できます。クラウドは事前に用意したスタック(AWS ECS、GCP Cloud Run と Cloud SQL、Azure Container Apps)と DB 初期化が必要です。複数のクラウドを同時に選べ、Local と一緒に選ぶとクラウドごとに Local 基準で比較します。セッション固定は GCP・Azure のみ対応です。GCP でログインが切れてブロックされたら、原因レポートのボタンでセッション保存先の修正(session-jdbc)を適用して再試運転できます。" },
+  "live.scope": { ko: "Local / AWS / Azure / GCP 배포를 지원합니다. 클라우드는 미리 준비한 스택(AWS ECS, Azure Container Apps, GCP Cloud Run과 Cloud SQL)과 DB 초기화가 필요합니다. 두 대상 이상을 선택하면 첫 대상(Local을 고르면 Local)을 기준으로 나머지 클라우드마다 자동 비교합니다. 세션 고정은 Azure와 GCP만 지원합니다. Local과 GCP만 골랐을 때 GCP에서 로그인이 풀려 차단되면 원인 보고서의 버튼으로 세션 저장소 수정(session-jdbc)을 적용해 다시 시운전할 수 있습니다.", en: "Deploy to Local / AWS / Azure / GCP. Clouds need a prepared stack (AWS ECS, Azure Container Apps, GCP Cloud Run with Cloud SQL) and an initialized database. Selecting two or more compares each remaining cloud against the first target (Local when selected). Sticky sessions are Azure and GCP only. With only Local and GCP selected, if GCP is blocked because the login is lost, apply the session-store fix (session-jdbc) from the cause report and rerun.", ja: "Local / AWS / Azure / GCP に配備できます。クラウドは事前に用意したスタック(AWS ECS、Azure Container Apps、GCP Cloud Run と Cloud SQL)と DB 初期化が必要です。2 つ以上選ぶと最初の対象(Local を選んだら Local)を基準に残りのクラウドごとに比較します。セッション固定は Azure と GCP のみ対応です。Local と GCP だけを選んだとき GCP でログインが切れてブロックされたら、原因レポートのボタンでセッション保存先の修正(session-jdbc)を適用して再試運転できます。" },
   "live.candidate": { ko: "비교할 기존 환경 URL (선택)", en: "Existing candidate URL (optional)", ja: "既存の比較先 URL (任意)" },
   "live.compareHint": { ko: "Action 실행 시 새 로컬 배포와 이 주소를 비교합니다. 비우면 배포만 실행합니다.", en: "Action compares the new local deployment with this URL. Leave empty for deploy only.", ja: "Action で新しいローカル環境と比較します。空欄なら配備のみ。" },
   "live.compareTitle": { ko: "HTTP 시운전", en: "HTTP shakedown", ja: "HTTP 試運転" },
@@ -499,7 +499,8 @@ export function LangProvider({ children }: { children: ReactNode }) {
     try {
       wanted ??= localStorage.getItem("lang");
     } catch {}
-    if (wanted && wanted in LANGS) {
+    // in은 상속 속성(constructor 등)까지 참으로 본다. 화면 언어가 배포·비교 요청의 lang으로도 가므로 목록에 있는 값만 받는다.
+    if (wanted && Object.hasOwn(LANGS, wanted)) {
       setLangState(wanted as Lang);
       document.documentElement.lang = wanted;
     }
@@ -539,6 +540,11 @@ const TRANSLATORS = Object.fromEntries((Object.keys(LANGS) as Lang[]).map((l) =>
 
 export function useT() {
   return TRANSLATORS[useContext(LangContext).lang];
+}
+
+/** 지금 화면 언어. 배포·비교 요청에 넣어 시운전 보고서도 같은 언어로 받는다. */
+export function useLang(): Lang {
+  return useContext(LangContext).lang;
 }
 
 export function LangSwitcher() {

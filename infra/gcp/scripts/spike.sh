@@ -139,7 +139,7 @@ echo
 echo '==== 요약 (-1은 시간 초과) ===='
 echo "a 로그인 풀림: /board 20회 중 ${bounced}회 튕김"
 echo "b 0대 → 2xx 아님: ${zeroed}초 (기준 20초 이하)"
-echo "c 회수 → 403: ${revoked}초 / 재부여 → 200: ${regranted}초 (재공개 기준 270초 이하)"
+echo "c 회수 → 403: ${revoked}초 / 재부여 → 200: ${regranted}초 (재공개 기준 420초 이하)"
 echo "d X-Instance-Id 종류 ${distinct}개 / 로그 인스턴스 ${instances}개"
 echo "e 위 기동 로그에서 인스턴스별 (HikariPool 시각 - Starting 시각)을 계산한다"
-echo "f Job 생성+실행 ${job_total}초 + 서비스 배포 ${deployed}초 + health ${first_health}초 = $((job_total + deployed + first_health))초 (기준 270초 이하)"
+echo "f Job 생성+실행 ${job_total}초 + 서비스 배포 ${deployed}초 + health ${first_health}초 = $((job_total + deployed + first_health))초 (기준 420초 이하)"

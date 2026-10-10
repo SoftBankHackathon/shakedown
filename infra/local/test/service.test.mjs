@@ -139,3 +139,19 @@ for(const mode of ['mysql','mongodb'])test(`${mode} creates isolated database, m
  if(mode==='mongodb'){assert.equal(url.searchParams.get('authSource'),'app');assert.ok(spec.configs['mongo-init'].content.includes("role:'readWrite'"));}
  assert.throws(()=>composeSpec({runtime:{...r,database:{...r.database,bindings:{DATABASE_URL:'postgres_url'}}},image:'test'},'test'));
 });
+
+test('direct endpoint cannot be overwritten by another project, even after service recreation',async t=>{
+ const runtime={singleDeployment:true,async deploy(){return {url:'http://192.0.2.1:18080'};},async logs(){return [];},async remove(){}};
+ const {api,service,root}=await fixture(t,runtime);
+ await api('POST','/deployments',request);await service.settle();
+ const other={...request,project_id:'another',deployment_id:'dep_second'};
+ assert.equal((await api('POST','/deployments',other)).status,409);
+ const restarted=await createService({root,runtime});await new Promise(r=>restarted.server.listen(0,'127.0.0.1',r));
+ try {
+  const base=`http://127.0.0.1:${restarted.server.address().port}`;
+  const post=()=>fetch(base+'/deployments',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(other)});
+  assert.equal((await post()).status,409);
+  assert.equal((await fetch(base+'/deployments/dep_test1',{method:'DELETE'})).status,204);
+  assert.equal((await post()).status,202);await restarted.settle();
+ }finally{await new Promise(r=>restarted.server.close(r));}
+});

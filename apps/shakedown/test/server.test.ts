@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import { createShakedownServer, type Shakedown } from "../src/server.ts";
 import { defaultScenario } from "../src/scenario.ts";
 import { startFakeBoard } from "./fake-board.ts";
+import { startFakeApp, type FakeAppOptions } from "./fake-app.ts";
+import { answered, json, message, type Reply, type Seen } from "./fake-claude.ts";
 
 const servers: Server[] = [];
 const boards: Array<{ close: () => Promise<void> }> = [];
@@ -22,14 +24,21 @@ async function listen(server: Server): Promise<string> {
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
-// 접속 확인 대기는 테스트에서 짧게 둔다(기본 20초). AI는 기본으로 끈다 → 테스트가 진짜 API 키를 쓰지 않는다.
+// 접속 확인 대기는 테스트에서 짧게 둔다(기본 20초). AI(보고서·시나리오)는 기본으로 끈다 → 테스트가 진짜 API 키를 쓰지 않는다.
 const api = (options: Parameters<typeof createShakedownServer>[0] = {}) =>
-  listen(createShakedownServer({ reachWaitMs: 300, ai: {}, ...options }));
+  listen(createShakedownServer({ reachWaitMs: 300, ai: {}, aiScenario: {}, ...options }));
 
 async function board(options: { instances?: number; delayMs?: number } = {}) {
   const b = await startFakeBoard(options);
   boards.push(b);
   return b.url;
+}
+
+// 게시판이 아닌 앱(examples/http-node 모양). hits로 받은 요청을 본다.
+async function app(options: FakeAppOptions = {}) {
+  const a = await startFakeApp(options);
+  boards.push(a);
+  return a;
 }
 
 const request = (baseline: string, candidate: string, extra: Record<string, unknown> = {}) => ({
@@ -66,11 +75,10 @@ test("POST는 202와 running 상태를 바로 돌려주고, 끝나면 PASS", asy
   const { status, body } = await post(base, request(await board(), await board()));
   assert.equal(status, 202);
   assert.match(body.shakedown_id, /^sd_[0-9a-f]{10}$/);
+  // 시나리오가 요청에 없으면 기준 환경을 본 뒤에 고르므로 202 응답에는 아직 없다.
   assert.deepEqual(body, {
     shakedown_id: body.shakedown_id,
     status: "running",
-    scenario: defaultScenario,
-    scenario_source: "fallback",
     steps: [],
     ai_cost: { calls: 0, input_tokens: 0, output_tokens: 0, krw: 0 },
   });
@@ -79,6 +87,8 @@ test("POST는 202와 running 상태를 바로 돌려주고, 끝나면 PASS", asy
   assert.equal(done.status, "done");
   assert.equal(done.verdict?.status, "PASS");
   assert.equal(done.report, null);
+  // kty-board는 알려진 시나리오(기본 8단계)의 앞부분이 맞아서 그 시나리오로 돈다.
+  assert.deepEqual([done.scenario, done.scenario_source], [defaultScenario, "fallback"]);
   assert.equal(done.steps.length, 8);
   assert.equal(done.steps[0].candidate, "aws");
 });
@@ -142,11 +152,11 @@ test("기준 환경이 계속 Cloudflare 530(터널 미준비)이면 1단계 실
 });
 
 test("기준 환경이 접속 확인 뒤 잠깐 Cloudflare 530을 내도(200 → 530 → 200) 시운전을 끝낸다", async () => {
-  // Cloudflare 엣지 흉내: 두 번째 요청(접속 확인 다음, 1단계 GET /join)만 앱에 넘기지 않고 530으로 답한다.
+  // Cloudflare 엣지 흉내: 세 번째 요청(접속 확인, 알려진 시나리오 확인 GET /join 다음의 1단계 GET /join)만 앱에 넘기지 않고 530으로 답한다.
   const app = new URL(await board());
   let hits = 0;
   const edge = await listen(createServer((req, res) => {
-    if (++hits === 2) return void res.writeHead(530, { server: "cloudflare", "content-type": "text/html" }).end("Error 1033");
+    if (++hits === 3) return void res.writeHead(530, { server: "cloudflare", "content-type": "text/html" }).end("Error 1033");
     req.pipe(httpRequest({ host: app.hostname, port: app.port, path: req.url, method: req.method, headers: req.headers }, (up) => {
       res.writeHead(up.statusCode ?? 502, up.headers);
       up.pipe(res);
@@ -203,11 +213,12 @@ test("시나리오를 넘기면 그 시나리오로 돌리고 saved로 표시한
   assert.equal(done.verdict?.status, "PASS");
 });
 
-test("scenario가 null이면 기본 시나리오(fallback)로 돌린다", async () => {
+test("scenario가 null이면 없는 것과 같게 기준 환경을 보고 고른다(kty-board면 기본 시나리오)", async () => {
   const base = await api();
   const { body } = await post(base, request(await board(), await board(), { scenario: null }));
-  assert.equal(body.scenario_source, "fallback");
+  assert.equal(body.scenario_source, undefined);
   const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.scenario_source, "fallback");
   assert.equal(done.steps.length, 8);
 });
 
@@ -356,4 +367,260 @@ test("마감이 가까우면 AI를 기다리다 판정을 잃지 않고 규칙 �
   assert.equal(done.status, "done");
   assert.equal(done.verdict?.status, "BLOCKED");
   assert.equal(done.report?.by, "rule");
+});
+
+test("게시판이 아닌 앱: 기준 환경을 GET으로만 둘러본 페이지로 규칙 시나리오를 만들어 PASS", async () => {
+  const [baseline, candidate] = [await app(), await app()];
+  const base = await api();
+  const { body } = await post(base, request(baseline.url, candidate.url, { hints: { health_path: "/healthz" } }));
+  const snapshots: Shakedown[] = [];
+  const done = await waitDone(base, body.shakedown_id, snapshots);
+  assert.equal(done.status, "done", done.error);
+  assert.equal(done.verdict?.status, "PASS");
+  assert.equal(done.scenario_source, "fallback");
+  assert.equal(done.scenario?.app_understanding, "Rule-based crawl of 2 pages (AI unavailable)");
+  assert.deepEqual(done.steps.map((d) => d.title), ["Open /", "Open /healthz"]);
+  // 엔진은 폴링할 때마다 scenario를 복사하고 steps 수와 비교한다. 단계가 보이기 시작하면 시나리오도 이미 있어야 한다.
+  for (const s of snapshots.filter((s) => s.steps.length > 0)) assert.deepEqual(s.scenario, done.scenario);
+  // 알려진 시나리오 확인(GET /join)과 둘러보기는 GET만 보낸다.
+  assert.ok(baseline.hits.every((h) => h.startsWith("GET ")), baseline.hits.join(", "));
+  assert.ok(candidate.hits.every((h) => h.startsWith("GET ")), candidate.hits.join(", "));
+});
+
+test("게시판이 아닌 앱: 비교 환경만 500이면 BLOCKED와 스택 중립 서버 오류 보고서", async () => {
+  const base = await api();
+  const { body } = await post(base, request((await app()).url, (await app({ status: 500 })).url));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.status, "done", done.error);
+  assert.equal(done.verdict?.status, "BLOCKED");
+  assert.equal(done.verdict?.first_divergence, 1);
+  assert.equal(done.report?.headline, "aws fails with a server error (HTTP 500)");
+  assert.equal(done.report?.fix?.option, "code_change");
+  assert.doesNotMatch(done.report?.fix?.native ?? "", /App Runner|application\.yml/);
+});
+
+test("게시판이 아닌 앱: 기준 환경에서 열리는 페이지가 하나도 없으면 failed와 이유", async () => {
+  const base = await api();
+  const { body } = await post(base, request((await app({ status: 503 })).url, (await app()).url, { hints: { health_path: "/healthz" } }));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.status, "failed");
+  assert.equal(done.error, "baseline local has no page to compare: / HTTP 503, /healthz HTTP 503");
+  assert.equal(done.scenario, undefined);
+  assert.deepEqual(done.steps, []);
+});
+
+const AI_KEY = "sk-ant-test-dummy";
+const aiSteps = (texts: string[]) => ({
+  app_understanding: "A JSON status endpoint that reports its language and DB.",
+  steps: [
+    { title: "Open the status", action: "visit", path: "/", form_action: null, link_text: null, fields: [], expect: { path_startswith: null, text_contains: texts } },
+    { title: "Open the health check", action: "visit", path: "/healthz", form_action: null, link_text: null, fields: [], expect: { path_startswith: null, text_contains: [] } },
+  ],
+});
+const aiReportBody = { headline: "AI headline", cause: "AI cause", evidence: ["e1"], fix: null, confidence: "medium" };
+
+/** 가짜 Claude: 받은 구조화 출력 스키마를 보고 시나리오 요청인지 보고서 요청인지 가려 답한다. */
+async function fakeClaude(scenarioReply: Reply) {
+  const seen: Seen[] = [];
+  const server = createServer(async (req, res) => {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    const entry = { method: req.method!, url: req.url!, headers: req.headers, body: JSON.parse(raw) };
+    seen.push(entry);
+    if (entry.body.output_config.format.schema.required[0] === "app_understanding") return scenarioReply(res, entry);
+    answered(aiReportBody)(res, entry);
+  });
+  return { baseURL: await listen(server), seen, scenarioCalls: () => seen.filter((s) => s.body.output_config.format.schema.required[0] === "app_understanding") };
+}
+
+test("AI 시나리오: 기준 환경에서 미리 돌려 통과하면 채택하고 scenario_source ai, 비용을 기록한다", async () => {
+  const claude = await fakeClaude(answered(aiSteps(["language"])));
+  const base = await api({ aiScenario: { apiKey: AI_KEY, baseURL: claude.baseURL } });
+  const { body } = await post(base, request((await app()).url, (await app()).url, { hints: { health_path: "/healthz" } }));
+  assert.equal(body.scenario, undefined);
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.status, "done", done.error);
+  assert.equal(done.verdict?.status, "PASS");
+  assert.deepEqual([done.scenario, done.scenario_source], [aiSteps(["language"]), "ai"]);
+  assert.deepEqual(done.ai_cost, { calls: 1, input_tokens: 1000, output_tokens: 500, krw: 19.6 });
+  // AI에게는 둘러본 페이지와 hints를 준다.
+  const prompt = JSON.parse(claude.seen[0].body.messages[0].content);
+  assert.deepEqual(prompt.pages.map((p: { path: string }) => p.path), ["/", "/healthz"]);
+  assert.deepEqual(prompt.hints, { health_path: "/healthz" });
+});
+
+test("AI 시나리오가 기준 환경에서 실패하면 버리고 규칙 둘러보기로 돌리되 AI 비용은 남긴다", async () => {
+  const claude = await fakeClaude(answered(aiSteps(["text that is not there"])));
+  const base = await api({ aiScenario: { apiKey: AI_KEY, baseURL: claude.baseURL } });
+  const { body } = await post(base, request((await app()).url, (await app()).url));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.status, "done", done.error);
+  assert.equal(done.scenario_source, "fallback");
+  assert.equal(done.scenario?.app_understanding, "Rule-based crawl of 1 page (AI unavailable)");
+  assert.equal(done.ai_cost.calls, 1);
+});
+
+test("AI 시나리오가 실패·거절이면 규칙 둘러보기로 돌린다", async () => {
+  for (const reply of [json(500, { type: "error", error: { type: "api_error", message: "boom" } }), json(200, message("{}", "refusal"))]) {
+    const claude = await fakeClaude(reply);
+    const base = await api({ aiScenario: { apiKey: AI_KEY, baseURL: claude.baseURL } });
+    const { body } = await post(base, request((await app()).url, (await app()).url));
+    const done = await waitDone(base, body.shakedown_id);
+    assert.equal(done.status, "done", done.error);
+    assert.equal(done.scenario_source, "fallback");
+    assert.equal(claude.scenarioCalls().length, 1);
+  }
+});
+
+test("AI 시나리오 비용과 AI 보고서 비용을 합쳐 ai_cost에 넣는다", async () => {
+  const claude = await fakeClaude(answered(aiSteps(["language"])));
+  const ai = { apiKey: AI_KEY, baseURL: claude.baseURL };
+  const base = await api({ ai, aiScenario: ai });
+  // 미리 돌려 보기는 기준 환경에서만 하므로 비교 환경은 처음부터 깨진 채로 둔다(접속 확인은 500도 닿은 것으로 본다).
+  const { body } = await post(base, request((await app()).url, (await app({ status: 500 })).url, { hints: { health_path: "/healthz" } }));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.verdict?.status, "BLOCKED", done.error);
+  assert.equal(done.report?.by, "ai");
+  assert.deepEqual(done.ai_cost, { calls: 2, input_tokens: 2000, output_tokens: 1000, krw: 39.2 });
+});
+
+test("알려진 시나리오가 맞으면(kty-board) AI 시나리오를 부르지 않는다", async () => {
+  const claude = await fakeClaude(answered(aiSteps(["language"])));
+  const base = await api({ aiScenario: { apiKey: AI_KEY, baseURL: claude.baseURL } });
+  const { body } = await post(base, request(await board(), await board()));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.verdict?.status, "PASS");
+  assert.equal(done.scenario_source, "fallback");
+  assert.equal(claude.seen.length, 0);
+});
+
+test("마감까지 남은 시간이 모자라면 AI 시나리오를 부르지 않고 규칙 둘러보기로 돌린다", async () => {
+  const claude = await fakeClaude(answered(aiSteps(["language"])));
+  const base = await api({ deadlineMs: 30_000, aiScenario: { apiKey: AI_KEY, baseURL: claude.baseURL } });
+  const { body } = await post(base, request((await app()).url, (await app()).url));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.status, "done", done.error);
+  assert.equal(done.scenario_source, "fallback");
+  assert.equal(claude.seen.length, 0);
+});
+
+test("같은 배포(deployment_id)의 다음 시운전은 처음 고른 시나리오를 그대로 쓴다(비교 대상마다·수정 뒤 2회차)", async () => {
+  // 가짜 Claude: 첫 시나리오 요청에만 답하고, 그 뒤로는 500. 다시 고르면 규칙 둘러보기로 바뀌어 회차끼리 비교가 어긋난다.
+  let calls = 0;
+  const claude = await fakeClaude((res, seen) => (++calls === 1 ? answered(aiSteps(["language"])) : json(500, { type: "error", error: { type: "api_error", message: "boom" } }))(res, seen));
+  const base = await api({ aiScenario: { apiKey: AI_KEY, baseURL: claude.baseURL } });
+  const baseline = (await app()).url;
+  const first = await waitDone(base, (await post(base, request(baseline, (await app()).url, { hints: { health_path: "/healthz" } }))).body.shakedown_id);
+  assert.equal(first.scenario_source, "ai");
+
+  const again = await waitDone(base, (await post(base, request(baseline, (await app()).url, { hints: { health_path: "/healthz" } }))).body.shakedown_id);
+  assert.deepEqual([again.scenario, again.scenario_source], [first.scenario, "ai"]);
+  // 다시 부르지 않았으니 이번 시운전의 AI 비용은 0이다(엔진이 회차마다 더한다).
+  assert.deepEqual(again.ai_cost, { calls: 0, input_tokens: 0, output_tokens: 0, krw: 0 });
+  assert.equal(claude.scenarioCalls().length, 1);
+
+  // 다른 배포는 새로 고른다.
+  const other = await waitDone(base, (await post(base, { ...request(baseline, (await app()).url), deployment_id: "dep_other" })).body.shakedown_id);
+  assert.equal(other.scenario_source, "fallback");
+  assert.equal(claude.scenarioCalls().length, 2);
+});
+
+test("기준 환경이 고른 시나리오를 통과하지 못했으면 다음 시운전에서 다시 쓰지 않는다", async () => {
+  // 기준 환경: /flaky는 처음 한 번(미리 돌려 보기)만 200이고 그 뒤로 500이다.
+  let flaky = 0;
+  const baseline = await listen(createServer((req, res) => {
+    if (req.url === "/flaky") return void res.writeHead(++flaky === 1 ? 200 : 500).end("flaky");
+    res.writeHead(200, { "content-type": "application/json" }).end(`{"language":"node"}`);
+  }));
+  const scenario = {
+    app_understanding: "A flaky page.",
+    steps: [{ title: "Open the flaky page", action: "visit", path: "/flaky", form_action: null, link_text: null, fields: [], expect: { path_startswith: null, text_contains: [] } }],
+  };
+  let calls = 0;
+  const claude = await fakeClaude((res, seen) => (++calls === 1 ? answered(scenario) : json(500, { type: "error", error: { type: "api_error", message: "boom" } }))(res, seen));
+  const base = await api({ aiScenario: { apiKey: AI_KEY, baseURL: claude.baseURL } });
+  const first = await waitDone(base, (await post(base, request(baseline, (await app()).url))).body.shakedown_id);
+  assert.equal(first.status, "failed");
+  assert.match(first.error ?? "", /^baseline local failed at step 1 \(Open the flaky page\)/);
+
+  const again = await waitDone(base, (await post(base, request(baseline, (await app()).url))).body.shakedown_id);
+  assert.equal(again.status, "done", again.error);
+  assert.equal(again.scenario_source, "fallback");
+});
+
+test("다시 쓴 시나리오가 기준 환경에서 실패하면 버리고, 그다음 시운전은 새로 고른다", async () => {
+  // 기준 환경: /flaky는 처음 두 번(미리 돌려 보기, 1회차 본 실행)만 200이고 그 뒤로 500이다.
+  let flaky = 0;
+  const baseline = await listen(createServer((req, res) => {
+    if (req.url === "/flaky") return void res.writeHead(++flaky <= 2 ? 200 : 500).end("flaky");
+    res.writeHead(200, { "content-type": "application/json" }).end(`{"language":"node"}`);
+  }));
+  const scenario = {
+    app_understanding: "A flaky page.",
+    steps: [{ title: "Open the flaky page", action: "visit", path: "/flaky", form_action: null, link_text: null, fields: [], expect: { path_startswith: null, text_contains: [] } }],
+  };
+  let calls = 0;
+  const claude = await fakeClaude((res, seen) => (++calls === 1 ? answered(scenario) : json(500, { type: "error", error: { type: "api_error", message: "boom" } }))(res, seen));
+  const base = await api({ aiScenario: { apiKey: AI_KEY, baseURL: claude.baseURL } });
+  const run = async () => waitDone(base, (await post(base, request(baseline, (await app()).url))).body.shakedown_id);
+  assert.equal((await run()).scenario_source, "ai");
+  assert.equal((await run()).status, "failed");
+  const third = await run();
+  assert.equal(third.status, "done", third.error);
+  assert.equal(third.scenario_source, "fallback");
+});
+
+test("lang이 ko·en·ja가 아니면 400", async () => {
+  const base = await api();
+  for (const lang of ["fr", "KO", 1, ""]) {
+    const res = await post(base, request("http://127.0.0.1:1", "http://127.0.0.1:2", { lang }));
+    assert.equal(res.status, 400, JSON.stringify(lang));
+    assert.deepEqual(res.body, { error: "invalid request", detail: "lang must be ko, en or ja" });
+  }
+});
+
+test("lang: ko면 규칙 보고서를 한국어로 쓰고, 판정 요약은 영어 그대로 둔다", async () => {
+  const base = await api();
+  const { body } = await post(base, request(await board(), await board({ instances: 2 }), { lang: "ko" }));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.report?.headline, "aws에서 로그인이 풀립니다: 요청이 서로 다른 인스턴스로 갑니다");
+  assert.equal(done.verdict?.summary, "Step 4 (Sign in) led to different pages (/board on local, / on aws).");
+});
+
+test("lang이 없거나 null이면 영어", async () => {
+  const base = await api();
+  for (const extra of [{}, { lang: null }]) {
+    const { body } = await post(base, request(await board(), await board({ instances: 2 }), extra));
+    assert.equal((await waitDone(base, body.shakedown_id)).report?.headline, "Login is lost on aws: requests land on different instances");
+  }
+});
+
+test("lang: ja면 AI 시나리오와 AI 보고서에 일본어로 쓰라고 지시한다", async () => {
+  const claude = await fakeClaude(answered(aiSteps(["language"])));
+  const ai = { apiKey: AI_KEY, baseURL: claude.baseURL };
+  const base = await api({ ai, aiScenario: ai });
+  const { body } = await post(base, request((await app()).url, (await app({ status: 500 })).url, { lang: "ja", hints: { health_path: "/healthz" } }));
+  const done = await waitDone(base, body.shakedown_id);
+  assert.equal(done.verdict?.status, "BLOCKED", done.error);
+  assert.equal(claude.seen.length, 2);
+  for (const seen of claude.seen) assert.match(seen.body.system, /Japanese/);
+  // AI에게 힌트로 주는 규칙 보고서도 같은 언어다.
+  assert.equal(JSON.parse(claude.seen[1].body.messages[0].content).rule_report.headline, "aws でサーバーエラーが発生します（HTTP 500）");
+});
+
+test("같은 배포라도 lang이 다르면 그 언어로 시나리오를 새로 고른다", async () => {
+  let calls = 0;
+  const claude = await fakeClaude((res, seen) => {
+    calls++;
+    answered(aiSteps(["language"]))(res, seen);
+  });
+  const base = await api({ aiScenario: { apiKey: AI_KEY, baseURL: claude.baseURL } });
+  const baseline = (await app()).url;
+  for (const lang of ["ko", "ja", "ja"]) {
+    const { body } = await post(base, request(baseline, (await app()).url, { lang }));
+    assert.equal((await waitDone(base, body.shakedown_id)).scenario_source, "ai");
+  }
+  // ko 한 번, ja 한 번만 부르고 두 번째 ja는 다시 쓴다.
+  assert.equal(calls, 2);
+  assert.deepEqual(claude.scenarioCalls().map((s) => /Korean/.test(s.body.system) ? "ko" : "ja"), ["ko", "ja"]);
 });

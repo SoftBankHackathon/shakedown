@@ -23,11 +23,10 @@
 
 ## 상태: 초안
 
-Target API는 **v0.1.2 통합 제안**, Engine API는 **v0.1.5 통합 제안**, Shakedown API는 **v0.1.1 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
+Target API는 **v0.1.5 제안**, Engine API는 **v0.1.7 통합 제안**, Shakedown API는 **v0.1.3 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
 
 바뀔 가능성이 있는 것
 - 상태 확인 방식: 지금은 GET 폴링(2~3초 간격). 콜백(`callback_url`) 방식이 추가될 수 있음
-- 보고서 언어: 시운전 요청에 `lang`(ko, en, ja) 추가 검토 중
 - 같은 프로젝트 동시 배포: 지금은 409로 거절. 필요하면 대기열 방식으로 바뀔 수 있음
 - 대상 이름: 지금은 `local`, `aws`, `gcp` 구현. `onprem`, `azure`는 예정
 - 비교 대상이 3개 이상일 때의 결과 형식: `StepDiff`에 `baseline`, `candidate`를 넣어 두었고 세부는 미정
@@ -39,6 +38,13 @@ Target API는 **v0.1.2 통합 제안**, Engine API는 **v0.1.5 통합 제안**, 
 
 ## 변경 이력
 
+- **Engine v0.1.7 (2026-10-10, 제안. 팀 채널 공유·담당자 확인 TBD, 버전 번호는 다른 브랜치의 v0.1.6과 머지 때 정리)**: 배포 요청과 비교 요청에 `lang`(`ko`·`en`·`ja`, 기본 `en`) 추가. 배포 기록(`Deployment.lang`)에 저장하고 그 배포의 모든 시운전 요청(수정 적용 뒤 2회차 포함)에 Shakedown v0.1.3의 `lang`으로 넘김. 목록 밖 값은 400. 기존 기록에는 없음(en으로 봄). 명세는 `components/schemas/ReportLang` 하나를 가리키고, 타입은 `DeployRequest.lang`·`CompareRequest.lang`·`Deployment.lang`.
+- **Shakedown v0.1.3 (2026-10-10, 제안. 팀 채널 공유 TBD)**: 요청에 `lang`(`ko`·`en`·`ja`, 기본 `en`) 추가. 규칙 보고서의 headline·cause·evidence 문장과 fix.description, AI 보고서, AI 시나리오의 단계 제목·app_understanding을 그 언어로 씀. 경로·hop·단계 제목·검사 오류 글자, fix의 target·option·value·native, verdict.summary·StepDiff.reasons는 그대로(영어). 목록 밖 값은 400. 응답 키는 그대로. 타입 `ReportLang`(src/index.ts) 추가.
+- **Shakedown v0.1.2 (2026-10-10, 제안. 팀 채널 공유 TBD)**: 요청에 `scenario`가 없으면 시운전이 기준 환경을 보고 고름: 알려진 시나리오(kty-board 기본, GET으로 앞부분만 확인, `fallback`) → AI 시나리오(둘러본 결과로 작성하고 기준 환경에서 미리 돌려 통과한 것만, `ai`) → 규칙 둘러보기(GET만, `fallback`). 그래서 202 응답과 그 직후 조회에는 `scenario`·`scenario_source`가 없고 고른 뒤 채움. 같은 `deployment_id`·같은 baseline이면 처음 고른 시나리오를 다시 씀. 기준 환경에서 열리는 페이지가 없으면 `failed`. `hints`에 알려진 키 `health_path` 추가. 규칙 보고서의 데이터 유실·서버 오류 수정안 문구를 스택 중립으로 바꾸고, 로그인 풀림은 비교 환경에 로그인 POST가 있을 때만 판정. 요청·응답 키는 그대로.
+- **Engine v0.1.6 (2026-10-10, 제안. 팀 채널 공유 TBD)**: 배포 요청 targets에서 gcp도 다른 클라우드(aws·azure)와 함께 보낼 수 있음(v0.1.4의 400 제거). 빌드는 첫 클라우드에서 한 번이고, gcp는 그 이미지(ECR 또는 설정된 ACR)를 Artifact Registry로 같은 digest 그대로 복사해 배포. local과 세 클라우드를 한 번에 고를 수 있게 maxItems 3 → 4. 수정 적용(applyFix)은 지금처럼 Local+GCP 하나일 때만(클라우드 둘 이상이면 400). 요청·응답 형식은 그대로라 타입·fixture는 바꾸지 않음.
+- **Target v0.1.5 (2026-10-10, 제안. 팀 채널 공유 TBD)**: GCP 준비 한도 예외. GCP 어댑터는 420초(7분)를 넘기면 0대로 내린 뒤(최대 19초) failed로 바꾸고, 엔진은 GCP를 450초(7분 30초) 기다림. 다른 대상의 대기는 그대로. 2026-10-10 13:19 Cloud Run이 최소 인스턴스 2대를 확보하는 데 4분 15초가 걸려 옛 한도 270초를 넘긴 일 때문. 요청·응답 형식은 그대로라 타입·fixture는 바꾸지 않음.
+- **Target v0.1.4 (2026-10-10, 제안. 팀 채널 공유 TBD)**: GCP 구현 제약에 범용 런타임(`runtime`, http-runtime.v1) 줄 추가. GCP는 DB 모드 none·postgres만, init_command는 Cloud Run Job, postgres_url 바인딩 미지원, secret_refs는 db_password만, 포트 자유, Cloud Run 예약 환경변수 이름 400. 요청·응답 형식과 타입은 그대로. `infra/gcp/README.md` "범용 런타임" 절 참고.
+- **Target v0.1.3 (2026-10-10, 제안. 팀 채널 공유 TBD)**: `DeployRequest.architecture`를 AWS 전용에서 클라우드별 실행 카탈로그로. `version` enum에 `gcp-architecture.v1`·`azure-architecture.v1` 추가(각 어댑터는 자기 버전만 받고 다른 버전은 400, Local에는 보내지 않음). GCP 구현 제약에 계획 배포 줄 추가: CPU·메모리·대수·자동 확장만 적용, DB 고가용성은 계획만, session-jdbc 필수, sticky 금지, 등급별 DB 연결 풀. 타입은 `TargetDeployRequest.architecture.version`만 넓힘. `infra/gcp/README.md` "계획 배포" 절 참고.
 - **Engine v0.1.5 (2026-10-10, 제안. 팀 채널 공유·담당자 확인 TBD)**: `POST /api/deployments/{id}/fix`(operationId applyFix, 본문 없음) 추가. blocked 배포의 자동 적용 가능 env 수정안을 한 번 적용해 클라우드만 같은 digest·같은 본문에 env를 더해 새 배포 ID로 다시 배포하고 2회차 시운전(blocked → fixing → 결과). 지금은 엔진이 배포한 Local+GCP만, AWS는 실계정 검증 전이라 400. 최신 배포가 아니거나 blocked가 아니면 409. `TargetState`에 `deployment_id`(Target API에 실제로 쓴 ID)와 `request`(받아들여진 Target API 본문) 추가, 1회차의 `applied_fix` 기록, `ai_cost`는 회차 합. fixture에 `targets.*.deployment_id`·`request` 예시 추가. blocked는 더 이상 완전한 종료 상태가 아님(`TERMINAL_STATUSES` 주석).
 - **Shakedown v0.1.1 (2026-10-09, 제안. 팀 채널 공유·담당자 확인 TBD)**: `Report.fix.option`에 `env` 추가(value는 `KEY=VALUE` 한 개, 같은 이미지에 env만 더해 재배포). 로그인 풀림 규칙 수정안을 스티키 세션에서 `SPRING_PROFILES_ACTIVE=demo,session-jdbc`(세션을 공유 DB에)로 바꿈. 요청 `hints`에 알려진 키 `can_apply_env` 추가: true일 때만 그 수정안이 `auto_applicable: true`이고, AI 보고서도 그 fix를 바꾸지 않음. 요청·응답 형식은 그대로.
 - **fixture `deployment-blocked-then-fixed.json` (2026-10-09)**: 1회차 수정안·applied_fix를 위 env 수정안으로 교체하고, 비교 대상을 엔진이 실제로 env 수정을 적용하는 gcp로 바꿈(키 `aws`→`gcp`, 라벨 `GCP Cloud Run`, `project.json`의 ports·targets도 같이). 2회차가 스티키를 켜지 않도록 `sticky_sessions`를 모두 false로, `targets.gcp.info.session`을 `jdbc`로, `autofix`를 false(사용자가 수정 적용을 누르는 흐름)로 맞추고, 엔진이 남기는 `deployment_id`·`request`를 넣음. 단계·판정·원인 문장은 그대로(시뮬레이션 기록이라 URL은 localhost).
@@ -59,3 +65,9 @@ Claude 연결 상태/연결 테스트/해제 및 이미지 계획/비동기 빌�
 ### v0.1.3 제안 — AWS 아키텍처 판단
 
 ArchitectureRequest/Plan/Tier와 계획 생성·최근 조회·선택 저장 API를 추가합니다. `aws-architecture.v1`은 규칙/AI 출처와 근거, 누락 입력, 차단 항목, 세 프리셋을 반환합니다. 계획은 DB에 저장되지만 인프라 적용은 하지 않으며 `deployment.ready=false`입니다. PR #11의 Claude 연결에 의존하는 후속 변경입니다.
+
+- 2026-10-10 local direct delivery: no request/response schema change. Operator
+  configuration can replace the Tunnel origin with one exact HTTP(S) origin;
+  readiness still requires that advertised URL to return 200. One direct endpoint
+  reserves one deployment until DELETE (409 for another ID), with persistent DB
+  volume semantics unchanged. Generated services restart unless explicitly stopped.

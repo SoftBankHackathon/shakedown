@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { BsArrowRight, BsBoxSeam, BsChevronDown, BsChevronRight, BsGithub, BsInfoCircle, BsShieldCheck } from "react-icons/bs";
-import { useT } from "@/components/i18n";
+import { useLang, useT } from "@/components/i18n";
 import { ProviderIcon } from "@/components/provider-icon";
 import { Alert, Badge, Breadcrumb, ConnectionStrip, Elapsed, PageHeading, Stat, Toggle } from "@/components/ui";
 import { api, ApiError, DONE, errorMessage, formatSeconds, MOCK, type Deployment, type Project, type TargetName } from "@/lib/api";
@@ -16,6 +16,7 @@ const progressKey = (d: Deployment) =>
 
 export default function Home() {
   const t = useT();
+  const lang = useLang();
   const router = useRouter();
   const [comparisonUrl, setComparisonUrl] = useState("");
   const [repo, setRepo] = useState("");
@@ -80,7 +81,7 @@ export default function Home() {
       const project = await api.createProject({ repo: repo.trim(), targets });
       name = project.name;
       setProjects((cur) => (cur.some((p) => p.id === project.id) ? cur : [project, ...cur]));
-      const deployment = await api.deploy(project.id, { shakedown: MOCK || targets.length >= 2 || !!comparisonUrl.trim(), autofix: MOCK, options: {}, targets, comparison: !MOCK && targets.length === 1 && comparisonUrl.trim() ? { name: "candidate", url: comparisonUrl.trim() } : undefined });
+      const deployment = await api.deploy(project.id, { shakedown: MOCK || targets.length >= 2 || !!comparisonUrl.trim(), autofix: MOCK, options: {}, targets, comparison: !MOCK && targets.length === 1 && comparisonUrl.trim() ? { name: "candidate", url: comparisonUrl.trim() } : undefined, lang });
       setActions((cur) => [deployment, ...cur.filter((d) => d.id !== deployment.id)]);
     } catch (err) {
       // The engine owns the "one running deployment per project" rule and answers 409.

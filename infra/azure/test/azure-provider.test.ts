@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import type { ContainerApp, Revision } from '@azure/arm-appcontainers';
+import type { ContainerApp, Job, JobExecutionContainer, Revision } from '@azure/arm-appcontainers';
 import type { AzureApi, Identity, Manifest, LogRow } from '../src/azure-client.js';
 import { AzureProvider, revisionName } from '../src/azure-provider.js';
 import { configSchema } from '../src/config.js';
@@ -18,12 +18,15 @@ class FakeAzure implements AzureApi {
   actions: string[] = []; puts: ContainerApp[] = []; queries: string[] = [];
   identityValue: Identity = { tenantId: config.tenantId, subscriptionId: config.subscriptionId, subscriptionTenantId: config.tenantId, state: 'Enabled' };
   dbState = 'Ready'; readyReplicas?: number;
+  // 초기화 작업: 실행은 두 번째 조회부터 끝난 것으로 본다
+  job: Mutable<Job> = { location: 'koreacentral', identity: { type: 'UserAssigned', userAssignedIdentities: { '/identity': {} } }, configuration: { triggerType: 'Manual', replicaTimeout: 600, secrets: [{ name: 'db-password', keyVaultUrl: config.dbPasswordSecretUri, identity: '/identity' }] }, template: { containers: [{ name: 'init', image: 'old' }] } };
+  jobPuts: Job[] = []; jobStarts: JobExecutionContainer[] = []; jobResult = 'Succeeded'; executions = new Map<string, number>();
   manifestValue: Manifest | undefined = { architecture: 'amd64', operatingSystem: 'linux', multiArch: false };
   app: Mutable<ContainerApp> = { location: 'koreacentral', configuration: { secrets: [{ name: 'db-password', keyVaultUrl: config.dbPasswordSecretUri, identity: '/identity' }] }, template: { containers: [{ name: 'app', image: 'old', resources: { cpu: 0.5, memory: '1Gi' } }] } };
   revisions = new Map<string, Mutable<Revision> & { polls: number }>();
   revisionImage?: string; neverReady = false; streamFails = false;
   async identity() { this.actions.push('identity'); return this.identityValue; }
-  async databaseState() { return { state: this.dbState, highAvailability: 'Disabled', tier: 'Standard_B1ms' }; }
+  async databaseState() { return { state: this.dbState, version: '17', highAvailability: 'Disabled', tier: 'Standard_B1ms' }; }
   async getApp() { return structuredClone(this.app) as ContainerApp; }
   async putApp(app: ContainerApp) {
     this.actions.push(app.configuration?.ingress ? 'put:open' : 'put:closed'); this.puts.push(structuredClone(app));
@@ -46,6 +49,10 @@ class FakeAzure implements AzureApi {
     return structuredClone(revision) as Revision;
   }
   async deactivateRevision(name: string) { this.actions.push('deactivate'); Object.assign(this.revisions.get(name)!, { active: false, replicas: 0, trafficWeight: 0 }); }
+  async getJob() { return structuredClone(this.job) as Job; }
+  async putJob(job: Job) { this.actions.push('put:job'); this.jobPuts.push(structuredClone(job)); Object.assign(this.job, structuredClone(job)); return this.getJob(); }
+  async startJob(container: JobExecutionContainer) { this.actions.push('start:job'); this.jobStarts.push(structuredClone(container)); const name = `exec-${this.executions.size + 1}`; this.executions.set(name, 0); return name; }
+  async jobExecutionStatus(name: string) { const polls = this.executions.get(name)! + 1; this.executions.set(name, polls); return polls >= 2 ? this.jobResult : 'Running'; }
   async manifest() { return this.manifestValue; }
   async streamLogs(): Promise<LogRow[]> {
     if (this.streamFails) throw new Error('stream down');
@@ -58,8 +65,8 @@ class FakeAzure implements AzureApi {
     return this.app.configuration?.ingress && active ? 200 : 404;
   }
 }
-function setup(t: { mock: { method: Function } }) {
-  const api = new FakeAzure(); const provider = new AzureProvider(config, api, 1);
+function setup(t: { mock: { method: Function } }, c = config) {
+  const api = new FakeAzure(); const provider = new AzureProvider(c, api, 1);
   const fetched: string[] = [];
   t.mock.method(globalThis, 'fetch', async (url: URL, options: RequestInit) => {
     assert.equal(options.redirect, 'manual'); assert.ok(!('Cookie' in (options.headers ?? {})));
@@ -149,7 +156,7 @@ test('stop turns ingress off, deactivates the active revision and confirms the p
   await provider.stop(line => logs.push(line));
   assert.deepEqual(api.actions.filter(a => a !== 'identity'), ['put:closed', 'deactivate']);
   assert.equal(fetched.at(-1), '/:404');
-  assert.ok(logs[0].includes('PostgreSQL and Log Analytics retained'));
+  assert.ok(logs[0].includes('database and Log Analytics retained'));
   // 이미 닫힌 상태에서 다시 불러도 바꾸는 것 없이 성공
   api.actions.length = 0;
   await provider.stop(() => {});
@@ -240,11 +247,86 @@ test('runtimes this stack cannot serve are rejected before any Azure change', as
     const request = requestSchema.parse({ deployment_id: 'dep_bad', project_id: config.projectId, image, port: 8080, health_path: '/', options: { replicas: 1 }, runtime: { ...runtime, ...patch } });
     assert.throws(() => provider.validate(request), (e: Error) => e.message.length > 0);
   };
-  attempt({ database: { mode: 'mysql', name: 'app', bindings: { DB_PASS: 'password' } } });                 // MySQL 스택 없음
+  attempt({ database: { mode: 'mysql', name: 'app', bindings: { DB_PASS: 'password' } } });                 // PostgreSQL 스택에 MySQL 프로젝트
   attempt({ database: { ...runtime.database, name: 'other_db' } });                                          // 준비된 DB 이름만
-  attempt({ database: { ...runtime.database, bindings: { DATABASE_URL: 'postgres_url' } } });               // 비밀번호가 든 URL은 만들 수 없음
-  attempt({ secret_refs: { TOKEN: 'api_token' } });                                                          // Key Vault에는 db_password뿐
-  attempt({ init_command: ['sh', '-c', 'migrate'] });                                                        // 초기화는 schema-init 작업으로
+  attempt({ database: { ...runtime.database, bindings: { DATABASE_URL: 'postgres_url' } } });               // 이 설정에는 db-url 비밀이 없음
+  attempt({ secret_refs: { TOKEN: 'api_token' } });                                                          // 설정 secrets에 등록되지 않은 참조
+  attempt({ init_command: ['sh', '-c', 'migrate'] });                                                        // 이 설정에는 initJob이 없음
   assert.ok(!requestSchema.safeParse({ deployment_id: 'dep_bad', project_id: config.projectId, image, port: 8080, health_path: '/', runtime: { ...runtime, version: 'other' } }).success);
   assert.deepEqual(api.puts, []);
+});
+
+// 다른 엔진 스택: 호스트·URL 비밀·추가 비밀·초기화 작업이 있는 설정
+const stack = (engine: 'mysql' | 'mongodb', host: string) => configSchema.parse({ ...config,
+  dbEngine: engine, dbHost: host, dbName: 'app', initJob: 'sd-init',
+  dbUrlSecretUri: 'https://sd-kv-replace.vault.azure.net/secrets/db-url', secrets: { api_token: 'https://sd-kv-replace.vault.azure.net/secrets/api-token' } });
+const mysql = stack('mysql', 'sd-my-replace.mysql.database.azure.com'), mongodb = stack('mongodb', 'sd-mongo-replace.global.mongocluster.cosmos.azure.com');
+const deployWith = async (t: Parameters<typeof setup>[0], c: typeof mysql, patch: Record<string, unknown>) => {
+  const { api, provider } = setup(t, c);
+  const r = requestSchema.parse({ deployment_id: 'dep_eng', project_id: c.projectId, image, port: 8080, health_path: '/', options: { replicas: 1 }, runtime: { ...runtime, ...patch } });
+  const result = await provider.deploy(r, AbortSignal.timeout(5_000), () => {});
+  const env = Object.fromEntries(api.puts[0].template!.containers![0].env!.map(e => [e.name, e.value ?? `secretRef:${e.secretRef}`]));
+  return { api, provider, result, env, secrets: api.puts[0].configuration!.secrets! };
+};
+
+test('a MySQL stack maps JDBC and URL bindings; the URL comes from the Key Vault db-url secret the adapter never reads', async t => {
+  const { api, result, env, secrets } = await deployWith(t, mysql, { database: { mode: 'mysql', name: 'app', bindings: { DB_HOST: 'host', DB_PORT: 'port', JDBC_URL: 'jdbc_url', DB_PASS: 'password', DATABASE_URL: 'mysql_url' } } });
+  assert.deepEqual(env, { APP_MODE: 'demo', PORT: '8080', TZ: 'UTC', DB_HOST: mysql.dbHost, DB_PORT: '3306',
+    JDBC_URL: `jdbc:mysql://${mysql.dbHost}:3306/app?sslMode=REQUIRED`, DB_PASS: 'secretRef:db-password', DATABASE_URL: 'secretRef:db-url', DB_PASSWORD_REF: 'secretRef:db-password' });
+  assert.deepEqual(secrets.map(s => [s.name, s.keyVaultUrl]), [['db-password', mysql.dbPasswordSecretUri], ['db-url', mysql.dbUrlSecretUri]]);
+  assert.equal(result.info.database, 'Azure MySQL Flexible 17');
+  assert.deepEqual(api.actions.filter(a => a !== 'identity'), ['put:open']);
+});
+
+test('a MongoDB stack serves only the mongodb_url and name bindings', async t => {
+  const { env, secrets } = await deployWith(t, mongodb, { database: { mode: 'mongodb', name: 'app', bindings: { MONGODB_URL: 'mongodb_url', DB_NAME: 'name' } }, secret_refs: {} });
+  assert.deepEqual(env, { APP_MODE: 'demo', PORT: '8080', TZ: 'UTC', DB_NAME: 'app', MONGODB_URL: 'secretRef:db-url' });
+  assert.deepEqual(secrets.map(s => s.name), ['db-password', 'db-url']);
+  const provider = new AzureProvider(mongodb, new FakeAzure(), 1);
+  for (const bindings of [{ MONGODB_URL: 'mongodb_url', DB_HOST: 'host' }, { MONGODB_URL: 'mongodb_url', DB_PASS: 'password' }]) {
+    assert.throws(() => provider.validate(requestSchema.parse({ deployment_id: 'dep_bad', project_id: mongodb.projectId, image, port: 8080, health_path: '/', runtime: { ...runtime, secret_refs: {}, database: { mode: 'mongodb', name: 'app', bindings } } })), { statusCode: 400 });
+  }
+  // PostgreSQL 프로젝트는 MongoDB 스택에 올 수 없다
+  assert.throws(() => provider.validate(requestSchema.parse({ deployment_id: 'dep_bad', project_id: mongodb.projectId, image, port: 8080, health_path: '/', runtime: { ...runtime, secret_refs: {} } })), /mongodb/);
+});
+
+test('an external database uses only registered Key Vault secrets; none reports no database', async t => {
+  const external = await deployWith(t, mysql, { database: { mode: 'external', name: 'app', bindings: {} }, secret_refs: { DATABASE_URL: 'api_token' } });
+  assert.deepEqual(external.env, { APP_MODE: 'demo', PORT: '8080', TZ: 'UTC', DATABASE_URL: 'secretRef:ref-api-token' });
+  assert.deepEqual(external.secrets.map(s => [s.name, s.keyVaultUrl]), [['db-password', mysql.dbPasswordSecretUri], ['ref-api-token', mysql.secrets.api_token]]);
+  assert.equal(external.result.info.database, 'external (app-defined)');
+  const none = await deployWith(t, mysql, { database: { mode: 'none', name: 'app', bindings: {} }, secret_refs: {} });
+  assert.equal(none.result.info.database, 'none');
+  assert.deepEqual(none.secrets.map(s => s.name), ['db-password']);
+  assert.throws(() => new AzureProvider(mysql, new FakeAzure(), 1).validate(requestSchema.parse({ deployment_id: 'dep_bad', project_id: mysql.projectId, image, port: 8080, health_path: '/', runtime: { ...runtime, database: { mode: 'external', name: 'app', bindings: {} }, secret_refs: { X: 'unregistered' } } })), { statusCode: 400 });
+});
+
+test('init_command runs once in the Container Apps job with the same image and env before the app changes; a failed run stops the deploy', async t => {
+  const { api, provider: again, env } = await deployWith(t, mysql, { database: { mode: 'mysql', name: 'app', bindings: { DB_PASS: 'password', DATABASE_URL: 'mysql_url' } }, init_command: ['node', 'migrate.js', '--up'] });
+  // 작업에는 비밀 목록만 넣고, 이미지·명령·환경변수는 이번 실행에만 넘긴다
+  assert.deepEqual(api.actions.filter(a => a !== 'identity'), ['put:job', 'start:job', 'put:open']);
+  const init = api.jobStarts[0];
+  assert.equal(init.image, image); assert.deepEqual(init.command, ['node']); assert.deepEqual(init.args, ['migrate.js', '--up']);
+  assert.deepEqual(Object.fromEntries(init.env!.map(e => [e.name, e.value ?? `secretRef:${e.secretRef}`])), env);
+  assert.deepEqual(api.jobPuts[0].configuration!.secrets!.map(s => s.name), ['db-password', 'db-url']);
+  // 비밀 목록이 같으면 다음 실행은 작업을 다시 갱신하지 않는다
+  api.actions.length = 0;
+  await again.deploy(requestSchema.parse({ deployment_id: 'dep_eng3', project_id: mysql.projectId, image, port: 8080, health_path: '/', runtime: { ...runtime, database: { mode: 'mysql', name: 'app', bindings: { DB_PASS: 'password', DATABASE_URL: 'mysql_url' } }, init_command: ['node', 'migrate.js'] } }), AbortSignal.timeout(5_000), () => {});
+  assert.deepEqual(api.actions.filter(a => a !== 'identity'), ['start:job', 'put:open']);
+  const failed = new FakeAzure(); failed.jobResult = 'Failed';
+  const provider = new AzureProvider(mysql, failed, 1);
+  const r = requestSchema.parse({ deployment_id: 'dep_eng2', project_id: mysql.projectId, image, port: 8080, health_path: '/', runtime: { ...runtime, database: { mode: 'mysql', name: 'app', bindings: { DB_PASS: 'password' } }, init_command: ['sh', '-c', 'exit 1'] } });
+  await assert.rejects(provider.deploy(r, AbortSignal.timeout(5_000), () => {}), /Failed/);
+  assert.deepEqual(failed.puts, []);
+});
+
+test('config ties the host suffix to the engine and keeps the stack secret names reserved', () => {
+  const base = JSON.parse(readFileSync(new URL('../config.example.json', import.meta.url), 'utf8'));
+  assert.ok(!configSchema.safeParse({ ...base, dbEngine: 'mysql' }).success);                                              // postgres 호스트에 mysql
+  assert.ok(!configSchema.safeParse({ ...base, dbEngine: 'mongodb', dbHost: 'x.mysql.database.azure.com' }).success);
+  assert.ok(configSchema.safeParse({ ...base, dbEngine: 'mongodb', dbHost: 'x.mongocluster.cosmos.azure.com' }).success);
+  assert.ok(!configSchema.safeParse({ ...base, secrets: { db_password: base.dbPasswordSecretUri } }).success);
+  assert.ok(!configSchema.safeParse({ ...base, secrets: { token: 'https://other.example.com/secrets/x' } }).success);
+  // 비밀 이름으로 바꾸면 겹치는 참조(ref-api-token 두 개)는 설정에서 막는다
+  assert.ok(!configSchema.safeParse({ ...base, secrets: { API_TOKEN: base.dbPasswordSecretUri, 'api-token': base.dbPasswordSecretUri } }).success);
 });

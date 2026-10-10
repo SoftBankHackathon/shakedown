@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Engine API
-  version: 0.1.5
+  version: 0.1.7
   description: |
-    > **상태: 통합 제안 (v0.1.5, 2026-10-10)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 통합 제안 (v0.1.7, 2026-10-10)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     엔진(apps/engine, 김도경)이 구현하고 대시보드(apps/web, 서동옥)가 호출하는 API.
@@ -115,7 +115,7 @@ paths:
     post:
       operationId: deploy
       summary: Action 버튼 (One Action)
-      description: Local 및 사전 구성된 AWS ECS·GCP Cloud Run 배포 지원(클라우드는 한 번에 하나). 두 대상이면 shakedown=true 필수. 한 대상의 shakedown=true는 comparison URL 필수. 클라우드 BLOCKED 시 관리 대상 클라우드 배포만 DELETE하며 traffic_blocked는 차단 확인 결과. autofix는 false만 지원. 차단 뒤 수정 적용(POST /api/deployments/{deployment_id}/fix)은 엔진이 배포한 Local+GCP만 가능하고 AWS·외부 URL은 400. comparison은 기존 외부 환경이며 배포·삭제하지 않음. deployed는 시운전 미실행, promoted는 검사 통과이며 실제 트래픽 승격을 의미하지 않음.
+      description: Local 및 사전 구성된 AWS ECS·Azure Container Apps·GCP Cloud Run 배포 지원(클라우드를 여러 개 고르면 첫 클라우드에서 한 번 빌드하고 나머지는 같은 digest를 복사). 두 대상 이상이면 shakedown=true 필수. 한 대상의 shakedown=true는 comparison URL 필수. 클라우드 BLOCKED 시 관리 대상 클라우드 배포만 DELETE하며 traffic_blocked는 차단 확인 결과. autofix는 false만 지원. 차단 뒤 수정 적용(POST /api/deployments/{deployment_id}/fix)은 엔진이 배포한 Local+GCP만 가능하고 AWS·외부 URL·클라우드 둘 이상은 400. comparison은 기존 외부 환경이며 배포·삭제하지 않음. deployed는 시운전 미실행, promoted는 검사 통과이며 실제 트래픽 승격을 의미하지 않음.
       parameters:
         - { name: project_id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -127,10 +127,10 @@ paths:
                 targets:
                   type: array
                   minItems: 1
-                  maxItems: 3
+                  maxItems: 4
                   uniqueItems: true
                   default: [local]
-                  description: "첫 대상(local을 고르면 local)이 기준이고 나머지 클라우드를 하나씩 비교. gcp는 다른 클라우드(aws·azure)와 함께 보내면 400"
+                  description: "첫 대상(local을 고르면 local)이 기준이고 나머지 클라우드를 하나씩 비교. 빌드는 한 번. 클라우드가 있으면 첫 클라우드(aws, azure, gcp 순)가 빌드해 자기 저장소에 올리고, local은 그 이미지를, 나머지 클라우드(gcp 포함)는 자기 저장소로 같은 digest 그대로 복사(publish)한 이미지를 배포. 클라우드가 없으면 local이 빌드"
                   items: { type: string, enum: [local, aws, azure, gcp] }
                 architecture_plan_id: { type: string, pattern: "^arch_[a-f0-9]{32}$", description: "최신 선택 설계 ID. AWS 필수, replicas 직접 지정 금지. 실행 시 저장소 근거 재검증." }
                 shakedown: { type: boolean, default: false }
@@ -140,6 +140,7 @@ paths:
                   type: object
                   description: "대상 이름 → TargetOptions (target.yaml 참고)"
                   additionalProperties: true
+                lang: { $ref: "#/components/schemas/ReportLang" }
       responses:
         "202":
           description: 접수된 배포
@@ -173,6 +174,7 @@ paths:
               properties:
                 baseline: { $ref: "#/components/schemas/Endpoint" }
                 candidate: { $ref: "#/components/schemas/Endpoint" }
+                lang: { $ref: "#/components/schemas/ReportLang" }
       responses:
         "202":
           description: 비교 접수
@@ -219,7 +221,7 @@ paths:
         blocked 배포의 1회차 보고서 `fix`가 엔진이 적용할 수 있는 env 수정안일 때만 동작한다
         (`auto_applicable: true`, 대상이 이 배포의 클라우드, 엔진 허용 목록의 값. 지금은 `SPRING_PROFILES_ACTIVE=demo,session-jdbc`).
         - 상태 흐름: blocked → fixing → shakedown → promoted | warned | blocked | failed
-        - 배포당 1번. Local+GCP처럼 엔진이 배포한 Local과 클라우드가 있는 배포만. AWS는 실계정 검증 전이라 지금은 400
+        - 배포당 1번. Local+GCP처럼 엔진이 배포한 Local과 클라우드 하나만 있는 배포만(클라우드를 둘 이상 고른 배포는 400). AWS는 실계정 검증 전이라 지금은 400
         - Local은 그대로 두고 클라우드만 1회차와 같은 이미지 digest·같은 본문에 `env`만 더해 새 배포 ID(`dep_` + 32자리 hex)로 다시 배포
         - 새 ID는 `targets[cloud].deployment_id`에 기록하고, 그 뒤 조회·로그·DELETE는 이 ID로 함
         - 적용한 수정안은 차단된 회차(`attempts[0].applied_fix`)에 기록하고, 2회차 시운전은 `attempts[1]`로 덧붙임
@@ -236,7 +238,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Deployment" }
         "400":
-          description: 자동 적용할 수 없는 수정안, 엔진이 배포한 Local+GCP가 아님(비교 모드·외부 URL·AWS), 이미 한 번 수정함, 차단된 클라우드의 정리를 확인하지 못함, GCP 사전 확인 실패
+          description: 자동 적용할 수 없는 수정안, 엔진이 배포한 Local+GCP가 아님(비교 모드·외부 URL·AWS·클라우드 둘 이상), 이미 한 번 수정함, 차단된 클라우드의 정리를 확인하지 못함, GCP 사전 확인 실패
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -719,6 +721,11 @@ components:
               value: { type: string, example: "••••••••" }
         runtime: {oneOf: [{$ref: '#/components/schemas/HttpRuntime'}, {type: 'null'}]}
         last_deployment: { oneOf: [{ $ref: "#/components/schemas/Deployment" }, { type: "null" }] }
+    ReportLang:
+      type: string
+      enum: [ko, en, ja]
+      default: en
+      description: "시운전 원인 보고서 언어(shakedown.yaml ShakedownRequest.lang). 배포 기록에 저장하고 그 배포의 모든 시운전(수정 적용 뒤 2회차 포함)에 같은 값을 넘김"
     Deployment:
       type: object
       description: "전체 필드는 packages/contracts/src/index.ts의 Deployment"
@@ -731,6 +738,9 @@ components:
           enum: [queued, building, deploying, shakedown, analyzing, fixing, deployed, promoted, warned, blocked, failed]
           description: "deployed·promoted·warned·blocked·failed에서 엔진은 스스로 더 진행하지 않음. blocked는 POST /fix로 한 번 fixing으로 재개될 수 있음"
         mode: { type: string, enum: [comparison] }
+        lang:
+          $ref: "#/components/schemas/ReportLang"
+          description: "요청의 시운전 보고서 언어. 이 필드가 생기기 전에 저장된 기록에는 없음(en으로 봄)"
         shakedown_id: { type: string }
         release_gate: { type: string, enum: [passed, review, blocked] }
         traffic_blocked: { type: boolean, description: "관리 AWS DELETE 차단 확인 시 true. 기존 외부 URL 트래픽은 차단하지 않음." }

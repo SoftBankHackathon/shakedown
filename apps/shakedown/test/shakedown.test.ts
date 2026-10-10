@@ -2,6 +2,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import type { StepDiff } from "@shakedown/contracts";
 import { runShakedown } from "../src/shakedown.ts";
+import { defaultScenario } from "../src/scenario.ts";
 import { startFakeBoard } from "./fake-board.ts";
 
 const boards: Array<{ close: () => Promise<void> }> = [];
@@ -20,7 +21,8 @@ test("두 환경 모두 서버 1대면 PASS", async () => {
     runId: "eee555",
   });
   assert.equal(result.verdict.status, "PASS");
-  assert.equal(result.scenario_source, "fallback");
+  // 시나리오를 넘기지 않으면 kty-board 기본 시나리오로 돈다.
+  assert.equal(result.scenario, defaultScenario);
   assert.equal(result.steps.length, 8);
   assert.equal(result.steps[6].kind, "same"); // /posts/1 과 /posts/1 (번호가 달라도 same)
 });
@@ -51,7 +53,7 @@ test("비교 환경이 꺼져 있으면 1단계부터 BLOCKED", async () => {
   assert.equal(result.verdict.first_divergence, 1);
 });
 
-test("시나리오를 넘기면 그 시나리오로 실행하고 saved로 표시한다", async () => {
+test("시나리오를 넘기면 그 시나리오로 실행한다", async () => {
   const scenario = {
     app_understanding: "just the sign-up page",
     steps: [{ title: "Open sign-up page", action: "visit" as const, path: "/join", form_action: null, link_text: null, fields: [], expect: { path_startswith: "/join", text_contains: [] } }],
@@ -61,7 +63,7 @@ test("시나리오를 넘기면 그 시나리오로 실행하고 saved로 표시
     candidate: { name: "aws", url: await board() },
     scenario,
   });
-  assert.equal(result.scenario_source, "saved");
+  assert.equal(result.scenario, scenario);
   assert.equal(result.steps.length, 1);
   assert.equal(result.verdict.status, "PASS");
 });

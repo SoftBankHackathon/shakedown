@@ -3,9 +3,12 @@ import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { GcpProvider } from '../src/gcp-provider.js';
 import { CloudRun, type RunJob, type RunService } from '../src/cloud-run.js';
+import { architectures, type Tier } from '../src/architecture.js';
 import { configSchema } from '../src/config.js';
 import { GcpError } from '../src/gcp-http.js';
+import { Manager } from '../src/manager.js';
 import { requestSchema, type DeployRequest, type LogLine } from '../src/model.js';
+import { Store } from '../src/store.js';
 
 const config = configSchema.parse({
   gcpProject: 'shakedown-511106', gcpProjectNumber: '700410260240', region: 'asia-northeast3',
@@ -39,7 +42,9 @@ class FakeRun extends CloudRun {
   logError: Error | undefined;
   since: string | undefined;
   revision: string | undefined;
-  override async setInstances(count: number) { this.actions.push(`setInstances:${count}`); this.instances.push(count); }
+  clearedAutomatic: boolean[] = [];
+  scaleError: Error | undefined;
+  override async setInstances(count: number, _signal: AbortSignal, clearAutomatic = false) { this.actions.push(`setInstances:${count}`); this.instances.push(count); this.clearedAutomatic.push(clearAutomatic); if (this.scaleError) throw this.scaleError; }
   override async readLogs(revision: string, since: string | undefined) { this.revision = revision; this.since = since; if (this.logError) throw this.logError; return this.logLines; }
   project = { name: 'projects/700410260240', projectId: 'shakedown-511106' };
   override async getProject() { return this.project; }
@@ -80,6 +85,8 @@ test('deploy grants access, runs schema-init, updates the service, waits for rea
   assert.deepEqual(result, { url: PUBLIC_URL, instances: 2, info: {
     runtime: 'Cloud Run', region: 'asia-northeast3', database: 'Cloud SQL PostgreSQL', session: 'jdbc', sticky_sessions: 'false',
     image_digest: 'sha256:' + 'a'.repeat(64), revision: 'shakedown-board-00002-abc', scaling: 'manual',
+    // AWS·Azure 어댑터와 같은 키: 계획이 없으면 legacy.
+    architecture: 'legacy',
   } });
 });
 
@@ -261,4 +268,251 @@ test('appLogs returns Cloud Logging lines and hides only the read quota error', 
   assert.deepEqual(await provider.appLogs('dep_test'), []);
   run.logError = new GcpError(403, 'Cloud Logging entries.list failed: HTTP 403');
   await assert.rejects(provider.appLogs('dep_test'), (e: unknown) => e instanceof GcpError && e.status === 403);
+});
+
+// 계획 배포: 등급 최소 대수와 JDBC 세션으로 보낸다. compute만 적용하므로 Cloud SQL은 읽지도 바꾸지도 않는다.
+function planInput(tier: Tier): DeployRequest {
+  return requestSchema.parse({ deployment_id: 'dep_plan', project_id: config.projectId, image, port: 8080, health_path: '/health',
+    env: { SPRING_PROFILES_ACTIVE: 'demo,session-jdbc' }, secret_refs: { SPRING_DATASOURCE_PASSWORD: 'db_password' },
+    architecture: { version: 'gcp-architecture.v1', template_id: tier }, options: { replicas: architectures[tier].min } });
+}
+
+test('a deploy without a plan sends byte-for-byte the same service and job bodies as before plans existed', async () => {
+  const { run, provider } = setup();
+  await provider.deploy(input(), AbortSignal.timeout(2_000), () => {});
+  const vpcAccess = { networkInterfaces: [{ network: 'default', subnetwork: 'default' }], egress: 'PRIVATE_RANGES_ONLY' };
+  const env = (initialize: boolean) => [
+    { name: 'SPRING_DATASOURCE_URL', value: 'jdbc:postgresql://10.20.0.3:5432/board_db' },
+    { name: 'SPRING_DATASOURCE_USERNAME', value: 'board' },
+    { name: 'SPRING_JPA_HIBERNATE_DDL_AUTO', value: initialize ? 'update' : 'validate' },
+    { name: 'SPRING_PROFILES_ACTIVE', value: initialize ? 'schema-init' : 'demo,session-jdbc' },
+    { name: 'TZ', value: 'UTC' },
+    { name: 'SPRING_DATASOURCE_PASSWORD', valueSource: { secretKeyRef: { secret: 'shakedown-db-password', version: 'latest' } } },
+  ];
+  const service = {
+    template: {
+      revision: 'shakedown-board-' + createHash('sha256').update('dep_test').digest('hex').slice(0, 12),
+      containers: [{ name: 'app', image, ports: [{ containerPort: 8080 }], env: env(false), resources: { limits: { memory: '1Gi', cpu: '1' }, cpuIdle: true } }],
+      vpcAccess, sessionAffinity: false,
+    },
+    scaling: { scalingMode: 'MANUAL', manualInstanceCount: 2 },
+    invokerIamDisabled: false,
+  };
+  const job = { template: { taskCount: 1, template: {
+    containers: [{ name: 'schema-init', image, env: env(true), resources: { limits: { memory: '1Gi', cpu: '1' } } }], maxRetries: 0, timeout: '180s', vpcAccess,
+  } } };
+  // PATCH 본문은 JSON 그대로 GCP로 간다. 키 순서까지 같은지 문자열로 비교한다.
+  assert.equal(JSON.stringify(run.services[0]), JSON.stringify(service));
+  assert.equal(JSON.stringify(run.jobs[0]), JSON.stringify(job));
+});
+
+test('plan deploys apply the catalog to the service: size, scaling mode, revision maximum, per-tier pool size and no affinity', async () => {
+  const cases: [Tier, unknown, unknown, unknown, string | undefined][] = [
+    ['small', { limits: { memory: '1Gi', cpu: '1' }, cpuIdle: true }, { scalingMode: 'MANUAL', manualInstanceCount: 1 }, undefined, undefined],
+    ['medium', { limits: { memory: '2Gi', cpu: '1' }, cpuIdle: true }, { scalingMode: 'AUTOMATIC', minInstanceCount: 2, maxInstanceCount: 4 }, { maxInstanceCount: 4 }, '5'],
+    ['large', { limits: { memory: '4Gi', cpu: '2' }, cpuIdle: true }, { scalingMode: 'AUTOMATIC', minInstanceCount: 3, maxInstanceCount: 8 }, { maxInstanceCount: 8 }, '2'],
+  ];
+  for (const [tier, resources, scaling, revisionScaling, pool] of cases) {
+    const { run, provider } = setup();
+    await provider.deploy(planInput(tier), AbortSignal.timeout(2_000), () => {});
+    const service = run.services[0], container = service.template.containers[0];
+    assert.deepEqual(container.resources, resources, tier);
+    assert.deepEqual(service.scaling, scaling, tier);
+    // 수동 모드에서는 리비전 min/max가 무시되므로 small에는 넣지 않는다.
+    assert.equal('scaling' in service.template, revisionScaling !== undefined, tier);
+    assert.deepEqual(service.template.scaling, revisionScaling, tier);
+    assert.equal(service.template.sessionAffinity, false, tier);
+    const env = Object.fromEntries((container.env ?? []).map(e => [e.name, e.value]));
+    // small은 1대라 앱 기본 풀(10)을 그대로 둔다. env를 넣지 않는다.
+    assert.equal(env.SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, pool, tier);
+    assert.equal(env.SPRING_PROFILES_ACTIVE, 'demo,session-jdbc', tier);
+    // schema Job은 등급과 무관하게 1 vCPU / 1Gi, 기본 풀로 한 번만 돈다(쿼터 계산의 Job 몫).
+    const task = run.jobs[0].template.template.containers[0];
+    assert.deepEqual(task.resources, { limits: { memory: '1Gi', cpu: '1' } }, tier);
+    assert.ok(!(task.env ?? []).some(e => e.name === 'SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE'), tier);
+  }
+});
+
+test('plan deploys report the tier and the scaling range read back from Cloud Run, and nothing about DB availability', async () => {
+  const common = { runtime: 'Cloud Run', region: 'asia-northeast3', database: 'Cloud SQL PostgreSQL', session: 'jdbc', sticky_sessions: 'false',
+    image_digest: 'sha256:' + 'a'.repeat(64), revision: 'shakedown-board-00002-abc' };
+  const medium = setup();
+  assert.deepEqual(await medium.provider.deploy(planInput('medium'), AbortSignal.timeout(2_000), () => {}), { url: PUBLIC_URL, instances: 2, info: {
+    ...common, scaling: 'automatic 2-4', architecture: 'medium',
+  } });
+  const small = setup();
+  assert.deepEqual(await small.provider.deploy(planInput('small'), AbortSignal.timeout(2_000), () => {}), { url: PUBLIC_URL, instances: 1, info: {
+    ...common, scaling: 'manual', architecture: 'small',
+  } });
+  // 서버가 리비전 상한을 더 크게 채워도 실제 상한은 둘 중 작은 값이라 카탈로그와 같다.
+  const roomy = setup();
+  roomy.run.readyPatch = { template: { containers: [{ image }], scaling: { maxInstanceCount: 100 } } };
+  assert.equal((await roomy.provider.deploy(planInput('medium'), AbortSignal.timeout(2_000), () => {})).info.scaling, 'automatic 2-4');
+});
+
+test('a plan deploy fails before public health when Cloud Run does not keep the catalog range', async () => {
+  // 2026-10-09 v2 GET에서 서버가 template.scaling.maxInstanceCount=3을 채운 것을 확인했다. 그대로 두면 medium이 3대에서 멈춘다.
+  const cases: [string, Partial<RunService>][] = [
+    ['revision max 3', { template: { containers: [{ image }], scaling: { maxInstanceCount: 3 } } }],
+    ['service min 1', { scaling: { scalingMode: 'AUTOMATIC', minInstanceCount: 1, maxInstanceCount: 4 } }],
+    ['no maximum', { scaling: { scalingMode: 'AUTOMATIC', minInstanceCount: 2 }, template: { containers: [{ image }] } }],
+    // min/max는 카탈로그와 같고 모드만 MANUAL이다. 모드 검사가 빠지면 이 경우만 통과해 버린다.
+    ['manual mode', { scaling: { scalingMode: 'MANUAL', minInstanceCount: 2, maxInstanceCount: 4 } }],
+  ];
+  for (const [label, patch] of cases) {
+    const { run, provider } = setup();
+    run.readyPatch = patch;
+    const lines: string[] = [];
+    await assert.rejects(provider.deploy(planInput('medium'), AbortSignal.timeout(2_000), line => lines.push(line)), /카탈로그와 다릅니다/, label);
+    assert.ok(!run.actions.includes('fetch'), label);
+    // 로그에서 어느 단계가 실패했는지 보이게 한다(wait_ready completed 다음 줄이 바로 실패면 원인을 찾기 어렵다).
+    assert.ok(lines.some(l => l.startsWith('phase=verify_scaling failed')), label);
+  }
+});
+
+test('plan deploys make the same Cloud Run calls and add only a verify_scaling phase between wait_ready and public_health', async () => {
+  const { run, provider } = setup();
+  const lines: string[] = [];
+  await provider.deploy(planInput('medium'), AbortSignal.timeout(2_000), line => lines.push(line));
+  assert.deepEqual(run.actions, ['getService', 'setPublic:true', 'runSchemaJob', 'putService', 'getService', 'fetch']);
+  const started = lines.filter(l => l.endsWith(' started')).map(l => l.split(' ')[0]);
+  assert.deepEqual(started, ['phase=grant_public', 'phase=schema_job', 'phase=update_service', 'phase=wait_ready', 'phase=verify_scaling', 'phase=public_health']);
+  const plain = setup(), plainLines: string[] = [];
+  await plain.provider.deploy(input(), AbortSignal.timeout(2_000), line => plainLines.push(line));
+  assert.ok(!plainLines.some(l => l.includes('verify_scaling')));
+});
+
+test('stop keeps the measured count-only mask for a manual service and clears automatic min/max only after a plan deploy', async () => {
+  // 계획 없는 배포가 남긴 수동 서비스: 2026-10-09에 실측한 마스크(대수만) 그대로 내린다.
+  const plain = setup(200, 503), plainLines: string[] = [];
+  await plain.provider.deploy(input(), AbortSignal.timeout(2_000), () => {});
+  await plain.provider.stop(line => plainLines.push(line));
+  assert.deepEqual(plain.run.clearedAutomatic, [false]);
+  assert.ok(plainLines.includes('Cloud Run manual instance count set to 0'));
+  // 자동 확장(medium) 서비스: 수동 0대로 바꾸면서 서비스 min/max도 지운다.
+  const medium = setup(200, 503), mediumLines: string[] = [];
+  await medium.provider.deploy(planInput('medium'), AbortSignal.timeout(2_000), () => {});
+  await medium.provider.stop(line => mediumLines.push(line));
+  assert.deepEqual(medium.run.clearedAutomatic, [true]);
+  assert.ok(mediumLines.includes('Cloud Run set to manual scaling with 0 instances (automatic min/max cleared)'));
+  // 서버가 수동 서비스에 min/max 값을 채워 돌려줘도 계획 없는 배포의 내리기는 실측한 마스크를 벗어나지 않는다.
+  const filled = setup(503);
+  filled.run.current = { template: { containers: [{ image: OLD_IMAGE }] }, scaling: { scalingMode: 'MANUAL', manualInstanceCount: 2, minInstanceCount: 1, maxInstanceCount: 100 } };
+  await filled.provider.stop(() => {});
+  assert.deepEqual(filled.run.clearedAutomatic, [false]);
+  await plain.provider.settled(); await medium.provider.settled(); await filled.provider.settled();
+});
+
+test('a plan deploy refused at update_service is cleaned up with the measured mask when the service was still manual', async () => {
+  // Cloud Run이 자동 확장 본문을 거절해도(400) 서비스는 이전의 수동 상태 그대로다. 실패 정리는 실측된 마스크로 0대를 만든다.
+  const { run, provider } = setup(503);
+  run.current = { template: { containers: [{ image: OLD_IMAGE }] }, scaling: { scalingMode: 'MANUAL', manualInstanceCount: 2 } };
+  run.putService = async service => { run.actions.push('putService'); run.services.push(service); throw new GcpError(400, 'Cloud Run service update failed: HTTP 400'); };
+  const store = new Store(':memory:'), manager = new Manager(store, provider);
+  try {
+    manager.create(planInput('medium')); await manager.drain();
+    assert.equal(store.result('dep_plan').status, 'failed');
+    assert.deepEqual(run.clearedAutomatic, [false]);
+    assert.ok(!store.row('dep_plan')?.deleting, 'the project is not left locked');
+  } finally { await provider.settled(); store.close(); }
+});
+
+test('when the scale-to-0 PATCH is refused, stop logs how to scale down by hand, rejects and still revokes public access', async () => {
+  // 넓은 마스크(자동 확장 서비스용)는 아직 실측 전이다. 거절되면 Manager가 프로젝트를 잠그므로 운영자가 할 일을 배포 로그에 남긴다.
+  const { run, provider } = setup(503);
+  run.scaleError = new GcpError(400, 'Cloud Run scaling update failed: HTTP 400');
+  const lines: string[] = [];
+  await assert.rejects(provider.stop(line => lines.push(line)), (e: unknown) => e instanceof GcpError && e.status === 400);
+  assert.ok(lines.some(l => l.startsWith('Cloud Run scale-to-0 failed;') && l.includes('README')), lines.join('\n'));
+  await settle();
+  assert.ok(run.actions.includes('setPublic:false'));
+  await provider.settled();
+});
+
+// 범용 런타임: 엔진은 database·secret_refs·env를 빼고 port·health_path를 runtime 값으로 보낸다.
+const SECRET = { secretKeyRef: { secret: 'shakedown-db-password', version: 'latest' } };
+function runtimeInput(runtime: Record<string, unknown>, patch: Record<string, unknown> = {}): DeployRequest {
+  const r = { version: 'http-runtime.v1', port: 3000, health_path: '/healthz', env: { NODE_ENV: 'production' }, secret_refs: {},
+    database: { mode: 'none', name: 'app', bindings: {} }, init_command: [], ...runtime };
+  return requestSchema.parse({ deployment_id: 'dep_rt', project_id: config.projectId, image, port: r.port, health_path: r.health_path, runtime: r, options: { replicas: 2 }, ...patch });
+}
+const postgresRuntime = {
+  secret_refs: { APP_DB_PASSWORD: 'db_password' }, init_command: ['npm', 'run', 'migrate'],
+  database: { mode: 'postgres', name: 'board_db', bindings: { DB_URL: 'jdbc_url', DB_HOST: 'host', DB_PORT: 'port', DB_NAME: 'name', DB_USER: 'username', DB_PASSWORD: 'password' } },
+};
+
+test('a runtime PostgreSQL deploy sends app env, TZ, plain DB bindings and Secret Manager references, never PORT, on the runtime port', async () => {
+  const { run, requests, provider } = setup();
+  await provider.deploy(runtimeInput(postgresRuntime), AbortSignal.timeout(2_000), () => {});
+  const env = [
+    { name: 'NODE_ENV', value: 'production' },
+    { name: 'TZ', value: 'UTC' },
+    // 지금 Cloud SQL은 사설 IP의 평문 연결을 받는다(옛 JDBC URL도 sslmode가 없다).
+    { name: 'DB_URL', value: 'jdbc:postgresql://10.20.0.3:5432/board_db' },
+    { name: 'DB_HOST', value: '10.20.0.3' },
+    { name: 'DB_PORT', value: '5432' },
+    { name: 'DB_NAME', value: 'board_db' },
+    { name: 'DB_USER', value: 'board' },
+    { name: 'APP_DB_PASSWORD', valueSource: SECRET },
+    { name: 'DB_PASSWORD', valueSource: SECRET },
+  ];
+  const container = run.services[0].template.containers[0];
+  assert.equal(JSON.stringify(container.env), JSON.stringify(env));
+  assert.deepEqual(container.ports, [{ containerPort: 3000 }]);
+  // init_command는 같은 이미지·같은 env로 Job에서 한 번 돈다. 셸을 거치지 않고 첫 칸이 실행 파일, 나머지가 인자다.
+  assert.equal(JSON.stringify(run.jobs[0].template.template.containers[0]), JSON.stringify({
+    name: 'init', image, command: ['npm'], args: ['run', 'migrate'], env, resources: { limits: { memory: '1Gi', cpu: '1' } },
+  }));
+  assert.deepEqual(run.actions, ['getService', 'setPublic:true', 'runSchemaJob', 'putService', 'getService', 'fetch']);
+  assert.equal(requests[0].url, PUBLIC_URL + '/healthz');
+});
+
+test('a runtime without init_command skips the schema job and says so in the deployment log', async () => {
+  const { run, provider } = setup();
+  const lines: string[] = [];
+  await provider.deploy(runtimeInput({}), AbortSignal.timeout(2_000), line => lines.push(line));
+  assert.deepEqual(run.actions, ['getService', 'setPublic:true', 'putService', 'getService', 'fetch']);
+  assert.ok(lines.includes('phase=schema_job skipped: runtime has no init_command'));
+  assert.ok(!lines.some(l => l.startsWith('phase=schema_job started')));
+  assert.equal(JSON.stringify(run.services[0].template.containers[0].env), JSON.stringify([{ name: 'NODE_ENV', value: 'production' }, { name: 'TZ', value: 'UTC' }]));
+});
+
+test('runtime deploys report the database the app uses and app-defined sessions', async () => {
+  const none = setup();
+  const noDb = await none.provider.deploy(runtimeInput({}), AbortSignal.timeout(2_000), () => {});
+  assert.equal(noDb.info.database, 'none');
+  assert.equal(noDb.info.session, 'app-defined');
+  const pg = setup();
+  const withDb = await pg.provider.deploy(runtimeInput(postgresRuntime), AbortSignal.timeout(2_000), () => {});
+  assert.equal(withDb.info.database, 'Cloud SQL PostgreSQL');
+  assert.equal(withDb.info.session, 'app-defined');
+});
+
+test('a runtime plan deploy takes the catalog size and scaling but not the Spring pool env', async () => {
+  const { run, provider } = setup();
+  await provider.deploy(runtimeInput(postgresRuntime, { architecture: { version: 'gcp-architecture.v1', template_id: 'medium' }, options: { replicas: 2 } }), AbortSignal.timeout(2_000), () => {});
+  const service = run.services[0], container = service.template.containers[0];
+  assert.deepEqual(container.resources, { limits: { memory: '2Gi', cpu: '1' }, cpuIdle: true });
+  assert.deepEqual(service.scaling, { scalingMode: 'AUTOMATIC', minInstanceCount: 2, maxInstanceCount: 4 });
+  assert.ok(!(container.env ?? []).some(e => e.name.startsWith('SPRING_')));
+});
+
+test('a failed init_command leaves a pointer to the job output in the deployment log', async () => {
+  // 앱 리비전이 생기기 전이라 앱 로그는 비어 있다. 사용자 명령이 왜 실패했는지 볼 곳을 배포 로그에 남긴다.
+  const { run, provider } = setup();
+  run.jobError = new Error('init job failed: projects/p/locations/l/jobs/shakedown-board-schema/executions/e-1');
+  const lines: string[] = [];
+  await assert.rejects(provider.deploy(runtimeInput(postgresRuntime), AbortSignal.timeout(2_000), line => lines.push(line)), /job failed/);
+  // 같은 Job을 매 배포가 다시 쓰므로 이번 실행 이름도 남긴다(콘솔의 그 실행 Logs 탭으로 바로 간다).
+  assert.ok(lines.includes('init_command failed; read its output in Cloud Logging: resource.type="cloud_run_job" AND resource.labels.job_name="shakedown-board-schema" (this run: execution e-1)'), lines.join('\n'));
+  // 명령이 실행되기 전에 실패하면(Job 갱신 거절 등) 볼 Job 로그가 없으므로 남기지 않는다.
+  const refused = setup(), refusedLines: string[] = [];
+  refused.run.jobError = new GcpError(400, 'Cloud Run job update failed: HTTP 400');
+  await assert.rejects(refused.provider.deploy(runtimeInput(postgresRuntime), AbortSignal.timeout(2_000), line => refusedLines.push(line)));
+  assert.ok(!refusedLines.some(l => l.startsWith('init_command failed')), refusedLines.join('\n'));
+  // 옛 방식(Spring schema-init) 실패에는 이 줄을 남기지 않는다.
+  const legacy = setup(), legacyLines: string[] = [];
+  legacy.run.jobError = new Error('schema-init job failed');
+  await assert.rejects(legacy.provider.deploy(input(), AbortSignal.timeout(2_000), line => legacyLines.push(line)));
+  assert.ok(!legacyLines.some(l => l.startsWith('init_command failed')));
 });

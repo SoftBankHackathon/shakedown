@@ -39,6 +39,8 @@ export type Deployment = {
   finished?: number;
   status: "queued" | "building" | "deploying" | "shakedown" | "analyzing" | "fixing" | "deployed" | "warned" | "promoted" | "blocked" | "failed";
   mode?: "comparison";
+  /** 요청의 보고서 언어. 이 필드가 생기기 전에 저장된 기록에는 없다(en). */
+  lang?: ReportLang;
   shakedown_id?: string;
   release_gate?: "passed" | "review" | "blocked";
   traffic_blocked?: boolean;
@@ -159,7 +161,10 @@ export type CreateProjectRequest = { repo: string; name?: string; image_only?: b
 
 /** Body of POST /api/projects/{id}/deployments — the Action button (engine.yaml). */
 export type ComparisonEndpoint = { name: string; url: string };
-export type CompareRequest = { baseline: ComparisonEndpoint; candidate: ComparisonEndpoint };
+/** 시운전 원인 보고서 언어(shakedown.yaml·engine.yaml lang). verdict.summary와 StepDiff.reasons는 영어 그대로. */
+export type ReportLang = "ko" | "en" | "ja";
+
+export type CompareRequest = { baseline: ComparisonEndpoint; candidate: ComparisonEndpoint; lang?: ReportLang };
 
 export type DeployRequest = {
   architecture_plan_id?: string;
@@ -168,13 +173,15 @@ export type DeployRequest = {
   shakedown: boolean;
   autofix: boolean;
   options: Partial<Record<TargetName, Partial<TargetOptions>>>;
+  /** 없으면 엔진이 en으로 본다. */
+  lang?: ReportLang;
 };
 
 
 /** Target API v0.1.1 proposal — distinct from the engine's DeployRequest. */
 export type TargetDeployRequest = {
   runtime?: HttpRuntime;
-  architecture?: {version: "aws-architecture.v1"; template_id: ArchitectureTier};
+  architecture?: {version: "aws-architecture.v1" | "gcp-architecture.v1" | "azure-architecture.v1"; template_id: ArchitectureTier};
   deployment_id: string;
   project_id: string;
   image: string;

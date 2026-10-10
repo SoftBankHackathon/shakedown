@@ -2,11 +2,11 @@
 // AI는 선택 기능이다. 꺼져 있거나 실패하면 규칙 보고서(fallback)를 그대로 돌려준다.
 import Anthropic from "@anthropic-ai/sdk";
 import type { CostLedger, Fix, Report, StepDiff, StepResult } from "@shakedown/contracts";
-import { switchLine } from "./report.ts";
+import { switchLine, type Lang } from "./report.ts";
 import type { Verdict } from "./verdict.ts";
 
 // 가격 출처: claude-api 스킬 shared/models.md 모델 표(2026-09-25 캐시). claude-opus-5-5는 100만 토큰당 입력 $4, 출력 $20
-const MODEL = "claude-opus-5-5";
+export const MODEL = "claude-opus-5-5";
 const USD_PER_MTOK_IN = 4;
 const USD_PER_MTOK_OUT = 20;
 const USD_TO_KRW = 1400;
@@ -16,7 +16,7 @@ const MAX_RETRIES = 0;
 // Opus 5.5는 생각(thinking)을 끌 수 없고 그 토큰도 max_tokens에 들어가서, 보고서 길이보다 넉넉히 잡는다.
 const MAX_TOKENS = 4000;
 // fallbacks: "default"(거절 종류별로 서버가 대체 모델을 고름)는 이 날짜의 헤더와 짝이다. 배열 형식은 날짜가 달라 400이 난다.
-const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+export const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
 const CONFIDENCE = ["high", "medium", "low"];
 const FIX_TEXT_FIELDS = ["target", "option", "value", "description", "native"] as const;
@@ -45,18 +45,24 @@ const REPORT_SCHEMA = {
   additionalProperties: false,
 };
 
-const SYSTEM = [
+/** 보고서·시나리오를 쓸 언어의 영어 이름. 지시문은 영어로 두고 답만 이 언어로 받는다. */
+export const LANG_NAME: Record<Lang, string> = { ko: "Korean", en: "English", ja: "Japanese" };
+
+const system = (lang: Lang) => [
   "You explain why a web app behaves differently on a candidate deploy environment than on the baseline environment during an automated shakedown run.",
   "Use only the data in the user message. If the data does not show something, do not claim it; lower the confidence instead.",
   "rule_report is a rule-based guess that you may confirm or correct.",
-  "Answer in English with: headline (one sentence), cause (two or three sentences), evidence (short facts taken from the data),",
+  `Answer in ${LANG_NAME[lang]} with: headline (one sentence), cause (two or three sentences), evidence (short facts taken from the data),`,
   "fix (one setting change on the candidate environment, or null if the data does not support one) and confidence (high, medium or low).",
+  // 경로·hop·단계 제목은 데이터라 번역하면 원본 기록과 맞춰 볼 수 없다. 수정안의 기계 값은 엔진·사람이 그대로 쓴다.
+  "Keep paths, HTTP methods, hop chains, step titles, environment names and fix.target, fix.option, fix.value and fix.native as they appear in the data.",
   "In fix, target is the environment name. Always set auto_applicable to false; a person reviews and applies the fix.",
   // aiReport는 자동 적용 가능한 규칙 수정안을 그대로 유지한다. AI가 다른 수정안을 권하는 문장을 쓰지 않게 미리 알린다.
   "If rule_report.fix.auto_applicable is true, that fix is applied as is, so explain the cause consistently with it.",
 ].join(" ");
 
-export type AiInput = { diffs: StepDiff[]; verdict: Verdict; fallback: Report | null; hints?: Record<string, unknown> };
+/** lang: 보고서 언어(없으면 en). fallback(규칙 보고서)도 같은 언어로 만들어 넘긴다. */
+export type AiInput = { diffs: StepDiff[]; verdict: Verdict; fallback: Report | null; hints?: Record<string, unknown>; lang?: Lang };
 export type AiOptions = {
   client?: Anthropic;
   apiKey?: string;
@@ -70,6 +76,21 @@ export type AiOptions = {
 export function aiOptionsFromEnv(env: Record<string, string | undefined> = process.env): AiOptions {
   if (env.SHAKEDOWN_AI_REPORT === "off" || !env.ANTHROPIC_API_KEY) return {};
   return { apiKey: env.ANTHROPIC_API_KEY };
+}
+
+/** options로 Claude 클라이언트를 만든다. client도 키도 없으면 null(AI 꺼짐). AI 시나리오(ai-scenario.ts)도 같은 설정을 쓴다. */
+export function clientOf(options: AiOptions): Anthropic | null {
+  return options.client ?? (options.apiKey ? new Anthropic({ apiKey: options.apiKey, baseURL: options.baseURL, maxRetries: MAX_RETRIES }) : null);
+}
+
+/** 빈 비용. 필드가 늘 때 한곳만 고치게 비용 0은 이것으로 만든다. */
+export const noCost = (): CostLedger => ({ calls: 0, input_tokens: 0, output_tokens: 0, krw: 0 });
+
+/** 응답 한 번의 비용. 대시보드가 ₩{krw}로 그대로 찍으므로 소수 둘째 자리까지만 남긴다. */
+export function costOf(usage: { input_tokens: number; output_tokens: number }, usdToKrw = USD_TO_KRW): CostLedger {
+  const { input_tokens, output_tokens } = usage;
+  const krw = Math.round(((input_tokens * USD_PER_MTOK_IN + output_tokens * USD_PER_MTOK_OUT) * usdToKrw) / 1e4) / 100;
+  return { calls: 1, input_tokens, output_tokens, krw };
 }
 
 function side(r: StepResult) {
@@ -91,7 +112,7 @@ function promptData(input: AiInput): string {
   return JSON.stringify({ diverging_steps: steps, rule_report: input.fallback, hints: input.hints ?? {} });
 }
 
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+export const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function isFix(v: unknown): v is Fix {
   return isObject(v) && FIX_TEXT_FIELDS.every((k) => typeof v[k] === "string") && typeof v.auto_applicable === "boolean";
@@ -138,11 +159,10 @@ function keepInstanceEvidence(report: Report, fallback: Report | null): Report {
 }
 
 export async function aiReport(input: AiInput, options: AiOptions): Promise<{ report: Report | null; cost: CostLedger }> {
-  const cost: CostLedger = { calls: 0, input_tokens: 0, output_tokens: 0, krw: 0 };
+  const cost = noCost();
   if (input.verdict.status !== "BLOCKED") return { report: null, cost };
 
-  const client =
-    options.client ?? (options.apiKey ? new Anthropic({ apiKey: options.apiKey, baseURL: options.baseURL, maxRetries: MAX_RETRIES }) : null);
+  const client = clientOf(options);
   if (!client) return { report: input.fallback, cost };
 
   const response = await client.beta.messages
@@ -153,7 +173,7 @@ export async function aiReport(input: AiInput, options: AiOptions): Promise<{ re
         betas: [FALLBACK_BETA],
         fallbacks: "default",
         output_config: { effort: "low", format: { type: "json_schema", schema: REPORT_SCHEMA } },
-        system: SYSTEM,
+        system: system(input.lang ?? "en"),
         messages: [{ role: "user", content: promptData(input) }],
       },
       { timeout: options.timeoutMs ?? TIMEOUT_MS },
@@ -165,11 +185,7 @@ export async function aiReport(input: AiInput, options: AiOptions): Promise<{ re
     });
   if (!response) return { report: input.fallback, cost };
 
-  const { input_tokens, output_tokens } = response.usage;
-  const usdToKrw = options.usdToKrw ?? USD_TO_KRW;
-  // 대시보드가 ₩{krw}로 그대로 찍으므로 소수 둘째 자리까지만 남긴다.
-  const krw = Math.round(((input_tokens * USD_PER_MTOK_IN + output_tokens * USD_PER_MTOK_OUT) * usdToKrw) / 1e4) / 100;
-  const spent = { calls: 1, input_tokens, output_tokens, krw };
+  const spent = costOf(response.usage, options.usdToKrw);
 
   // 거절이면 content가 비었거나 스키마를 안 지킬 수 있어서, 내용을 읽기 전에 거른다.
   if (response.stop_reason === "refusal") return { report: input.fallback, cost: spent };

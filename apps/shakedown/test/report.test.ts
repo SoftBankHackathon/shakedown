@@ -2,7 +2,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fixture from "@shakedown/contracts/fixtures/deployment-blocked-then-fixed.json" with { type: "json" };
 import type { Hop, StepDiff } from "@shakedown/contracts";
-import { ruleReport } from "../src/report.ts";
+import { ruleReport, switchLine } from "../src/report.ts";
 import { runShakedown } from "../src/shakedown.ts";
 import type { Verdict } from "../src/verdict.ts";
 import { startFakeBoard, type FakeBoardOptions } from "./fake-board.ts";
@@ -129,6 +129,71 @@ test("로그인 hop은 튕긴 hop보다 앞에 있는 POST 로그인 중 마지�
   );
 });
 
+// 둘러보기 시나리오(visit만)의 한 단계. 기준 환경은 그 화면에 머물고, 비교 환경은 hops대로 끝난다.
+function crawlStep(path: string, cloudHops: Hop[]): StepDiff {
+  const result = (finalPath: string, hops: Hop[]) => ({
+    index: 1, title: `Open ${path}`, status: "passed" as const, error: null, final_path: finalPath, final_status: 200, hops,
+    checks: [{ name: "http", ok: true, detail: "HTTP 200" }], elapsed_ms: 1,
+  });
+  return {
+    index: 1, baseline: "local", candidate: "aws", title: `Open ${path}`,
+    local: result(path, [hop("GET", path, 200, null)]),
+    cloud: result(cloudHops.at(-1)!.path, cloudHops),
+    kind: "path_diff", severity: "critical", reasons: [`ended on ${path} (local) vs / (aws)`], classified_by: "rule",
+  };
+}
+
+test("로그인한 적이 없는데 \"/\"로 돌아간 것은 로그인 풀림이 아니다(게시판이 아닌 앱의 둘러보기)", () => {
+  const d = crawlStep("/dashboard", [hop("GET", "/dashboard", 302, null), hop("GET", "/", 200, null)]);
+  const report = ruleReport([d], { status: "BLOCKED", first_divergence: 1, summary: "" });
+  assert.equal(report?.headline, "Step 1 (Open /dashboard) differs between local and aws");
+  assert.equal(report?.fix, null);
+});
+
+test("튕긴 hop 자체가 로그인 POST면 앞에 다른 로그인이 없어도 로그인 풀림이다", () => {
+  const d = crawlStep("/board", [hop("POST", "/login", 302, null), hop("GET", "/", 200, null)]);
+  const report = ruleReport([d], { status: "BLOCKED", first_divergence: 1, summary: "" });
+  assert.equal(report?.headline, "Login is lost on aws: requests land on different instances");
+});
+
+test("로그인 주소가 /login이 아닌 앱(/signin, /auth/login, /api/login, /session)도 로그인 POST 뒤 튕기면 로그인 풀림이다", () => {
+  for (const login of ["/signin", "/auth/login", "/api/login", "/session"]) {
+    const d = crawlStep("/board", [hop("POST", login, 302, null), hop("GET", "/board", 302, null), hop("GET", "/login", 200, null)]);
+    const report = ruleReport([d], { status: "BLOCKED", first_divergence: 1, summary: "" });
+    assert.equal(report?.headline, "Login is lost on aws: requests land on different instances", login);
+  }
+  // 글쓴이(/author)·가입(/auth/register)·세션 하위 자원은 로그인이 아니다. 로그인 칸은 주소의 마지막 칸이어야 한다.
+  for (const notLogin of ["/author", "/auth/register", "/api/sessions/1/messages"]) {
+    const d = crawlStep("/board", [hop("POST", notLogin, 302, null), hop("GET", "/board", 302, null), hop("GET", "/login", 200, null)]);
+    assert.equal(ruleReport([d], { status: "BLOCKED", first_divergence: 1, summary: "" })?.headline, "Step 1 (Open /board) differs between local and aws", notLogin);
+  }
+});
+
+test("밑줄 로그인 주소(/users/sign_in)와 /login이 아닌 로그인 화면(/signin, /auth/login)으로 튕긴 것도 로그인 풀림이다", () => {
+  for (const [login, page] of [
+    ["/users/sign_in", "/users/sign_in"], ["/signin", "/signin"], ["/auth/login", "/auth/login"],
+    // Spring Security의 로그인 처리 주소
+    ["/perform_login", "/login"], ["/j_spring_security_check", "/login"],
+  ]) {
+    const d = crawlStep("/dashboard", [hop("POST", login, 302, null), hop("GET", "/dashboard", 302, null), hop("GET", page, 200, null)]);
+    const report = ruleReport([d], { status: "BLOCKED", first_divergence: 1, summary: "" });
+    assert.equal(report?.headline, "Login is lost on aws: requests land on different instances", `${login} → ${page}`);
+  }
+});
+
+test("두 환경 모두 \"/\"에서 끝났는데 쓴 글이 비교 환경에서만 안 보이면 데이터 유실이다(\"/\"가 로그인 화면이 아닌 앱)", () => {
+  const result = (shown: boolean) => ({
+    index: 2, title: "Check the note", status: shown ? "passed" as const : "failed" as const, error: shown ? null : "'note abc' not shown",
+    final_path: "/", final_status: 200, hops: [hop("GET", "/", 200, null)],
+    checks: [{ name: "http", ok: true, detail: "HTTP 200" }, { name: "text", ok: shown, detail: shown ? "'note abc' shown" : "'note abc' not shown" }], elapsed_ms: 1,
+  });
+  const d: StepDiff = {
+    index: 2, baseline: "local", candidate: "aws", title: "Check the note", local: result(true), cloud: result(false),
+    kind: "env_diff", severity: "critical", reasons: ["passed on local, failed on aws"], classified_by: "rule",
+  };
+  assert.equal(ruleReport([d], { status: "BLOCKED", first_divergence: 2, summary: "" })?.headline, "Data is lost on aws: what was just written does not come back");
+});
+
 test("fixture 시도 2(PASS)에는 보고서가 없다", () => {
   assert.equal(ruleReport(withNames(fixture.attempts[1].steps), fixture.attempts[1].verdict as Verdict), null);
 });
@@ -140,6 +205,14 @@ test("링크를 못 찾은 실패는 'request failed:'로 시작해도 접속 �
   const report = ruleReport(steps, { status: "BLOCKED", first_divergence: 7, summary: "" });
   assert.equal(report?.headline, "Data is lost on aws: what was just written does not come back");
   assert.deepEqual(report?.evidence, [`Step 7 (Open the new post) worked on local (ended on /posts/11) but not on aws (${error}).`]);
+});
+
+test("삭제·로그아웃이라 보내지 않은 단계는 'request failed:'로 시작해도 접속 실패가 아니다", () => {
+  const steps = withNames(fixture.attempts[1].steps);
+  const error = 'request failed: link "post" goes to /posts/3/delete, which looks unsafe (delete, log out, admin or payment); not followed';
+  steps[6] = { ...steps[6], kind: "env_diff", severity: "critical", cloud: { ...steps[6].cloud, status: "failed", error, final_path: null, final_status: null, hops: [], checks: [] } };
+  const report = ruleReport(steps, { status: "BLOCKED", first_divergence: 7, summary: "" });
+  assert.notEqual(report?.headline, "aws is not reachable");
 });
 
 const boards: Array<{ close: () => Promise<void> }> = [];
@@ -187,9 +260,9 @@ test("이야기 3: 세션은 공유돼도 글 저장소가 서버마다 따로�
     fix: {
       target: "aws",
       option: "code_change",
-      value: "use the shared database (RDS) via SPRING_DATASOURCE_URL",
+      value: "point every instance at one shared managed database via an env var (e.g. DATABASE_URL, SPRING_DATASOURCE_URL)",
       description: "Point every instance at one persistent database instead of an embedded one.",
-      native: "App Runner env var SPRING_DATASOURCE_URL → RDS endpoint",
+      native: "Cloud Run / ECS / Container Apps env var (e.g. DATABASE_URL, SPRING_DATASOURCE_URL) → shared managed DB (Cloud SQL / RDS / Azure Database)",
       auto_applicable: false,
     },
     confidence: "medium",
@@ -213,7 +286,9 @@ test("이야기 4: 회원가입이 500이면 서버 오류(DB 설정)", async ()
       option: "code_change",
       value: "move the DB URL to environment variables",
       description: "Read the DB URL, user and password from environment variables instead of hard-coding them.",
-      native: "application.yml spring.datasource.url: ${SPRING_DATASOURCE_URL} (App Runner env var → RDS endpoint)",
+      native:
+        "read the DB URL from an env var (e.g. DATABASE_URL; in Spring spring.datasource.url: ${SPRING_DATASOURCE_URL}) " +
+        "set on Cloud Run / ECS / Container Apps to the managed DB (Cloud SQL / RDS / Azure Database)",
       auto_applicable: false,
     },
     confidence: "medium",
@@ -232,4 +307,80 @@ test("이야기 5: 알려진 원인이 아니면 처음 달라진 단계로 일�
     confidence: "low",
     by: "rule",
   });
+});
+
+// fixture 시도 1(로그인 풀림)을 언어별로. 문장만 바뀌고 경로·hop 사슬·단계 제목·환경 이름과 수정안의 기계 값은 그대로다.
+const fixtureSteps = () => withNames(fixture.attempts[0].steps);
+const fixtureVerdict = fixture.attempts[0].verdict as Verdict;
+
+test("lang: ko면 로그인 풀림 보고서를 한국어로 쓴다", () => {
+  assert.deepEqual(ruleReport(fixtureSteps(), fixtureVerdict, { lang: "ko" }), {
+    headline: "aws에서 로그인이 풀립니다: 요청이 서로 다른 인스턴스로 갑니다",
+    cause:
+      "앱이 로그인 상태를 서버 메모리(HttpSession)에 둡니다. aws에서는 로드 밸런서 뒤에 인스턴스가 여러 대인데 " +
+      "세션 고정(session affinity)이 없어서, 로그인 다음 요청이 로그인을 모르는 인스턴스로 갑니다.",
+    evidence: [
+      "4단계(Sign in): local에서는 됨(ended on /board), aws에서는 안 됨(ended on /).",
+      "aws 요청 경로: POST /login 302 → GET /board 302 → GET / 200",
+      "aws에서는 POST /login 바로 뒤 GET /board 요청이 로그인 화면(/)으로 되돌아갔습니다. local에서는 그러지 않았습니다.",
+      "POST /login 요청은 인스턴스 172.23.0.3:8080, GET /board 요청은 인스턴스 172.23.0.4:8080에서 처리했습니다. 한 사용자의 요청을 서로 다른 인스턴스 2대가 받았습니다.",
+    ],
+    fix: { ...loginLost.fix, description: "로그인 상태를 공유 DB(Spring Session JDBC)에 두어 모든 인스턴스가 보게 합니다." },
+    confidence: "high",
+    by: "rule",
+  });
+});
+
+test("lang: ja면 로그인 풀림 보고서를 일본어로 쓴다", () => {
+  assert.deepEqual(ruleReport(fixtureSteps(), fixtureVerdict, { lang: "ja" }), {
+    headline: "aws でログインが切れます: リクエストが別々のインスタンスに届いています",
+    cause:
+      "アプリはログイン状態をサーバーのメモリ（HttpSession）に保持しています。aws ではロードバランサーの後ろに複数のインスタンスがあり、" +
+      "セッションアフィニティがないため、ログイン後のリクエストがログインを知らないインスタンスに届きます。",
+    evidence: [
+      "ステップ 4（Sign in）は local では通りましたが（ended on /board）、aws では通りませんでした（ended on /）。",
+      "aws のリクエスト経路: POST /login 302 → GET /board 302 → GET / 200",
+      "aws では POST /login の直後に GET /board がログイン画面（/）に戻されました。local ではそうなりませんでした。",
+      "POST /login はインスタンス 172.23.0.3:8080、GET /board はインスタンス 172.23.0.4:8080 で処理されました。同じユーザーのリクエストを別々のインスタンス2台が受けています。",
+    ],
+    fix: { ...loginLost.fix, description: "ログイン状態を共有データベース（Spring Session JDBC）に保存し、すべてのインスタンスから見えるようにします。" },
+    confidence: "high",
+    by: "rule",
+  });
+});
+
+test("lang: 언어마다 다른 원인 보고서도 문장만 바뀌고 수정안의 기계 값(target·option·value·native)은 같다", async () => {
+  const stories: FakeBoardOptions[] = [{ instances: 2, sharedSessions: true, sharedPosts: false }, { failJoin: 500 }, { failJoin: 400 }];
+  for (const candidate of stories) {
+    const base = await startFakeBoard();
+    const cand = await startFakeBoard(candidate);
+    boards.push(base, cand);
+    const result = await runShakedown({ baseline: { name: "local", url: base.url }, candidate: { name: "aws", url: cand.url }, runId: "abc123" });
+    const [en, ko, ja] = (["en", "ko", "ja"] as const).map((lang) => ruleReport(result.steps, result.verdict, { lang })!);
+    assert.deepEqual(ruleReport(result.steps, result.verdict), en, "기본은 영어");
+    for (const other of [ko, ja]) {
+      assert.notEqual(other.headline, en.headline);
+      assert.notEqual(other.cause, en.cause);
+      const machine = (r: typeof en) => r.fix && { target: r.fix.target, option: r.fix.option, value: r.fix.value, native: r.fix.native, auto_applicable: r.fix.auto_applicable };
+      assert.deepEqual(machine(other), machine(en));
+      if (en.fix) assert.notEqual(other.fix!.description, en.fix.description);
+      assert.equal(other.evidence.length, en.evidence.length);
+      assert.equal(other.confidence, en.confidence);
+    }
+  }
+  const down = await startFakeBoard();
+  const base = await startFakeBoard();
+  boards.push(base);
+  await down.close();
+  const result = await runShakedown({ baseline: { name: "local", url: base.url }, candidate: { name: "aws", url: down.url }, timeoutMs: 2000 });
+  assert.equal(ruleReport(result.steps, result.verdict, { lang: "ko" })?.headline, "aws에 접속할 수 없습니다");
+  assert.equal(ruleReport(result.steps, result.verdict, { lang: "ja" })?.headline, "aws に接続できません");
+});
+
+test("switchLine은 세 언어의 서버 전환 근거 줄을 모두 알아본다", () => {
+  for (const lang of ["en", "ko", "ja"] as const) {
+    const report = ruleReport(fixtureSteps(), fixtureVerdict, { lang })!;
+    assert.equal(switchLine(report.evidence), report.evidence.at(-1), lang);
+    assert.equal(switchLine(report.evidence.slice(0, -1)), undefined, lang);
+  }
 });

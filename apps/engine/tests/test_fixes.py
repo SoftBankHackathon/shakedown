@@ -494,3 +494,57 @@ def test_contract_fixture_fix_is_the_one_the_engine_applies():
     assert (fix['option'], fix['auto_applicable'], fix['value'] in ENV_FIXES) == ('env', True, True)
     # 정답 기록의 대상도 엔진이 실제로 env 수정을 적용하는 대상이어야 한다(지금은 gcp만).
     assert fix == ENV_FIX and fix['target'] in ENV_FIX_TARGETS
+
+
+def langs_sent(sd):
+    return [body['lang'] for method, _, body in sd.calls if method == 'POST']
+
+
+def test_report_lang_reaches_every_shakedown_of_the_deployment_including_the_fix_attempt(project, tmp_path):
+    # 시운전은 lang으로 원인 보고서 언어를 고른다. 수정 적용 뒤 2회차도 1회차와 같은 언어로 보고해야 한다.
+    sd = Runs('BLOCKED', 'PASS')
+    ds = DeploymentStore(tmp_path/'d.db', Runner(), gcp=Gcp(), shakedown=sd, poll_seconds=.001)
+    try:
+        id = wait(ds, ds.start(project, DeployRequest(targets=['local', 'gcp'], shakedown=True, lang='ko'))['id'])['id']
+        assert ds.get(id)['lang'] == 'ko'
+        ds.apply_fix(project, id)
+        assert wait(ds, id)['status'] == 'promoted'
+        assert langs_sent(sd) == ['ko', 'ko']
+    finally: ds.close()
+
+
+def test_report_lang_defaults_to_english_and_reaches_comparisons(project, tmp_path):
+    sd = Shakedown()
+    ds = DeploymentStore(tmp_path/'d.db', Runner(), gcp=Gcp(), shakedown=sd, poll_seconds=.001)
+    try:
+        assert wait(ds, ds.start(project, DeployRequest(targets=['local', 'gcp'], shakedown=True))['id'])['lang'] == 'en'
+        compare = CompareRequest(baseline=Endpoint(name='local', url='http://127.0.0.1:18080'), candidate=Endpoint(name='candidate', url='https://candidate.example'), lang='ja')
+        assert wait(ds, ds.start_comparison(project, compare)['id'])['lang'] == 'ja'
+        assert langs_sent(sd) == ['en', 'ja']
+    finally: ds.close()
+
+
+def test_fix_of_a_deployment_recorded_before_lang_existed_reports_in_english(project, tmp_path):
+    # lang이 생기기 전에 저장된 배포 기록에는 lang이 없다. 그 배포의 수정 적용도 시운전에 en을 보낸다.
+    sd = Runs('BLOCKED', 'PASS')
+    ds = DeploymentStore(tmp_path/'d.db', Runner(), gcp=Gcp(), shakedown=sd, poll_seconds=.001)
+    try:
+        d = blocked_local_gcp(ds, project)
+        del d['lang']
+        ds.save(d)
+        ds.apply_fix(project, d['id'])
+        assert wait(ds, d['id'])['status'] == 'promoted'
+        assert langs_sent(sd) == ['en', 'en']
+    finally: ds.close()
+
+
+def test_api_rejects_an_unknown_report_lang(store, project, tmp_path):
+    from fastapi.testclient import TestClient
+    from engine.api import create_app
+    ds = DeploymentStore(tmp_path/'d.db', Runner(), gcp=Gcp(), shakedown=Shakedown(), poll_seconds=.001)
+    with TestClient(create_app(store, ds)) as client:
+        deploy = client.post(f'/api/projects/{project.id}/deployments', json={'targets': ['local', 'gcp'], 'shakedown': True, 'lang': 'fr'})
+        compare = client.post(f'/api/projects/{project.id}/comparisons', json={'baseline': {'name': 'local', 'url': 'http://127.0.0.1:18080'},
+                                                                               'candidate': {'name': 'candidate', 'url': 'https://candidate.example'}, 'lang': 'fr'})
+        # 엔진은 요청 검증 오류를 400으로 돌려준다(api.py RequestValidationError 처리).
+        assert (deploy.status_code, compare.status_code) == (400, 400)

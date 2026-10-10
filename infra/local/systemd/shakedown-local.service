@@ -1,0 +1,17 @@
+[Unit]
+Description=Shakedown local Docker target (loopback API)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/shakedown/infra/local
+EnvironmentFile=/etc/shakedown-local.env
+ExecStart=/usr/bin/env node /opt/shakedown/infra/local/server.mjs
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { BsArrowRight, BsBoxSeam, BsChevronDown, BsChevronRight, BsGithub, BsInfoCircle, BsShieldCheck } from "react-icons/bs";
 import { ArchitecturePlanner } from "@/components/architecture-planner";
 import { HttpsSettings } from "@/components/https-settings";
-import { useT } from "@/components/i18n";
+import { useLang, useT } from "@/components/i18n";
 import { ImageBuilder } from "@/components/image-builder";
 import { ProviderIcon } from "@/components/provider-icon";
 import { RuntimeSettings } from "@/components/runtime-settings";
@@ -18,6 +18,7 @@ export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const t = useT();
+  const lang = useLang();
   const [project, setProject] = useState<Project | null>(null);
   const [deps, setDeps] = useState<Deployment[]>([]);
   const [shakedown, setShakedown] = useState(MOCK);
@@ -46,7 +47,7 @@ export default function ProjectPage() {
         if (plan?.selected_template) architectureId = plan.id;
       }
       const deploymentOptions = Object.fromEntries(Object.entries(opts).filter(([name]) => liveTargets.includes(name as TargetName)).map(([name, value]) => [name, name === "aws" && architectureId ? { sticky_sessions: false, tz: value.tz } : value]));
-      const d = await api.deploy(id, { architecture_plan_id: architectureId, shakedown: MOCK ? shakedown : liveTargets.length >= 2 || !!comparisonUrl.trim(), autofix: false, options: MOCK ? opts : deploymentOptions, targets: MOCK ? undefined : liveTargets, comparison: !MOCK && liveTargets.length === 1 && comparisonUrl.trim() ? { name: "candidate", url: comparisonUrl.trim() } : undefined });
+      const d = await api.deploy(id, { architecture_plan_id: architectureId, shakedown: MOCK ? shakedown : liveTargets.length >= 2 || !!comparisonUrl.trim(), autofix: false, options: MOCK ? opts : deploymentOptions, targets: MOCK ? undefined : liveTargets, comparison: !MOCK && liveTargets.length === 1 && comparisonUrl.trim() ? { name: "candidate", url: comparisonUrl.trim() } : undefined, lang });
       router.push(`/deployments/${d.id}`);
     } catch (e) {
       setError(e instanceof ApiError && e.status === 409 ? t("home.busy", { name: project?.name ?? id }) : errorMessage(e));
@@ -57,7 +58,7 @@ export default function ProjectPage() {
   async function compareExisting() {
     setBusy(true); setError(null);
     try {
-      const d = await api.compare(id, { baseline: { name: "local", url: baselineUrl.trim() }, candidate: { name: "candidate", url: comparisonUrl.trim() } });
+      const d = await api.compare(id, { baseline: { name: "local", url: baselineUrl.trim() }, candidate: { name: "candidate", url: comparisonUrl.trim() }, lang });
       router.push(`/deployments/${d.id}`);
     } catch (e) { setError(errorMessage(e)); setBusy(false); }
   }

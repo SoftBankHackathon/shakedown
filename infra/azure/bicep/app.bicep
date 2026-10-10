@@ -10,6 +10,9 @@ param dbHost string
 param dbName string
 param dbUsername string
 param dbPasswordSecretUri string
+// 기존 Spring 샘플용 스키마 초기화 작업은 PostgreSQL 스택에만 만든다. 다른 엔진은 init.bicep 작업(runtime.init_command)을 쓴다.
+@allowed([ 'postgres', 'mysql', 'mongodb' ])
+param databaseEngine string = 'postgres'
 param port int = 8080
 
 var placeholderImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
@@ -59,7 +62,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-resource schemaInit 'Microsoft.App/jobs@2024-03-01' = {
+resource schemaInit 'Microsoft.App/jobs@2024-03-01' = if (databaseEngine == 'postgres') {
   name: 'sd-schema-init'
   location: location
   identity: appIdentity
@@ -96,4 +99,3 @@ resource schemaInit 'Microsoft.App/jobs@2024-03-01' = {
 
 output containerApp string = app.name
 output publicUrl string = 'https://${app.properties.configuration.ingress.fqdn}'
-output schemaInitJob string = schemaInit.name
