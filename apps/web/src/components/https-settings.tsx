@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useT } from "@/components/i18n";
 import { Section } from "./ui";
 import { API, MOCK, ApiError } from "@/lib/api";
@@ -7,6 +7,8 @@ import type { HttpsBinding, HttpsTarget } from "@shakedown/contracts";
 
 export function HttpsSettings({ projectId }: { projectId: string }) {
   const t = useT();
+  // Error text only; a ref keeps language switches from restarting the status poll.
+  const tRef = useRef(t); useEffect(() => { tRef.current = t; }, [t]);
   const [target, setTarget] = useState<HttpsTarget>("aws");
   const [mode, setMode] = useState("tunnel");
   const [domain, setDomain] = useState("");
@@ -32,12 +34,12 @@ export function HttpsSettings({ projectId }: { projectId: string }) {
             return;
           }
           const e = await r.json();
-          throw new Error(e.detail ?? t("https.statusError"));
+          throw new Error(e.detail ?? tRef.current("https.statusError"));
         }
         const b: HttpsBinding = await r.json();
         if (alive) { setBinding(b); setDomain(b.domain); setStatusError(""); }
       } catch (e) {
-        if (alive) setStatusError(e instanceof Error ? e.message : t("https.connError"));
+        if (alive) setStatusError(e instanceof Error ? e.message : tRef.current("https.connError"));
       } finally {
         if (alive) setLoading(false);
       }
@@ -45,7 +47,7 @@ export function HttpsSettings({ projectId }: { projectId: string }) {
     void refresh();
     const timer = setInterval(() => void refresh(), 5000);
     return () => { alive = false; clearInterval(timer); };
-  }, [path, t]);
+  }, [path]);
   async function submit(recheck: boolean) {
     setBusy(true);
     setError("");

@@ -254,6 +254,7 @@ export default function ProjectPage() {
         <HttpsSettings projectId={id} />
 
         <Section id="deployments" title={t("project.deployments")} flush>
+          <div className="table-scroll">
           <table className="deploy-table">
             <thead>
               <tr><th>{t("hist.project")}</th><th>{t("hist.targets")}</th><th>{t("hist.result")}</th><th>{t("hist.ai")}</th><th>{t("hist.time")}</th><th><span className="sr-only">{t("hist.detail")}</span></th></tr>
@@ -279,6 +280,7 @@ export default function ProjectPage() {
               })}
             </tbody>
           </table>
+          </div>
           {deps.length === 0 && <div className="table-empty">{t("project.noDeployments")}</div>}
         </Section>
       </div>

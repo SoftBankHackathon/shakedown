@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { BsChevronRight, BsInfoCircle, BsLayoutSplit, BsX } from "react-icons/bs";
+import { BsChevronRight, BsInfoCircle, BsX } from "react-icons/bs";
 import { formatSeconds, MOCK } from "@/lib/api";
 import { useEngineOnline } from "@/lib/engine";
 import { useT } from "@/components/i18n";
@@ -54,14 +54,6 @@ export function Section({ title, right, icon, id, className, flush, children }: 
 
 export function Mono({ children }: { children: ReactNode }) {
   return <code className="font-mono text-[13px]">{children}</code>;
-}
-
-export function Spinner({ className = "" }: { className?: string }) {
-  return <span className={`spinner ${className}`} />;
-}
-
-export function Chip({ children }: { children: ReactNode }) {
-  return <span className="tag">{children}</span>;
 }
 
 /** Running clock. Only this element re-renders every tick, not the whole page. */
@@ -141,17 +133,6 @@ export function Breadcrumb({ parent, parentHref, current }: { parent: string; pa
       {parentHref ? <Link href={parentHref}>{parent}</Link> : <span className="muted">{parent}</span>}
       <BsChevronRight size={12} />
       <h1>{current}</h1>
-    </div>
-  );
-}
-
-export function Empty({ title, detail, children }: { title: string; detail: string; children?: ReactNode }) {
-  return (
-    <div className="empty-state">
-      <BsLayoutSplit size={34} />
-      <h2>{title}</h2>
-      <p>{detail}</p>
-      {children}
     </div>
   );
 }

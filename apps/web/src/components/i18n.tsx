@@ -7,7 +7,6 @@ export const LANGS = { ko: "KR", en: "EN", ja: "JP" } as const;
 export type Lang = keyof typeof LANGS;
 
 const DICT = {
-  tagline: { ko: "배포 · 사용 · 비교 · 판정", en: "deploy · use · compare · decide", ja: "デプロイ・利用・比較・判定" },
   "home.eyebrow": { ko: "SoftBank Hackathon 2026", en: "SoftBank Hackathon 2026", ja: "SoftBank Hackathon 2026" },
   // The official theme stays in English in every language.
   "home.title": { ko: "One Action, Infinite Clouds.", en: "One Action, Infinite Clouds.", ja: "One Action, Infinite Clouds." },
@@ -51,6 +50,7 @@ const DICT = {
   "home.accepted": { ko: "접수됨", en: "Accepted", ja: "受付済み" },
   "home.actions": { ko: "Action 기록", en: "Actions", ja: "Action 履歴" },
   "home.noActions": { ko: "아직 Action이 없습니다.", en: "No actions yet.", ja: "Action はまだありません。" },
+  "home.listError": { ko: "엔진에서 프로젝트·Action 목록을 받지 못했습니다: {detail}", en: "Could not load projects and actions from the engine: {detail}", ja: "エンジンからプロジェクトと Action の一覧を取得できませんでした: {detail}" },
   "pipe.source": { ko: "소스", en: "Source", ja: "ソース" },
   "pipe.image": { ko: "컨테이너 이미지", en: "Container image", ja: "コンテナイメージ" },
   "pipe.steps": { ko: "{passed}/{total}단계 통과", en: "{passed}/{total} steps passed", ja: "{passed}/{total} ステップ通過" },
@@ -226,9 +226,7 @@ const DICT = {
   "nav.settings": { ko: "설정", en: "Settings", ja: "設定" },
   "nav.guide": { ko: "사용 가이드", en: "Guide", ja: "使い方" },
   "nav.main": { ko: "주 메뉴", en: "Main menu", ja: "メインメニュー" },
-  "nav.workspace": { ko: "EMERALD 팀", en: "EMERALD TEAM", ja: "EMERALD チーム" },
   "nav.newAction": { ko: "새 Action", en: "New Action", ja: "新しい Action" },
-  "nav.history": { ko: "Action 기록 보기", en: "View actions", ja: "Action 履歴" },
   "nav.api": { ko: "API 설정", en: "API settings", ja: "API 設定" },
   "guide.title": { ko: "Shakedown 사용 가이드", en: "How Shakedown works", ja: "Shakedown の使い方" },
   "guide.intro": { ko: "서버가 켜지는 것과 사용자가 실제로 앱을 쓸 수 있는 것은 다릅니다. Shakedown은 배포 후 같은 사용자 흐름을 두 환경에서 직접 실행해 확인합니다.", en: "A server being up is not the same as users being able to use the app. Shakedown runs the same user journey on both environments after deploying.", ja: "サーバーが起動することと、ユーザーが実際にアプリを使えることは違います。Shakedown はデプロイ後に同じ操作を両環境で実行して確認します。" },
@@ -562,9 +560,4 @@ export function LangSwitcher() {
       ))}
     </div>
   );
-}
-
-export function Tagline() {
-  const t = useT();
-  return <span className="text-xs text-muted">{t("tagline")}</span>;
 }

@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useT } from "@/components/i18n";
 import { API, MOCK, type ArchitecturePlan, type ArchitectureRequest, type ArchitectureTier } from "@/lib/api";
 
@@ -11,6 +11,8 @@ const inputClass="mt-1 w-full rounded border border-line bg-bg p-2 focus-visible
 export function ArchitecturePlanner({projectId}:{projectId:string}) {
   const router=useRouter();
   const t=useT();
+  // Error text only; kept in a ref so switching language does not refetch and discard the draft.
+  const tRef=useRef(t);useEffect(()=>{tRef.current=t;},[t]);
   const [form,setForm]=useState<ArchitectureRequest>(defaults);
   const [plan,setPlan]=useState<ArchitecturePlan|null>(null);
   const [busy,setBusy]=useState(false);
@@ -21,12 +23,12 @@ export function ArchitecturePlanner({projectId}:{projectId:string}) {
     if(MOCK)return;
     let active=true;setLoading(true);setPlan(null);
     fetch(API+`/api/projects/${projectId}/architecture-plans/latest`,{cache:"no-store"}).then(async r=>{
-      if(!r.ok)throw new Error(t("arch.loadError"));
+      if(!r.ok)throw new Error(tRef.current("arch.loadError"));
       const data: ArchitecturePlan|null=await r.json();
       if(active && data){setPlan(data);setForm(data.requirements);setDirty(false);}
     }).catch(e=>{if(active)setError(e.message);}).finally(()=>{if(active)setLoading(false);});
     return ()=>{active=false;};
-  },[projectId,t]);
+  },[projectId]);
   function change(patch:Partial<ArchitectureRequest>){setForm(p=>({...p,...patch}));setDirty(true);}
   async function request(tier?:ArchitectureTier){
     setBusy(true);setError("");

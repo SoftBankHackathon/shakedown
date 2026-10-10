@@ -27,8 +27,10 @@ export default function Home() {
   const [pending, setPending] = useState(0);
   const [flash, setFlash] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
+  const lastPoll = useRef(0);
 
   // Merge a fresh list into the current one; rows that did not move keep their identity so finished rows don't re-render.
   const mergeActions = (fresh: Deployment[]) =>
@@ -42,18 +44,26 @@ export default function Home() {
 
   useEffect(() => {
     let alive = true;
-    api.projects().then((list) => { if (alive) setProjects(list); }).catch(() => {});
-    api.allDeployments().then((list) => { if (alive) mergeActions(list); }).catch(() => {});
-    // Engine-side history: refresh every few seconds while anything is still running, else every 15 s.
+    const fail = (e: unknown) => { if (alive) setListError(errorMessage(e)); };
+    api.projects().then((list) => { if (alive) { setProjects(list); setListError(null); } }).catch(fail);
+    const poll = () => {
+      lastPoll.current = Date.now();
+      api.allDeployments().then((list) => { if (alive) { mergeActions(list); setListError(null); } }).catch(fail);
+    };
+    poll();
+    // Engine-side history: refresh every 3 s while anything is still running, else every 15 s (measured from the last call, so timer drift cannot skip or double a window).
     const timer = setInterval(() => {
       const running = actionsRef.current.some((d) => !DONE.has(d.status));
-      if (!running && Date.now() % 15000 > 3000) return;
-      api.allDeployments().then((list) => { if (alive) mergeActions(list); }).catch(() => {});
+      if (Date.now() - lastPoll.current < (running ? 3000 : 15000) - 200) return;
+      poll();
     }, 3000);
     return () => { alive = false; clearInterval(timer); };
   }, []);
 
   const names = new Map(projects.map((p) => [p.id, p.name]));
+  // GET /api/projects does not carry last_deployment (only the single-project endpoint fills it), so take it from the history already loaded.
+  const latest = new Map<string, Deployment>();
+  for (const d of actions) { const cur = latest.get(d.project_id); if (!cur || d.created > cur.created) latest.set(d.project_id, d); }
 
   async function prepareImage() {
     if (!repo.trim()) { setError(t("home.needRepo")); return; }
@@ -202,7 +212,8 @@ export default function Home() {
       </form>
 
       <PageHeading id="projects" title={t("proj.title")} lead={t("proj.lead")} />
-      <ProjectTable rows={projects} />
+      {listError && <Alert>{t("home.listError", { detail: listError })}</Alert>}
+      <ProjectTable rows={projects} latest={latest} />
 
       <PageHeading id="actions" title={t("home.actions")} lead={t("hist.lead")} />
       <div className="stats">
@@ -216,7 +227,7 @@ export default function Home() {
   );
 }
 
-function ProjectTable({ rows }: { rows: Project[] }) {
+function ProjectTable({ rows, latest }: { rows: Project[]; latest: Map<string, Deployment> }) {
   const t = useT();
   return (
     <div className="table-wrap">
@@ -232,7 +243,7 @@ function ProjectTable({ rows }: { rows: Project[] }) {
         </thead>
         <tbody>
           {rows.map((p) => {
-            const last = p.last_deployment;
+            const last = p.last_deployment ?? latest.get(p.id);
             return (
               <tr key={p.id}>
                 <td>

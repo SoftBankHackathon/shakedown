@@ -63,7 +63,6 @@ const liveApi = {
 // mock 재생은 blocked에서 멈추지 않고 수정·2회차까지 저절로 가므로 수정 적용 버튼이 나오지 않는다.
 export const api: typeof liveApi = MOCK ? {
   ...mockApi,
-  projects: async () => [await mockApi.project("")],
   allDeployments: () => mockApi.deployments(),
   health: async () => ({ ok: true }),
   compare: async () => { throw new Error("Use live mode to compare existing environments."); },

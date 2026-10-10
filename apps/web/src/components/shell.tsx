@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { BsBoxSeam, BsCheck2, BsChevronDown, BsGear, BsLightningCharge, BsPlus } from "react-icons/bs";
+import { BsBoxSeam, BsCheck2, BsChevronDown, BsGear, BsLightningCharge, BsPersonFill, BsPlus } from "react-icons/bs";
 import { LangSwitcher, useT } from "@/components/i18n";
 import { Modal } from "@/components/ui";
 import { api, type Project } from "@/lib/api";
@@ -20,7 +20,11 @@ export function TopBar() {
 
   // The deployment page remembers the last run, so the 시운전 tab can return to it.
   useEffect(() => {
-    try { setLastDeployment(sessionStorage.getItem("lastDeployment")); } catch {}
+    // On a deployment page use its own id: this effect runs before the page's effect that stores it.
+    const here = pathname.match(/^\/deployments\/([^/]+)/)?.[1] ?? null;
+    let stored: string | null = null;
+    try { stored = sessionStorage.getItem("lastDeployment"); } catch {}
+    setLastDeployment(here ?? stored);
     setMenu(false);
   }, [pathname]);
 
@@ -76,7 +80,7 @@ export function TopBar() {
         <div className="header-tools">
           <button type="button" onClick={() => setHelp(true)}>{t("nav.guide")}</button>
           <LangSwitcher />
-          <Link href="/settings" className="avatar" aria-label={t("nav.api")}>JH</Link>
+          <Link href="/settings" className="avatar" aria-label={t("nav.api")}><BsPersonFill size={15} /></Link>
         </div>
       </header>
       {help && (

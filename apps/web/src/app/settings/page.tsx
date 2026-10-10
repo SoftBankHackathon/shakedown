@@ -1,6 +1,6 @@
 "use client";
 import Image from "next/image";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BsArrowRepeat, BsHddNetwork } from "react-icons/bs";
 import { useT } from "@/components/i18n";
 import { Alert, Breadcrumb, PageHeading } from "@/components/ui";
@@ -16,6 +16,8 @@ const DEFAULT_MODEL = MODELS[0].id;
 
 export default function Settings() {
   const t = useT();
+  // Error text only; a ref keeps language switches from reloading and overwriting an unsaved model choice.
+  const tRef = useRef(t); useEffect(() => { tRef.current = t; }, [t]);
   const online = useEngineOnline();
   const [status, setStatus] = useState<Connection | null>(null);
   const [model, setModel] = useState(DEFAULT_MODEL);
@@ -26,14 +28,14 @@ export default function Settings() {
   const [error, setError] = useState("");
   const load = useCallback(() => {
     fetch(API + "/api/settings/llm", { cache: "no-store" }).then(async (r) => {
-      if (!r.ok) throw new Error(t("ai.loadError"));
+      if (!r.ok) throw new Error(tRef.current("ai.loadError"));
       const s = await r.json(); setStatus(s); setError("");
       if (s.model) {
         setModel(s.model);
         setCustomModel(!MODELS.some((option) => option.id === s.model));
       }
     }).catch((e) => setError(e.message));
-  }, [t]);
+  }, []);
   useEffect(() => {
     if (MOCK) return;
     load();
