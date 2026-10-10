@@ -1,9 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { BsBoxSeam, BsCheck2, BsChevronDown, BsGear, BsLightningCharge, BsPlus, BsSquareFill } from "react-icons/bs";
+import { BsBoxSeam, BsCheck2, BsChevronDown, BsGear, BsLightningCharge, BsPlus } from "react-icons/bs";
 import { LangSwitcher, useT } from "@/components/i18n";
 import { Modal } from "@/components/ui";
 import { api, type Project } from "@/lib/api";
@@ -43,7 +44,7 @@ export function TopBar() {
   return (
     <>
       <header className="topbar">
-        <Link href="/" className="brand" aria-label="Shakedown"><BsSquareFill size={21} />shakedown</Link>
+        <Link href="/" className="brand" aria-label="Shakedown"><Image src="/brand/shakedown-symbol.png" alt="" width={34} height={34} priority />shakedown</Link>
         <span className="header-divider" />
         <div className="workspace-picker">
           <button type="button" aria-expanded={menu} onClick={() => setMenu((m) => !m)} className="workspace-button">
@@ -81,6 +82,7 @@ export function TopBar() {
       {help && (
         <Modal title={t("guide.title")} close={() => setHelp(false)}>
           <div className="guide">
+            <Image src="/brand/shakedown-logo.png" alt="Shakedown — One Action, Infinity Clouds" width={240} height={80} className="guide-logo" />
             <p>{t("guide.intro")}</p>
             <ol>
               {([1, 2, 3, 4] as const).map((n) => (
@@ -99,4 +101,10 @@ export function TopBar() {
       )}
     </>
   );
+}
+
+/** Accessibility skip link in the current language (the layout itself is a server component). */
+export function SkipLink() {
+  const t = useT();
+  return <a className="skip-link" href="#main">{t("ui.skip")}</a>;
 }

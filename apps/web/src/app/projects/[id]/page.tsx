@@ -41,7 +41,7 @@ export default function ProjectPage() {
       let architectureId: string | undefined;
       if (!MOCK && liveTargets.includes("aws")) {
         const response = await fetch(`${API}/api/projects/${id}/architecture-plans/latest`, { cache: "no-store" });
-        if (!response.ok) throw new Error("아키텍처 선택 상태를 확인하지 못했습니다.");
+        if (!response.ok) throw new Error(t("project.planCheckError"));
         const plan = await response.json();
         if (plan?.selected_template) architectureId = plan.id;
       }
@@ -247,7 +247,7 @@ export default function ProjectPage() {
           </Section>
         )}
         <RuntimeSettings key={id} project={project} onSaved={setProject} />
-        <p className="hint">AWS가 선택된 Action은 저장한 최신 아키텍처를 적용합니다. 선택한 설계가 없으면 기존 AWS 기본 구성으로 배포합니다.</p>
+        <p className="hint">{t("project.awsPlanNote")}</p>
         <ArchitecturePlanner key={id + JSON.stringify(project.runtime)} projectId={id} />
         <ImageBuilder projectId={id} />
         <HttpsSettings projectId={id} />
