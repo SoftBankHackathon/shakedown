@@ -22,6 +22,16 @@ test("숫자 경로 조각은 같은 것으로 본다", () => {
   assert.notEqual(normalizePath("/board"), normalizePath("/"));
 });
 
+test("MongoDB ObjectId(24자 hex)와 UUID 경로 조각도 환경마다 다른 번호라 같은 것으로 본다", () => {
+  assert.equal(normalizePath("/items/5f8d0d55b54764421b7156c9"), normalizePath("/items/64b7f1a2c3d4e5f60718293a"));
+  assert.equal(
+    normalizePath("/workspaces/123e4567-e89b-12d3-a456-426614174000/home"),
+    normalizePath("/workspaces/9b2c1d8e-0f3a-4b5c-8d7e-6f5a4b3c2d1e/home"),
+  );
+  // 낱말이 섞인 조각은 번호가 아니다.
+  assert.notEqual(normalizePath("/posts/my-first-post"), normalizePath("/posts/other-post"));
+});
+
 test("둘 다 실패하면 both_failed, 둘 다 건너뛰면 skipped", () => {
   const r = (status: StepResult["status"]): StepResult => ({
     index: 1, title: "t", status, error: null, final_path: null, final_status: null, hops: [], checks: [], elapsed_ms: 0,

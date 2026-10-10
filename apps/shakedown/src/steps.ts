@@ -4,6 +4,21 @@ import type { Page, Session } from "./http.ts";
 import { findForm, findLinkByText, pageText } from "./html.ts";
 import { checkExpect } from "./checks.ts";
 
+/**
+ * words 중 하나가 낱말로 들어 있는지 보는 함수를 만든다. 앞뒤가 글자면 낱말이 아니다(/blog-outline의 log-out, /badminton의 admin).
+ * camelCase는 낱말로 나눠 본다(deleteAccount → delete Account).
+ */
+function wordMatcher(words: string): (text: string) => boolean {
+  const re = new RegExp(`(?<![a-z])(${words})(?![a-z])`, "i");
+  return (text) => re.test(text.replace(/([a-z])([A-Z])/g, "$1 $2"));
+}
+
+/**
+ * 시운전이 건드리지 않는 주소·글자: GET이어도 상태를 바꾸는 로그아웃·삭제와, 관리자·결제 기능.
+ * 실행 중에 이런 링크·폼을 보내지 않고, 둘러보기와 AI 시나리오 검사도 이것을 쓴다.
+ */
+export const isForbidden = wordMatcher("log[\\s_-]?out|sign[\\s_-]?out|delete|remove|destroy|admin\\w*|checkout|payments?|billing|purchases?");
+
 function pathOf(href: string): string {
   const url = new URL(href, "http://placeholder");
   return url.pathname + url.search;
@@ -19,6 +34,10 @@ async function act(session: Session, step: Step): Promise<Page> {
     const form = findForm(session.lastHtml(), step.form_action ?? "");
     if (!form) throw new Error(`form ${step.form_action} not found on the current page`);
     const fields = { ...form.fields, ...Object.fromEntries(step.fields.map((f) => [f.name, f.value])) };
+    // AI가 쓴 시나리오가 삭제(숨은 _method=delete 포함)·결제 폼을 고르더라도 기준·비교 환경의 데이터를 지우거나 결제하지 않게 보내지 않는다.
+    if (isForbidden(form.action) || fields._method?.toLowerCase() === "delete") {
+      throw new Error(`form ${step.form_action} looks unsafe (delete, log out, admin or payment); not submitted`);
+    }
     // GET 폼은 브라우저처럼 값을 쿼리로 붙인다. fetch는 GET 요청에 본문을 허용하지 않는다.
     if (form.method === "GET") {
       const target = new URL(form.action, "http://placeholder");
@@ -32,6 +51,8 @@ async function act(session: Session, step: Step): Promise<Page> {
   if (!step.link_text) throw new Error("click_link step has no link_text");
   const href = findLinkByText(session.lastHtml(), step.link_text);
   if (!href) throw new Error(`link "${step.link_text}" not found on the current page`);
+  // 링크는 글자 일부만 맞아도 첫 링크를 고른다. "post"가 "Delete post"를 고를 수 있어서 간 곳 주소로 한 번 더 거른다.
+  if (isForbidden(pathOf(href))) throw new Error(`link "${step.link_text}" goes to ${pathOf(href)}, which looks unsafe (delete, log out, admin or payment); not followed`);
   return session.request("GET", pathOf(href));
 }
 

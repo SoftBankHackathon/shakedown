@@ -129,6 +129,71 @@ test("로그인 hop은 튕긴 hop보다 앞에 있는 POST 로그인 중 마지�
   );
 });
 
+// 둘러보기 시나리오(visit만)의 한 단계. 기준 환경은 그 화면에 머물고, 비교 환경은 hops대로 끝난다.
+function crawlStep(path: string, cloudHops: Hop[]): StepDiff {
+  const result = (finalPath: string, hops: Hop[]) => ({
+    index: 1, title: `Open ${path}`, status: "passed" as const, error: null, final_path: finalPath, final_status: 200, hops,
+    checks: [{ name: "http", ok: true, detail: "HTTP 200" }], elapsed_ms: 1,
+  });
+  return {
+    index: 1, baseline: "local", candidate: "aws", title: `Open ${path}`,
+    local: result(path, [hop("GET", path, 200, null)]),
+    cloud: result(cloudHops.at(-1)!.path, cloudHops),
+    kind: "path_diff", severity: "critical", reasons: [`ended on ${path} (local) vs / (aws)`], classified_by: "rule",
+  };
+}
+
+test("로그인한 적이 없는데 \"/\"로 돌아간 것은 로그인 풀림이 아니다(게시판이 아닌 앱의 둘러보기)", () => {
+  const d = crawlStep("/dashboard", [hop("GET", "/dashboard", 302, null), hop("GET", "/", 200, null)]);
+  const report = ruleReport([d], { status: "BLOCKED", first_divergence: 1, summary: "" });
+  assert.equal(report?.headline, "Step 1 (Open /dashboard) differs between local and aws");
+  assert.equal(report?.fix, null);
+});
+
+test("튕긴 hop 자체가 로그인 POST면 앞에 다른 로그인이 없어도 로그인 풀림이다", () => {
+  const d = crawlStep("/board", [hop("POST", "/login", 302, null), hop("GET", "/", 200, null)]);
+  const report = ruleReport([d], { status: "BLOCKED", first_divergence: 1, summary: "" });
+  assert.equal(report?.headline, "Login is lost on aws: requests land on different instances");
+});
+
+test("로그인 주소가 /login이 아닌 앱(/signin, /auth/login, /api/login, /session)도 로그인 POST 뒤 튕기면 로그인 풀림이다", () => {
+  for (const login of ["/signin", "/auth/login", "/api/login", "/session"]) {
+    const d = crawlStep("/board", [hop("POST", login, 302, null), hop("GET", "/board", 302, null), hop("GET", "/login", 200, null)]);
+    const report = ruleReport([d], { status: "BLOCKED", first_divergence: 1, summary: "" });
+    assert.equal(report?.headline, "Login is lost on aws: requests land on different instances", login);
+  }
+  // 글쓴이(/author)·가입(/auth/register)·세션 하위 자원은 로그인이 아니다. 로그인 칸은 주소의 마지막 칸이어야 한다.
+  for (const notLogin of ["/author", "/auth/register", "/api/sessions/1/messages"]) {
+    const d = crawlStep("/board", [hop("POST", notLogin, 302, null), hop("GET", "/board", 302, null), hop("GET", "/login", 200, null)]);
+    assert.equal(ruleReport([d], { status: "BLOCKED", first_divergence: 1, summary: "" })?.headline, "Step 1 (Open /board) differs between local and aws", notLogin);
+  }
+});
+
+test("밑줄 로그인 주소(/users/sign_in)와 /login이 아닌 로그인 화면(/signin, /auth/login)으로 튕긴 것도 로그인 풀림이다", () => {
+  for (const [login, page] of [
+    ["/users/sign_in", "/users/sign_in"], ["/signin", "/signin"], ["/auth/login", "/auth/login"],
+    // Spring Security의 로그인 처리 주소
+    ["/perform_login", "/login"], ["/j_spring_security_check", "/login"],
+  ]) {
+    const d = crawlStep("/dashboard", [hop("POST", login, 302, null), hop("GET", "/dashboard", 302, null), hop("GET", page, 200, null)]);
+    const report = ruleReport([d], { status: "BLOCKED", first_divergence: 1, summary: "" });
+    assert.equal(report?.headline, "Login is lost on aws: requests land on different instances", `${login} → ${page}`);
+  }
+});
+
+test("두 환경 모두 \"/\"에서 끝났는데 쓴 글이 비교 환경에서만 안 보이면 데이터 유실이다(\"/\"가 로그인 화면이 아닌 앱)", () => {
+  const result = (shown: boolean) => ({
+    index: 2, title: "Check the note", status: shown ? "passed" as const : "failed" as const, error: shown ? null : "'note abc' not shown",
+    final_path: "/", final_status: 200, hops: [hop("GET", "/", 200, null)],
+    checks: [{ name: "http", ok: true, detail: "HTTP 200" }, { name: "text", ok: shown, detail: shown ? "'note abc' shown" : "'note abc' not shown" }], elapsed_ms: 1,
+  });
+  const d: StepDiff = {
+    index: 2, baseline: "local", candidate: "aws", title: "Check the note", local: result(true), cloud: result(false),
+    kind: "env_diff", severity: "critical", reasons: ["passed on local, failed on aws"], classified_by: "rule",
+  };
+  assert.equal(ruleReport([d], { status: "BLOCKED", first_divergence: 2, summary: "" })?.headline, "Data is lost on aws: what was just written does not come back");
+});
+
 test("fixture 시도 2(PASS)에는 보고서가 없다", () => {
   assert.equal(ruleReport(withNames(fixture.attempts[1].steps), fixture.attempts[1].verdict as Verdict), null);
 });
@@ -140,6 +205,14 @@ test("링크를 못 찾은 실패는 'request failed:'로 시작해도 접속 �
   const report = ruleReport(steps, { status: "BLOCKED", first_divergence: 7, summary: "" });
   assert.equal(report?.headline, "Data is lost on aws: what was just written does not come back");
   assert.deepEqual(report?.evidence, [`Step 7 (Open the new post) worked on local (ended on /posts/11) but not on aws (${error}).`]);
+});
+
+test("삭제·로그아웃이라 보내지 않은 단계는 'request failed:'로 시작해도 접속 실패가 아니다", () => {
+  const steps = withNames(fixture.attempts[1].steps);
+  const error = 'request failed: link "post" goes to /posts/3/delete, which looks unsafe (delete, log out, admin or payment); not followed';
+  steps[6] = { ...steps[6], kind: "env_diff", severity: "critical", cloud: { ...steps[6].cloud, status: "failed", error, final_path: null, final_status: null, hops: [], checks: [] } };
+  const report = ruleReport(steps, { status: "BLOCKED", first_divergence: 7, summary: "" });
+  assert.notEqual(report?.headline, "aws is not reachable");
 });
 
 const boards: Array<{ close: () => Promise<void> }> = [];
@@ -187,9 +260,9 @@ test("이야기 3: 세션은 공유돼도 글 저장소가 서버마다 따로�
     fix: {
       target: "aws",
       option: "code_change",
-      value: "use the shared database (RDS) via SPRING_DATASOURCE_URL",
+      value: "point every instance at one shared managed database via an env var (e.g. DATABASE_URL, SPRING_DATASOURCE_URL)",
       description: "Point every instance at one persistent database instead of an embedded one.",
-      native: "App Runner env var SPRING_DATASOURCE_URL → RDS endpoint",
+      native: "Cloud Run / ECS / Container Apps env var (e.g. DATABASE_URL, SPRING_DATASOURCE_URL) → shared managed DB (Cloud SQL / RDS / Azure Database)",
       auto_applicable: false,
     },
     confidence: "medium",
@@ -213,7 +286,9 @@ test("이야기 4: 회원가입이 500이면 서버 오류(DB 설정)", async ()
       option: "code_change",
       value: "move the DB URL to environment variables",
       description: "Read the DB URL, user and password from environment variables instead of hard-coding them.",
-      native: "application.yml spring.datasource.url: ${SPRING_DATASOURCE_URL} (App Runner env var → RDS endpoint)",
+      native:
+        "read the DB URL from an env var (e.g. DATABASE_URL; in Spring spring.datasource.url: ${SPRING_DATASOURCE_URL}) " +
+        "set on Cloud Run / ECS / Container Apps to the managed DB (Cloud SQL / RDS / Azure Database)",
       auto_applicable: false,
     },
     confidence: "medium",

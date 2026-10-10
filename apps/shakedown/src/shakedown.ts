@@ -18,9 +18,9 @@ export type ShakedownInput = {
   /** 두 환경이 모두 끝낸 단계가 늘 때마다 그때까지의 비교 결과를 받는다. */
   onProgress?: (steps: StepDiff[]) => void;
 };
+// 시나리오를 어디서 골랐는지(scenario_source)는 고른 쪽(server.ts·cli.ts, choose.ts)이 안다. 여기서는 받은 시나리오로 돌리기만 한다.
 export type ShakedownResult = {
   scenario: Scenario;
-  scenario_source: "saved" | "fallback";
   steps: StepDiff[];
   verdict: Verdict;
 };
@@ -51,7 +51,6 @@ export async function runShakedown(input: ShakedownInput): Promise<ShakedownResu
   const diffs = compareSteps(base, cand, names);
   return {
     scenario,
-    scenario_source: input.scenario ? "saved" : "fallback",
     steps: diffs,
     verdict: judge(diffs),
   };

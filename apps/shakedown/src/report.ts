@@ -6,11 +6,19 @@ import type { Fix, Hop, Report, StepDiff, StepResult } from "@shakedown/contract
 import { normalizePath } from "./compare.ts";
 import type { Verdict } from "./verdict.ts";
 
-/** 로그인 화면. kty-board는 "/"가 로그인 화면이다. */
+/**
+ * 로그인 화면. kty-board는 "/"가 로그인 화면이다. 게시판이 아닌 앱은 마지막 칸이 login·signin·sign_in으로 끝나는 주소(/signin, /auth/login, /users/sign_in, /perform_login)를 쓴다.
+ * 로그인 칸은 마지막 칸이어야 한다(/auth/register는 아님). kty-board처럼 /login으로 시작하는 주소는 지금처럼 받는다.
+ */
 function isSignIn(path: string | null): boolean {
   if (path === null) return false;
   const p = path.split("?")[0];
-  return p === "/" || p.startsWith("/login");
+  return p === "/" || p.startsWith("/login") || /\/([a-z]*[_-])?(log|sign)[-_]?in\/?$/i.test(p);
+}
+
+/** 로그인을 받는 POST. 로그인 화면 주소에 더해, 로그인 폼이 흔히 보내는 /auth·/session(s)·Spring Security 기본값도 마지막 칸이면 로그인으로 본다. */
+function isSignInPost(h: Hop): boolean {
+  return h.method === "POST" && (isSignIn(h.path) || /\/(auth|sessions?|j_spring_security_check)\/?$/i.test(h.path.split("?")[0]));
 }
 
 function hopChain(hops: Hop[]): string {
@@ -23,24 +31,26 @@ function outcome(r: StepResult): string {
   return r.error ? `ended on ${r.final_path}, ${r.error}` : `ended on ${r.final_path}`;
 }
 
-// steps.ts는 폼·링크를 못 찾거나 리다이렉트가 너무 많을 때도 "request failed:"를 붙인다. 이건 접속 실패가 아니다.
+// steps.ts는 폼·링크를 못 찾거나, 삭제·로그아웃이라 보내지 않았거나, 리다이렉트가 너무 많을 때도 "request failed:"를 붙인다. 이건 접속 실패가 아니다.
 function isUnreachable(r: StepResult): boolean {
   return (
     r.final_status === null &&
     r.error !== null &&
     r.error.startsWith("request failed:") &&
-    !/not found on the current page|too many redirects/.test(r.error)
+    !/not found on the current page|looks unsafe|too many redirects/.test(r.error)
   );
 }
 
 /**
  * 기준 환경은 로그인이 필요한 화면에 머물렀는데 비교 환경만 로그인 화면으로 되돌려졌다면,
  * 되돌린 hop(로그인 직후의 POST, 또는 보호된 화면 GET)의 위치를 돌려준다. 없으면 -1.
+ * 게시판이 아닌 앱은 "/"가 로그인 화면이 아닐 수 있어서, 로그인한 적 없이 "/"로 돌아간 것(GET만 하는 둘러보기 등)은
+ * 로그인 풀림이 아니다. 그래서 튕긴 hop과 그 앞(앞 단계 포함)에 로그인 POST가 있을 때만 로그인 풀림으로 본다.
  */
-function signInBounce(d: StepDiff): number {
+function signInBounce(diffs: StepDiff[], d: StepDiff): number {
   if (d.local.status !== "passed" || isSignIn(d.local.final_path) || !isSignIn(d.cloud.final_path)) return -1;
   const hops = d.cloud.hops;
-  return hops.findIndex((from, i) => {
+  const bounce = hops.findIndex((from, i) => {
     const to = hops[i + 1];
     return (
       to !== undefined && to.method === "GET" && isSignIn(to.path) &&
@@ -48,15 +58,17 @@ function signInBounce(d: StepDiff): number {
       (from.method === "POST" || !isSignIn(from.path))
     );
   });
+  // 튕긴 hop 자체가 로그인 POST인 경우(로그인 응답이 바로 로그인 화면으로 보냄)도 넣으려고 bounce + 1까지 본다.
+  return bounce >= 0 && loginHop(diffs, d, bounce + 1) ? bounce : -1;
 }
 
 /**
- * 로그인을 받은 hop: 튕긴 hop 앞의 비교 환경 hop 중 마지막 POST 로그인.
+ * 로그인을 받은 hop: 그 단계의 비교 환경 hop 중 앞에서 end개(앞 단계 hop은 모두) 안의 마지막 POST 로그인.
  * Cloud Run처럼 요청이 가끔만 다른 서버로 가면 로그인 단계는 통과하고 뒤 단계에서 튕긴다. 그래서 앞 단계까지 거슬러 찾는다.
  */
-function loginHop(diffs: StepDiff[], first: StepDiff, bounce: number): Hop | undefined {
+function loginHop(diffs: StepDiff[], first: StepDiff, end: number): Hop | undefined {
   const earlier = diffs.filter((d) => d.index < first.index).flatMap((d) => d.cloud.hops);
-  return [...earlier, ...first.cloud.hops.slice(0, bounce)].findLast((h) => h.method === "POST" && isSignIn(h.path));
+  return [...earlier, ...first.cloud.hops.slice(0, end)].findLast(isSignInPost);
 }
 
 /**
@@ -116,7 +128,7 @@ export function ruleReport(diffs: StepDiff[], verdict: Verdict, { canApplyEnv = 
     );
   }
 
-  const bounce = signInBounce(first);
+  const bounce = signInBounce(diffs, first);
   if (bounce >= 0) {
     const hops = first.cloud.hops;
     const before = hops[bounce - 1];
@@ -147,7 +159,10 @@ export function ruleReport(diffs: StepDiff[], verdict: Verdict, { canApplyEnv = 
     );
   }
 
-  if (candOnly && !isSignIn(candOnly.cloud.final_path) && lostWrite(candOnly.cloud)) {
+  // 비교 환경만 로그인 화면에서 끝났으면 쓴 글이 안 보이는 게 아니라 로그인이 풀린 것이다. 기준 환경도 같은 화면에서 끝났다면
+  // 그 화면은 이 앱의 보통 화면이다("/"가 로그인 화면이 아닌 앱이 쓰기 뒤 "/"에서 확인하는 경우).
+  const bouncedToSignIn = candOnly !== undefined && isSignIn(candOnly.cloud.final_path) && !isSignIn(candOnly.local.final_path);
+  if (candOnly && !bouncedToSignIn && lostWrite(candOnly.cloud)) {
     return report(
       `Data is lost on ${cand}: what was just written does not come back`,
       `${cand} accepted the write but did not show it afterwards, while ${base} did. Writes are not persisted or not shared on ${cand}: ` +
@@ -156,9 +171,10 @@ export function ruleReport(diffs: StepDiff[], verdict: Verdict, { canApplyEnv = 
       {
         target: cand,
         option: "code_change",
-        value: "use the shared database (RDS) via SPRING_DATASOURCE_URL",
+        // 앱 스택(Spring·Node·Python)과 클라우드마다 이름이 달라서, 공통 방법을 쓰고 흔한 env 이름은 예로만 든다.
+        value: "point every instance at one shared managed database via an env var (e.g. DATABASE_URL, SPRING_DATASOURCE_URL)",
         description: "Point every instance at one persistent database instead of an embedded one.",
-        native: "App Runner env var SPRING_DATASOURCE_URL → RDS endpoint",
+        native: "Cloud Run / ECS / Container Apps env var (e.g. DATABASE_URL, SPRING_DATASOURCE_URL) → shared managed DB (Cloud SQL / RDS / Azure Database)",
         auto_applicable: false,
       },
       "medium",
@@ -178,7 +194,9 @@ export function ruleReport(diffs: StepDiff[], verdict: Verdict, { canApplyEnv = 
         option: "code_change",
         value: "move the DB URL to environment variables",
         description: "Read the DB URL, user and password from environment variables instead of hard-coding them.",
-        native: "application.yml spring.datasource.url: ${SPRING_DATASOURCE_URL} (App Runner env var → RDS endpoint)",
+        native:
+          "read the DB URL from an env var (e.g. DATABASE_URL; in Spring spring.datasource.url: ${SPRING_DATASOURCE_URL}) " +
+          "set on Cloud Run / ECS / Container Apps to the managed DB (Cloud SQL / RDS / Azure Database)",
         auto_applicable: false,
       },
       "medium",

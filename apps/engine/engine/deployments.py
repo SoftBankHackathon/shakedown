@@ -533,6 +533,9 @@ class DeploymentStore:
         # 시운전은 이번 실행의 AI 비용만 알려 준다. 앞 회차·앞 클라우드 비용을 잃지 않게 시작 전까지의 합에 더한다.
         cost_before = d['ai_cost']
         hints = {'uses_server_session': project.analysis.uses_server_session}
+        if project.runtime:
+            # 시운전은 시나리오가 없으면 기준 환경을 둘러본다. runtime 프로젝트는 사용자가 정한 상태 확인 경로도 열게 알려 준다.
+            hints['health_path'] = project.runtime['health_path']
         if can_apply_env:
             # 시운전은 이 힌트가 있을 때만 env 수정안을 자동 적용 가능(auto_applicable)으로 표시한다.
             hints['can_apply_env'] = True

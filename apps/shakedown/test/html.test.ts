@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { findForm, findLinkByText, pageText } from "../src/html.ts";
+import { findForm, findLinkByText, listForms, listLinks, pageText, pageTitle } from "../src/html.ts";
 
 // kty-board detail.html을 서버가 그린 모양 (댓글 폼 + 같은 페이지의 삭제 폼)
 const detail = `
@@ -58,4 +58,52 @@ test("disabled 입력칸은 보내지 않고, 글자 속 checked는 체크로 �
     <input type=CHECKBOX name="y" checked>
   </form>`;
   assert.deepEqual(findForm(html, "/f")?.fields, { y: "on" });
+});
+
+test("제목은 <title> 글자, 없으면 빈 글자", () => {
+  assert.equal(pageTitle("<html><head><title> Shop &amp; Co </title></head></html>"), "Shop & Co");
+  assert.equal(pageTitle(`{"language":"node"}`), "");
+});
+
+test("링크는 href와 보이는 글자를 모두 돌려주고 href 없는 링크는 뺀다", () => {
+  const html = `<a href="/about">About <b>us</b></a><a name="top">Top</a><a href='mailto:a@b.c'>Mail</a>`;
+  assert.deepEqual(listLinks(html), [
+    { href: "/about", text: "About us" },
+    { href: "mailto:a@b.c", text: "Mail" },
+  ]);
+});
+
+test("폼 목록은 action이 적힌(비어 있지 않은) 폼만, 입력칸 이름과 종류를 담고 버튼과 숨은 칸은 뺀다", () => {
+  const html = `
+    <form action="/join" method="post">
+      <input name="email" type="email"><input type="password" name="password"><input type="hidden" name="_csrf" value="t">
+      <select name="plan"><option>free</option></select><textarea name="bio"></textarea>
+      <input type="submit" name="go" value="Go"><button type="submit">Join</button>
+    </form>
+    <form method="post"><input name="q"></form>
+    <form action="" method="post"><input name="q"></form>
+    <form action="/search"><input name="q"></form>`;
+  assert.deepEqual(listForms(html), [
+    {
+      action: "/join",
+      method: "POST",
+      inputs: [
+        { name: "email", type: "email" },
+        { name: "password", type: "password" },
+        { name: "plan", type: "select" },
+        { name: "bio", type: "textarea" },
+      ],
+    },
+    { action: "/search", method: "GET", inputs: [{ name: "q", type: "text" }] },
+  ]);
+});
+
+test("select는 브라우저처럼 고른 항목을, 없으면 첫 항목을 보내고 disabled면 보내지 않는다", () => {
+  const html = `<form action="/f" method="post">
+    <select name="country"><option value="kr">Korea</option><option value="jp" selected>Japan</option></select>
+    <select name="plan"><option>free</option><option>pro</option></select>
+    <select name="old" disabled><option value="x">x</option></select>
+    <select name="none"></select>
+  </form>`;
+  assert.deepEqual(findForm(html, "/f")?.fields, { country: "jp", plan: "free" });
 });

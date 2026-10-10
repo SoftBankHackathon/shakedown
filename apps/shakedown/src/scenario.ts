@@ -1,6 +1,17 @@
-// 요청에 시나리오가 없을 때 쓰는 kty-board 기본 시나리오(8단계).
-// packages/contracts fixture의 scenario와 똑같이 유지한다.
+// kty-board 기본 시나리오(8단계)와 시나리오 모양 검사.
+// 기본 시나리오는 packages/contracts fixture의 scenario와 똑같이 유지한다.
 import type { Scenario } from "@shakedown/contracts";
+
+const ACTIONS = new Set(["visit", "submit_form", "click_link"]);
+
+/** 단계마다 제목과 아는 action이 있는지. 단계가 0개인 시나리오는 아무것도 안 하고 PASS가 되므로 받지 않는다. */
+export function isScenario(value: unknown): value is Scenario {
+  const s = value as Partial<Scenario> | null;
+  return (
+    Array.isArray(s?.steps) && s.steps.length > 0 &&
+    s.steps.every((step) => typeof step?.title === "string" && ACTIONS.has(step.action))
+  );
+}
 
 const visit = (title: string, path: string, pathStartsWith: string | null = null) => ({
   title,
