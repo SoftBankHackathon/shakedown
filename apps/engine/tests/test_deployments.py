@@ -90,3 +90,19 @@ def test_timeout_cleans_up_without_shakedown(project, tmp_path):
         assert runner.calls[-1][0] == 'DELETE'
         assert not d['attempts']
     finally: ds.close()
+
+@pytest.mark.parametrize('reported,expected', [('http://192.0.2.1:18080','deployed'), ('http://192.0.2.2:18080','failed')])
+def test_direct_local_origin_flows_through_deployment_store(project,tmp_path,monkeypatch,reported,expected):
+    monkeypatch.setenv('LOCAL_DELIVERY_MODE','direct')
+    monkeypatch.setenv('LOCAL_PUBLIC_URL','http://192.0.2.1:18080')
+    class DirectRunner(Runner):
+        def call(self,method,path,body=None):
+            state=super().call(method,path,body)
+            if method=='GET': state['url']=reported
+            return state
+    ds=DeploymentStore(tmp_path/'direct.db',DirectRunner())
+    try:
+        d=finish(ds,ds.start(project,DeployRequest())['id'])
+        assert d['status']==expected
+        if expected=='deployed':assert d['targets']['local']['url']==reported
+    finally:ds.close()

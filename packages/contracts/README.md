@@ -59,3 +59,9 @@ Claude 연결 상태/연결 테스트/해제 및 이미지 계획/비동기 빌�
 ### v0.1.3 제안 — AWS 아키텍처 판단
 
 ArchitectureRequest/Plan/Tier와 계획 생성·최근 조회·선택 저장 API를 추가합니다. `aws-architecture.v1`은 규칙/AI 출처와 근거, 누락 입력, 차단 항목, 세 프리셋을 반환합니다. 계획은 DB에 저장되지만 인프라 적용은 하지 않으며 `deployment.ready=false`입니다. PR #11의 Claude 연결에 의존하는 후속 변경입니다.
+
+- 2026-10-10 local direct delivery: no request/response schema change. Operator
+  configuration can replace the Tunnel origin with one exact HTTP(S) origin;
+  readiness still requires that advertised URL to return 200. One direct endpoint
+  reserves one deployment until DELETE (409 for another ID), with persistent DB
+  volume semantics unchanged. Generated services restart unless explicitly stopped.

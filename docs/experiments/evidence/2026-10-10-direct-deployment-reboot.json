@@ -1,0 +1,71 @@
+{
+  "prepare": {
+    "api_deploy_none": true,
+    "api_deploy_postgres": true,
+    "idempotent_post": true,
+    "competing_deployment_409": true,
+    "delete_none_204": true,
+    "logs_without_tunnel": true,
+    "count": 2,
+    "no_tunnel": true,
+    "restart_policies": true,
+    "boot_id": "f392ef8d-4e72-4246-b073-baef25b85ebe"
+  },
+  "verify": {
+    "actual_host_reboot": true,
+    "automatic_api_recovery": true,
+    "automatic_app_db_recovery": true,
+    "count": 2,
+    "running_containers": [
+      "sd-dep-directpg-app-1",
+      "sd-dep-directpg-db-1"
+    ],
+    "reservation_survives_reboot": true
+  },
+  "stop": {
+    "delete_204": true,
+    "repeat_delete_204": true,
+    "get_404": true,
+    "containers": 0,
+    "retained_volumes": [
+      "sd-dep-directpg_pgdata"
+    ],
+    "boot_id": "ee966c26-10a6-4378-aa1c-edd7db05a411"
+  },
+  "verify-stop": {
+    "second_host_reboot": true,
+    "deleted_containers_not_resurrected": true,
+    "tombstone_preserved": true
+  },
+  "unit_summary": [
+    "# tests 16",
+    "# pass 16",
+    "# fail 0"
+  ],
+  "systemd_enabled": "enabled",
+  "external_after_reboot": {
+    "language": "node",
+    "database": true,
+    "count": 2
+  },
+  "base_commit": "85c12a53b5a23ffc535ca0aeb04f39ba4aefc8b2",
+  "tested_files_sha256": {
+    "infra/local/runtime.mjs": "3c5c4bfabf0047d377e352c2ef5ac393c50615cb7feead29db1bb5afb0293e2c",
+    "infra/local/server.mjs": "3c2d15faa6bbfbf5be5e1e48b50ae882a859bcdbed164bf84971526c62811037",
+    "infra/local/probe.mjs": "464f20cd6af10a27875a2ccbd2ab318e7fada7543a07aad375b4b4faf103b77b",
+    "infra/local/delivery.mjs": "8618588af85f7e9906c47e8bdce40423f3632ae0e54fec6f388d8401167dc8aa",
+    "infra/local/systemd/shakedown-local.service": "691546fe07f5c0045f9678d401a00fb4edbf75fee6d6e4d1068bba19a5cbca00"
+  },
+  "tests": {
+    "engine_full": 421,
+    "local": 16,
+    "engine_targeted_after_final_origin_port_guard": 12
+  },
+  "cleanup": {
+    "containers": 0,
+    "volumes": 0,
+    "stack": "DELETE_COMPLETE",
+    "instance": "terminated",
+    "attached_volumes_remaining": 0
+  }
+}
