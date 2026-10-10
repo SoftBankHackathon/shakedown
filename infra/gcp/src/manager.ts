@@ -2,7 +2,7 @@ import type { DeployRequest, Provider } from './model.js';
 import { ApiError, redact } from './model.js';
 import { Store } from './store.js';
 
-// 아래 코드는 infra/aws/src/manager.ts와 같다. 비동기 실행·270초 제한·실패 시 공개 차단·DELETE 직렬화·재시작 복구는
+// 아래 코드는 infra/aws/src/manager.ts와 같다. 비동기 실행·준비 제한(기본 270초, GCP는 server.ts가 420초를 넘김)·실패 시 공개 차단·DELETE 직렬화·재시작 복구는
 // 클라우드와 무관한 약속이라, 두 어댑터가 같은 코드로 같은 동작을 보이게 둔다. 고칠 때는 aws 쪽도 같이 고친다.
 
 export class Manager {

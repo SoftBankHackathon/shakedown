@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { loadConfig } from './config.js';
 import { googleHttp } from './gcp-http.js';
 import { CloudRun } from './cloud-run.js';
-import { GcpProvider } from './gcp-provider.js';
+import { GcpProvider, READY_TIMEOUT_MS } from './gcp-provider.js';
 import { Store } from './store.js';
 import { Manager } from './manager.js';
 import { buildApp } from './app.js';
@@ -33,7 +33,8 @@ await provider.verifyProject();
 const store = new Store(dataPath);
 // 같은 상태 DB를 다른 프로젝트·서비스 설정으로 열면 엉뚱한 서비스를 내릴 수 있어 거부한다.
 store.bindStack(JSON.stringify([config.gcpProject, config.region, config.serviceName, config.jobName, config.projectId]));
-const manager = new Manager(store, provider);
+// Cloud Run이 인스턴스를 늦게 잡는 날이 있어 AWS와 같은 270초 대신 420초를 준다(이유는 READY_TIMEOUT_MS 주석).
+const manager = new Manager(store, provider, READY_TIMEOUT_MS);
 // 포트를 열기 전에 끊긴 배포를 닫아야 엔진이 반쯤 된 상태를 ready로 보지 않는다.
 await manager.recover();
 const app = buildApp(manager);

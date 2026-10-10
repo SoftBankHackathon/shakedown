@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { buildApp } from '../src/app.js';
 import { Store } from '../src/store.js';
 import { Manager } from '../src/manager.js';
+import { READY_TIMEOUT_MS } from '../src/gcp-provider.js';
 import { requestSchema, redact, type Provider, type DeployRequest } from '../src/model.js';
 
 // infra/aws/test/adapter.test.ts의 뼈대 테스트를 GCP 값으로 옮겼다. 진짜 GCP 대신 Fake를 꽂아
@@ -84,6 +85,37 @@ test('deadline aborts deployment and closes route', async () => {
   const manager = new Manager(store, provider, 10);
   manager.create(input()); await manager.drain();
   assert.equal(store.result('dep_one').status, 'failed'); assert.equal(provider.stops, 1); store.close();
+});
+
+test('GCP ready limit outlasts a slow Cloud Run capacity wait and still closes at 7 minutes', async t => {
+  // 2026-10-10 13:19 사고: Cloud Run이 최소 인스턴스 2대를 잡는 데 4분 15초가 걸려 배포 전체가 옛 한도(270초)를 12초 넘겼다.
+  // 가짜 배포는 손으로 끝내고, Manager의 제한 타이머만 가짜 시계로 돌린다(실제로 7분을 기다리지 않는다).
+  class Held extends Fake {
+    release = () => {};
+    async deploy(_r: DeployRequest, signal: AbortSignal) {
+      this.calls++;
+      await new Promise<void>((resolve, reject) => { this.release = resolve; signal.addEventListener('abort', () => reject(signal.reason), { once: true }); });
+      return ready;
+    }
+  }
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const store = new Store(':memory:'); const provider = new Held();
+  const manager = new Manager(store, provider, READY_TIMEOUT_MS);
+  try {
+    manager.create(input());
+    t.mock.timers.tick(282_000); provider.release(); await manager.drain();
+    assert.equal(store.result('dep_one').status, 'ready');
+    manager.create(input('dep_two'));
+    t.mock.timers.tick(READY_TIMEOUT_MS - 1); await sleep(0);
+    assert.equal(store.result('dep_two').status, 'deploying');
+    t.mock.timers.tick(1); await manager.drain();
+    assert.equal(store.result('dep_two').status, 'failed'); assert.equal(provider.stops, 1);
+  } finally { store.close(); }
+});
+
+test('server entry point hands the GCP ready limit to Manager', () => {
+  // server.ts는 띄우면 실제 GCP를 부르므로 글자로 확인한다. 이 줄이 기본값(270초)으로 돌아가면 13:19 사고가 다시 난다.
+  assert.match(readFileSync(new URL('../src/server.ts', import.meta.url), 'utf8'), /new Manager\(store, provider, READY_TIMEOUT_MS\)/);
 });
 
 test('restart preserves request identity and fails interrupted work closed', async () => {
