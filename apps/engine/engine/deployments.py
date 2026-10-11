@@ -347,6 +347,30 @@ class DeploymentStore:
                 if target in CLOUDS: blocked.append(False)
         if blocked: d['traffic_blocked'] = all(blocked)
 
+    def stop(self, id):
+        """판정이 끝난 배포의 대상 환경을 내린다. 판정(status)은 그대로 두고 stopped_at만 남긴다. 다시 불러도 안전하다."""
+        d = self.get(id)
+        if d['status'] not in TERMINAL:
+            raise Busy(f'Only a finished deployment can be stopped; this one is {d["status"]}.')
+        # 엔진이 배포한 대상만 지운다(options). 비교 모드·외부 비교 URL은 남의 환경이라 건드리지 않는다.
+        pending = [t for t in d['options'] if d['targets'][t].get('status') != 'stopped']
+        if 'stopped_at' in d and not pending:
+            return d
+        for target in reversed(pending):
+            t = d['targets'][target]
+            # 어댑터가 받은 적 없는 배포(빌드 실패·POST 거절)는 지울 것이 없다. 모르는 ID에 DELETE하면 404가 실패로 남는다.
+            if 'deployment_id' in t:
+                try:
+                    self.runner_for(target).call('DELETE', '/deployments/' + self.target_id(d, target))
+                except Exception:
+                    t.update(cleanup='failed', error=f'{target} stop failed; inspect the adapter and press Stop again.')
+                    continue
+                t['cleanup'] = 'confirmed'; t.pop('error', None)
+            t.update(status='stopped', instances=0)
+        d.setdefault('stopped_at', time.time())
+        self.save(d)
+        return d
+
     def run(self, project, d, comparison=None):
         submitted = []
         try:
@@ -409,6 +433,8 @@ class DeploymentStore:
     def apply_fix(self, project, id):
         """차단된 배포에 규칙 수정안(env)을 한 번 적용한다. 클라우드만 새 ID로 다시 배포하고 2회차 시운전을 돌린다."""
         d = self.get(id)
+        if 'stopped_at' in d:
+            raise DeploymentError('This deployment was stopped; start a new Action.')
         if d['status'] != 'blocked':
             raise Busy(f'Only a blocked deployment can be fixed; this one is {d["status"]}.')
         # GCP 어댑터는 서비스 하나만 다룬다. 옛 차단 배포를 고치면 더 새 배포가 쓰는 서비스를 덮어쓴다.

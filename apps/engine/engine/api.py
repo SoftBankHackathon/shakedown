@@ -258,6 +258,15 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
         except DeploymentError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
+    @api.post('/api/deployments/{deployment_id}/stop')
+    def stop(deployment_id: str):
+        # 판정이 끝난 배포의 대상 환경을 내린다. 판정은 바꾸지 않는다. DELETE 실패는 대상별 cleanup='failed'로 기록한다.
+        deployment(deployment_id)
+        try:
+            return api.state.deployments.stop(deployment_id)
+        except Busy as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
     @api.get('/api/deployments/{deployment_id}/events')
     def events(deployment_id: str):
         deployment(deployment_id)
