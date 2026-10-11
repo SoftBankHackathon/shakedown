@@ -434,4 +434,6 @@ test("lang: ko면 단계 결과의 검사 글도 한국어로 쓴다('… 안 �
     "GCP 요청 경로: POST /api/posts/write 302 → GET /board 200",
   ]);
   assert.equal(report.fix!.native, "Cloud Run 환경변수(예: DATABASE_URL, SPRING_DATASOURCE_URL) → 공유 DB(Cloud SQL)");
+  // 일본어는 끝난 곳과 검사 글을 「、」로 잇는다.
+  assert.match(ruleReport(result.steps, result.verdict, { lang: "ja" })!.evidence[0], /（\/board で終了、'\[shakedown\] post abc123' が表示されない）/);
 });

@@ -31,7 +31,7 @@ function outcome(r: StepResult, lang: Lang): string {
   const text = (t: string) => detailText(t, lang);
   if (r.final_path === null || r.error?.startsWith("ended on")) return r.error ? text(r.error) : statusWord(r.status, lang);
   const ended = text(`ended on ${r.final_path}`);
-  return r.error ? `${ended}, ${text(r.error)}` : ended;
+  return r.error ? `${ended}${lang === "ja" ? "、" : ", "}${text(r.error)}` : ended;
 }
 
 // steps.ts는 폼·링크를 못 찾거나, 삭제·로그아웃이라 보내지 않았거나, 리다이렉트가 너무 많을 때도 "request failed:"를 붙인다. 이건 접속 실패가 아니다.
