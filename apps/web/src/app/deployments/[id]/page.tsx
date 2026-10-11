@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { BsArrowRepeat, BsArrowUpRight, BsClock, BsFileEarmarkText, BsShieldCheck, BsTerminal } from "react-icons/bs";
+import { BsArrowRepeat, BsArrowUpRight, BsClock, BsFileEarmarkText, BsShieldCheck, BsTerminal, BsTrash } from "react-icons/bs";
 import { DeployReport } from "@/components/deploy-report";
 import { useT } from "@/components/i18n";
 import { ProviderIcon } from "@/components/provider-icon";
 import { StepTable } from "@/components/step-table";
 import { AiTag, Alert, Badge, Breadcrumb, Elapsed, Mono, RuleTag, Section, Stat } from "@/components/ui";
-import { api, DONE, errorMessage, formatSeconds, type Deployment, type Fix, type Report } from "@/lib/api";
+import { api, DONE, errorMessage, formatSeconds, type Deployment, type Report } from "@/lib/api";
 import { byCandidate } from "@/lib/steps";
 import { orderTargets, targetLabel } from "@/lib/targets";
 
@@ -31,6 +31,8 @@ export default function DeploymentPage() {
   const refetch = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 이벤트 스트림은 blocked에서 done을 받고 닫힌다. 수정을 적용하면 이 값을 올려 다시 구독한다.
   const [stream, setStream] = useState(0);
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
 
   // The top bar's 시운전 tab returns to the run that was open last.
   useEffect(() => {
@@ -86,6 +88,23 @@ export default function DeploymentPage() {
   // After a fix the final attempt has no report of its own; the blocked attempt's cause analysis still explains the run.
   const reported = attempt?.report ? attempt : dep.attempts.find((a) => a.report);
   const gate = dep.status === "promoted" ? "" : dep.status === "blocked" ? "blocked" : "neutral";
+  // A promoted run explained by an earlier blocked attempt's report: that cause is already fixed.
+  const pastReport = dep.status === "promoted" && reported && last && reported.n !== last.n ? reported.n : null;
+  const canStop = done && !dep.stopped_at && dep.mode !== "comparison" && Object.values(dep.targets).some((s) => s.status !== "stopped");
+
+  async function stop() {
+    if (!window.confirm(t("dep.stopConfirm"))) return;
+    setStopping(true);
+    setStopError(null);
+    try {
+      setDep(await api.stop(id));
+    } catch (e) {
+      // 409(진행 중) 등 엔진이 거절한 이유를 그대로 보여 준다.
+      setStopError(errorMessage(e));
+    } finally {
+      setStopping(false);
+    }
+  }
 
   return (
     <>
@@ -101,16 +120,23 @@ export default function DeploymentPage() {
             {dep.mode !== "comparison" && <><span>{t("dep.build")} {seconds(dep.timings.build_s)}</span><span>{t("dep.deploy")} {seconds(dep.timings.deploy_s)}</span></>}
             <span>{t("dep.aiCost")} ₩{dep.ai_cost.krw} · {t("dep.calls", { n: dep.ai_cost.calls })}</span>
             <span>{done ? statusLine(dep, t) : message || t("dep.working")}</span>
+            {dep.stopped_at && <span className="tag">{t("dep.stoppedAt", { time: new Date(dep.stopped_at * 1000).toLocaleString(t.locale) })}</span>}
           </p>
         </div>
         <div className="actions">
           <Link href={`/projects/${dep.project_id}`} className="button secondary">{t("run.project")}</Link>
+          {canStop && (
+            <button type="button" className="button secondary" onClick={() => void stop()} disabled={stopping}>
+              <BsTrash />{stopping ? t("dep.stopping") : t("dep.stop")}
+            </button>
+          )}
           <button type="button" className="button secondary" onClick={() => setView(current === "logs" ? "live" : "logs")}>
             <BsTerminal />{current === "logs" ? t("run.tabLive") : t("run.tabLogs")}
           </button>
         </div>
       </div>
       {dep.error && <Alert>{dep.error}</Alert>}
+      {stopError && <Alert onClose={() => setStopError(null)}>{t("dep.stopFailed", { detail: stopError })}</Alert>}
       {dep.traffic_blocked === false && dep.status === "blocked" && <p className="hint" style={{ marginBottom: 14 }}>{t("dep.gateOnly")}</p>}
 
       <div className="run-tabs" role="tablist" aria-label={t("bc.run")}>
@@ -159,7 +185,7 @@ export default function DeploymentPage() {
                 <div className="tab-group">
                   {dep.attempts.map((a) => (
                     <button key={a.n} type="button" className={a.n === attempt?.n ? "active" : ""} onClick={() => setTab(a.n)}>
-                      #{a.n} {a.verdict?.status ?? t("dep.running")}
+                      #{a.n} {a.verdict ? t(`verdict.${a.verdict.status}`) : t("dep.running")}
                     </button>
                   ))}
                 </div>
@@ -171,9 +197,9 @@ export default function DeploymentPage() {
                     {journeyTag(dep, t)}
                     {dep.scenario_source !== "fallback" && <span>{dep.scenario.app_understanding}</span>}
                   </div>
-                  {previous?.applied_fix && <p className="hint" style={{ marginBottom: 12 }}>{t("dep.retry", { n: previous.n, fix: fixLabel(previous.applied_fix) })}</p>}
+                  {previous?.applied_fix && <p className="hint" style={{ marginBottom: 12 }}>{t("dep.retry", { n: previous.n, fix: t.fix(previous.applied_fix) })}</p>}
                   {attempt?.verdict && <VerdictLine v={attempt.verdict} t={t} />}
-                  {attempt?.applied_fix && <p className="hint" style={{ marginBottom: 12 }}>{t("dep.appliedAfter", { target: targetLabel(attempt.applied_fix.target), fix: fixLabel(attempt.applied_fix) })}</p>}
+                  {attempt?.applied_fix && <p className="hint" style={{ marginBottom: 12 }}>{t("dep.appliedAfter", { target: targetLabel(attempt.applied_fix.target), fix: t.fix(attempt.applied_fix) })}</p>}
                   <div className="space-y-6">
                     {comparisons.map(([candidate, rows]) => (
                       <StepTable key={candidate} baseline={targetLabel(baseline)} candidate={targetLabel(candidate)} steps={dep.scenario!.steps} diffs={rows}
@@ -215,9 +241,10 @@ export default function DeploymentPage() {
             {reported?.report ? (
               <ReportCard
                 report={reported.report}
+                past={pastReport}
                 applied={dep.attempts.some((a) => a.applied_fix)}
                 // 엔진은 차단된 1회차에서만 수정을 한 번 받는다. 최신 배포인지 등 나머지는 엔진이 409/400으로 알려 준다.
-                canApply={dep.status === "blocked" && dep.mode !== "comparison" && dep.attempts.length === 1}
+                canApply={dep.status === "blocked" && dep.mode !== "comparison" && dep.attempts.length === 1 && !dep.stopped_at}
                 onApply={async () => {
                   setDep(await api.applyFix(dep.id));
                   setTab(null);
@@ -264,7 +291,6 @@ function statusLine(d: Deployment, t: T) {
 }
 
 const seconds = (s?: number) => (s != null ? formatSeconds(s) : "…");
-const fixLabel = (f: Fix) => `${f.option}=${f.value}`;
 
 function journeyTag(dep: Deployment, t: T) {
   if (dep.scenario_source === "ai") return <AiTag>{t("dep.aiJourney")}</AiTag>;
@@ -308,8 +334,8 @@ function VerdictLine({ v, t }: { v: NonNullable<Deployment["attempts"][number]["
   );
 }
 
-function ReportCard({ report, applied, canApply, onApply, t }: {
-  report: Report; applied: boolean; canApply: boolean; onApply: () => Promise<void>; t: T;
+function ReportCard({ report, past, applied, canApply, onApply, t }: {
+  report: Report; past: number | null; applied: boolean; canApply: boolean; onApply: () => Promise<void>; t: T;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -326,9 +352,9 @@ function ReportCard({ report, applied, canApply, onApply, t }: {
     }
   }
   return (
-    <Section title={t("report.title")} icon={<BsFileEarmarkText />} className="analysis"
+    <Section title={past ? t("report.pastTitle", { n: past }) : t("report.title")} icon={<BsFileEarmarkText />} className="analysis"
       right={report.by === "ai" ? <AiTag>{t("report.ai")}</AiTag> : <RuleTag>{t("report.rule")}</RuleTag>}>
-      <h4>{t("report.cause")}</h4>
+      <h4>{past ? t("report.pastCause") : t("report.cause")}</h4>
       <p><strong>{report.headline}</strong><br />{report.cause}</p>
       {report.fix && (
         <>

@@ -48,6 +48,8 @@ const liveApi = {
     call<Deployment>(`/api/projects/${projectId}/comparisons`, { method: "POST", body: JSON.stringify(body) }),
   /** 차단된 배포에 원인 보고서의 수정안을 적용하고 다시 시운전한다(engine.yaml applyFix). 202 응답은 status=fixing. */
   applyFix: (id: string) => call<Deployment>(`/api/deployments/${id}/fix`, { method: "POST" }),
+  /** 끝난 배포의 대상 환경을 지운다(engine.yaml stop). 판정은 그대로, stopped_at이 채워진다. 진행 중이면 409. */
+  stop: (id: string) => call<Deployment>(`/api/deployments/${id}/stop`, { method: "POST" }),
   /** Live progress over SSE. Returns an unsubscribe function. */
   subscribe: (id: string, onEvent: (ev: DeployEvent) => void): (() => void) => {
     const es = new EventSource(`${API}/api/deployments/${id}/events`);
@@ -67,6 +69,7 @@ export const api: typeof liveApi = MOCK ? {
   health: async () => ({ ok: true }),
   compare: async () => { throw new Error("Use live mode to compare existing environments."); },
   applyFix: async () => { throw new Error("Use live mode to apply a fix."); },
+  stop: async () => { throw new Error("Use live mode to clean up environments."); },
 } : liveApi;
 
 export const DONE = TERMINAL_STATUSES;
