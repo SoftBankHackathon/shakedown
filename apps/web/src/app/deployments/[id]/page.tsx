@@ -41,6 +41,8 @@ export default function DeploymentPage() {
 
   useEffect(() => {
     api.deployment(id).then(setDep).catch((e) => setLoadError(errorMessage(e)));
+    // 엔진은 새 연결마다 로그를 처음부터 다시 보낸다. 수정 적용 뒤 다시 구독할 때 줄이 겹치지 않게 비우고 시작한다.
+    setLogs([]);
     // Build logs can arrive many lines per second: buffer them and repaint at most 5 times a second.
     let buffer: { source: string; line: string }[] = [];
     const flush = setInterval(() => {

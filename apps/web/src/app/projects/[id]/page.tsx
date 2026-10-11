@@ -31,6 +31,8 @@ export default function ProjectPage() {
   const [comparisonUrl, setComparisonUrl] = useState("");
   const [baselineUrl, setBaselineUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  // 저장한 설계안은 사용자가 켰을 때만 붙인다. 기본 Action(Local+GCP 데모)은 인스턴스 수 설정을 그대로 쓴다.
+  const [applyPlan, setApplyPlan] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const services = useServices();
 
@@ -45,7 +47,7 @@ export default function ProjectPage() {
     try {
       let architectureId: string | undefined;
       // 엔진은 고른 설계 등급을 aws·gcp·azure마다 같은 등급으로 적용한다(DeployRequest.architecture_plan_id).
-      if (!MOCK && liveTargets.some((x) => CLOUDS.includes(x))) {
+      if (!MOCK && applyPlan && liveTargets.some((x) => CLOUDS.includes(x))) {
         const response = await fetch(`${API}/api/projects/${id}/architecture-plans/latest`, { cache: "no-store" });
         if (!response.ok) throw new Error(t("project.planCheckError"));
         const plan = await response.json();
@@ -189,6 +191,9 @@ export default function ProjectPage() {
               })}
             </div>
             <div className="inline-note"><BsInfoCircle /><span>{MOCK ? t("home.targetsHint") : t("live.scope")}</span></div>
+            {!MOCK && liveTargets.some((x) => CLOUDS.includes(x)) && (
+              <label className="inline-note"><input type="checkbox" checked={applyPlan} onChange={(e) => setApplyPlan(e.target.checked)} /><span>{t("project.applyPlan")}</span></label>
+            )}
           </div>
 
           <details className="config-section environment-section" open>
