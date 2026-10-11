@@ -36,7 +36,7 @@ test("비교 환경만 서버 2대면 4단계에서 갈라져 BLOCKED", async ()
   assert.deepEqual(result.verdict, {
     status: "BLOCKED",
     first_divergence: 4,
-    summary: "Step 4 (Sign in) led to different pages (/board on local, / on aws).",
+    summary: "Step 4 (Sign in) led to different pages (/board on Local, / on AWS).",
   });
   assert.deepEqual(result.steps.map((s) => s.kind), ["same", "same", "same", "path_diff", "env_diff", "env_diff", "env_diff", "env_diff"]);
 });

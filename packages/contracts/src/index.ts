@@ -172,7 +172,7 @@ export type CreateProjectRequest = { repo: string; name?: string; image_only?: b
 
 /** Body of POST /api/projects/{id}/deployments — the Action button (engine.yaml). */
 export type ComparisonEndpoint = { name: string; url: string };
-/** 시운전 원인 보고서 언어(shakedown.yaml·engine.yaml lang). verdict.summary와 StepDiff.reasons는 영어 그대로. */
+/** 시운전 보고서 언어(shakedown.yaml·engine.yaml lang). 원인 보고서, verdict.summary, StepDiff.reasons, 기본·둘러보기 시나리오 단계 제목을 이 언어로 쓰고 환경은 표시 이름(Local·AWS·GCP 등)으로 쓴다. */
 export type ReportLang = "ko" | "en" | "ja";
 
 export type CompareRequest = { baseline: ComparisonEndpoint; candidate: ComparisonEndpoint; lang?: ReportLang };

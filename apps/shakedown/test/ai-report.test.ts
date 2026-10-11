@@ -20,10 +20,11 @@ const input = { diffs: blocked, verdict: judge(blocked), fallback: rule, hints }
 const zero = { calls: 0, input_tokens: 0, output_tokens: 0, krw: 0 };
 const billed = { calls: 1, input_tokens: 1000, output_tokens: 500, krw: 19.6 };
 
+// AI가 지시대로 표시 이름(AWS·Local)을 쓴 답. 내부 키·환경 ID를 고치는 tidy를 거쳐도 그대로다.
 const answer = {
-  headline: "Login is lost on aws because requests reach different instances",
-  cause: "The app keeps the login in server memory and aws runs 2 instances without session affinity.",
-  evidence: ["Step 4 ended on /board on local but on / on aws.", "aws hops: POST /login 302, GET /board 302, GET / 200"],
+  headline: "Login is lost on AWS because requests reach different instances",
+  cause: "The app keeps the login in server memory and AWS runs 2 instances without session affinity.",
+  evidence: ["Step 4 ended on /board on Local but on / on AWS.", "AWS hops: POST /login 302, GET /board 302, GET / 200"],
   fix: {
     target: "aws",
     option: "sticky_sessions",
@@ -189,9 +190,7 @@ const aiFix = { ...answer.fix, auto_applicable: false };
 test("AI evidence에 규칙 보고서의 instance 근거 줄이 그대로 없으면 끝에 붙인다", async (t) => {
   assert.equal(ruled.evidence.at(-1), switched);
   const oneId = [...answer.evidence, "GET /board was answered by 172.23.0.4:8080."];
-  // 두 ID를 다른 말로 다 적었어도 붙인다. AI 글에서 ID 언급을 찾으면 짧은 ID가 302 같은 글에 잘못 걸리기 때문이다.
-  const paraphrased = ["POST /login reached 172.23.0.3:8080 but GET /board reached 172.23.0.4:8080."];
-  for (const evidence of [answer.evidence, oneId, paraphrased]) {
+  for (const evidence of [answer.evidence, oneId]) {
     const f = await fake(t, json(200, answered({ ...answer, evidence })));
     const { report } = await aiReport({ ...input, fallback: ruled }, { apiKey: KEY, baseURL: f.baseURL });
     assert.deepEqual(report, { ...answer, evidence: [...evidence, switched], fix: aiFix, by: "ai" });
@@ -311,9 +310,59 @@ test("lang: 요청 언어로 답하라고 지시하고(기본 영어), 그 언�
     const f = await fake(t, json(200, answered(answer)));
     const { report } = await aiReport({ ...input, fallback, lang }, { apiKey: KEY, baseURL: f.baseURL });
     assert.match(f.seen[0].body.system, new RegExp(`Answer in ${names[lang]}`), lang);
-    assert.deepEqual(report?.evidence, [...answer.evidence, fallback.evidence.at(-1)], lang);
+    // AI가 옮겨 적은 "AWS hops:" 머리말은 그 언어의 요청 경로 줄 모양으로 바뀐다.
+    const hops = { en: "AWS hops", ko: "AWS 요청 경로", ja: "AWS のリクエスト経路" }[lang];
+    assert.deepEqual(report?.evidence, [answer.evidence[0], `${hops}: POST /login 302, GET /board 302, GET / 200`, fallback.evidence.at(-1)], lang);
   }
   const f = await fake(t, json(200, answered(answer)));
   await aiReport(input, { apiKey: KEY, baseURL: f.baseURL });
   assert.match(f.seen[0].body.system, /Answer in English/);
+});
+
+test("AI가 서버 전환을 다른 말로 다시 쓴 줄(두 서버 ID를 모두 적은 줄)은 빼고 규칙 줄 하나만 남긴다", async (t) => {
+  // 서버 ID는 앞뒤가 글자·숫자가 아닐 때만 언급으로 본다. "2"가 "302"에 걸리지 않는다.
+  const paraphrased = "rule_report: POST /login reached 172.23.0.3:8080 but GET /board reached 172.23.0.4:8080.";
+  const f = await fake(t, json(200, answered({ ...answer, evidence: [answer.evidence[0], paraphrased] })));
+  const { report } = await aiReport({ ...input, fallback: ruled }, { apiKey: KEY, baseURL: f.baseURL });
+  assert.deepEqual(report?.evidence, [answer.evidence[0], switched]);
+});
+
+test("AI 글의 내부 키·환경 ID를 사람이 읽는 말로 바꾼다(요청 경로, 레포 분석, 표시 이름)", async (t) => {
+  const gcp = blocked.map((d) => ({ ...d, candidate: "gcp" }));
+  const fallback = ruleReport(gcp, judge(gcp, "ko"), { lang: "ko" })!;
+  const ko = {
+    ...answer,
+    headline: "gcp에서 글 작성 시 로그인이 풀립니다",
+    cause: "gcp는 인스턴스가 2대입니다.",
+    evidence: [
+      "rule_report: POST /login은 172.23.0.3:8080, GET /board는 172.23.0.4:8080에서 처리",
+      "gcp hops: POST /login 302 → GET /board 302 → GET / 200",
+      "hints.uses_server_session=true",
+      "rule_report: 로그인 다음 요청이 로그인 화면으로 돌아감",
+    ],
+    fix: { ...answer.fix, target: "gcp" },
+  };
+  const f = await fake(t, json(200, answered(ko)));
+  const { report } = await aiReport({ ...input, diffs: gcp, verdict: judge(gcp, "ko"), fallback, lang: "ko" }, { apiKey: KEY, baseURL: f.baseURL });
+  assert.equal(report?.headline, "GCP에서 글 작성 시 로그인이 풀립니다");
+  assert.equal(report?.cause, "GCP는 인스턴스가 2대입니다.");
+  assert.deepEqual(report?.evidence, [
+    "GCP 요청 경로: POST /login 302 → GET /board 302 → GET / 200",
+    "레포 분석: 앱이 서버 세션(HttpSession)을 씀",
+    "로그인 다음 요청이 로그인 화면으로 돌아감",
+    fallback.evidence.at(-1),
+  ]);
+  // 기계 값은 그대로다.
+  assert.equal(report?.fix?.target, "gcp");
+});
+
+test("프롬프트: 표시 이름을 쓰고 내부 키를 쓰지 말라고 지시하고, 검사 글은 요청 언어로 보낸다", async (t) => {
+  const f = await fake(t, json(200, answered(answer)));
+  await aiReport({ ...input, fallback: ruled, lang: "ko" }, { apiKey: KEY, baseURL: f.baseURL });
+  const system: string = f.seen[0].body.system;
+  assert.match(system, /local → Local, aws → AWS, gcp → GCP, azure → Azure, onprem → On-prem, candidate → Candidate/);
+  assert.match(system, /rule_report/);
+  assert.match(system, /hints\.uses_server_session/);
+  const data = JSON.parse(f.seen[0].body.messages[0].content);
+  assert.deepEqual(data.diverging_steps[1].candidate.failed_checks, ["/에서 끝남(기대: /write)"]);
 });

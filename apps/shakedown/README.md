@@ -40,9 +40,10 @@ HOST=0.0.0.0 PORT=9201 npm start -w @shakedown/shakedown   # 엔진이 다른 PC
 |---|---|
 | `POST /shakedowns` | 202 `{shakedown_id, status: "running", steps: [], ai_cost}` 후 뒤에서 실행. 요청에 시나리오가 있으면 `scenario`, `scenario_source: "saved"`도 바로 담김 |
 | `GET /shakedowns/{id}` | 200 현재 상태. 실행 중에는 두 환경이 모두 끝낸 단계까지 `steps`가 채워짐. 모르는 id는 404 |
+| `GET /health` | 200 `{ok: true, ai, model}`. `ai`는 AI 보고서나 AI 시나리오 중 하나라도 켜져 있으면 true, `model`은 그 모델 이름(꺼져 있으면 null). 키는 있는지만 보고 값은 내보내지 않음 |
 
 - 요청에 `scenario`가 없거나 null이면 기준 환경을 보고 고릅니다(아래 "시나리오 고르기")
-- 요청의 `lang`(`ko`·`en`·`ja`, 없거나 null이면 `en`)은 원인 보고서(규칙·AI)와 AI 시나리오의 단계 제목·`app_understanding` 언어입니다. 다른 값이면 400 `lang must be ko, en or ja`. 경로·hop·단계 제목·검사 오류 글자와 수정안의 target·option·value·native는 그대로이고, 판정 요약(`verdict.summary`)과 단계 비교 이유(`reasons`)는 영어 그대로입니다
+- 요청의 `lang`(`ko`·`en`·`ja`, 없거나 null이면 `en`)은 원인 보고서(규칙·AI)와 AI 시나리오의 단계 제목·`app_understanding` 언어입니다. 다른 값이면 400 `lang must be ko, en or ja`. 판정 요약(`verdict.summary`), 단계 비교 이유(`reasons`), 알려진 시나리오·둘러보기 시나리오의 단계 제목, 수정안의 description·native도 그 언어로 씁니다. 사람이 읽는 글의 환경 이름은 표시 이름(local→Local, aws→AWS, gcp→GCP, azure→Azure, onprem→On-prem, candidate→Candidate)이고, 경로·hop·`StepResult.error`·`checks`와 기계 필드(`StepDiff.baseline`·`candidate`, 수정안의 target·option·value)는 그대로입니다. 판정은 `kind`·`severity`로만 정해서 언어와 상관없습니다. 수정안 native는 그 비교 환경 것만 씁니다(gcp: Cloud Run env·Cloud SQL, aws: ECS task env·RDS, azure: Container Apps env·Azure Database for PostgreSQL, local: Docker env·PostgreSQL)
 - 비교 대상(`candidates`)은 지금 1개만 받습니다. 2개 이상이면 422
 - 잘못된 요청은 400 `{error, detail}` (target.yaml과 같은 모양)
 - 시작 전에 두 주소가 응답하는지 최대 20초 다시 시도합니다(터널 주소가 늦게 잡히는 경우). 앱이 낸 응답은 500이어도 닿은 것으로 봅니다. Cloudflare 엣지가 낸 530(`server: cloudflare`, 터널 미준비 1033·1016)은 앱 응답이 아니라서 계속 기다립니다
@@ -63,7 +64,7 @@ HOST=0.0.0.0 PORT=9201 npm start -w @shakedown/shakedown   # 엔진이 다른 PC
 | 3 | 규칙 둘러보기 | 둘러본 페이지 중 기준 환경에서 HTTP 400 미만이었던 것을 하나씩 `visit` | `fallback` |
 
 - 둘러보기: 기준 환경의 `/`(와 `hints.health_path`)부터 같은 출처 링크를 따라 최대 6페이지(+health)를 GET으로만 엽니다(전체 15초 안). 로그아웃·삭제류 주소, 관리자·결제 주소, 정적 파일(.css .js .png 등), 다른 출처, mailto, 데이터 주소(번호·24자 hex·UUID 경로 칸, 쿼리가 붙은 링크. 환경마다 DB가 따로라 `/posts/6`·`?id=6`이 비교 환경에 없을 수 있음)는 건너뜁니다. slug 주소(`/posts/my-first-post`)는 모양으로 알 수 없어 걸러지지 않습니다. 페이지마다 경로, 최종 경로, 상태, 제목, 화면 글자 앞부분, 링크, 폼(action·method·입력칸 이름과 종류)을 모읍니다
-- 규칙 둘러보기 단계는 `Open /path`이고, 기준 환경에서 다른 화면으로 넘어갔으면 그 경로를 `expect.path_startswith`로 기대합니다(넘어간 곳이 데이터 주소면 기대하지 않음). `app_understanding`은 `Rule-based crawl of N pages (AI unavailable)`
+- 규칙 둘러보기 단계는 `Open /path`(ko `/path 열기`, ja `/path を開く`)이고, 기준 환경에서 다른 화면으로 넘어갔으면 그 경로를 `expect.path_startswith`로 기대합니다(넘어간 곳이 데이터 주소면 기대하지 않음). `app_understanding`은 `Rule-based crawl of N pages (AI unavailable)`(ko `규칙 기반 둘러보기: 페이지 N개(AI 미사용)`). 알려진 시나리오(kty-board)의 단계 제목도 요청 언어로 씁니다(ko `회원가입 화면 열기` … `댓글 달기`)
 - 기준 환경에서 열리는 페이지가 하나도 없으면 비교할 것이 없으므로 `status: "failed"`, `error: "baseline local has no page to compare: / HTTP 503, /healthz HTTP 503"`
 - AI 시나리오 검사: 계약의 Scenario 모양, 8단계 이하, 자리표시자는 `{{email}} {{nickname}} {{password}} {{title}} {{content}} {{comment}}`만, 입력값마다 자리표시자(고정값은 둘러본 폼에서 select·radio·checkbox·숫자·날짜 칸으로 본 칸만. 미리 돌리기와 본 실행이 같은 값을 쓰면 가입 등이 겹침), `visit` 경로는 둘러보기가 여는 주소와 같은 규칙(같은 출처, 쿼리·데이터 주소·정적 파일 아님. 기대 경로도 데이터 주소 아님), 로그아웃·삭제·관리자·결제 단계 없음. 하나라도 어기거나, 형식이 틀리거나, 거절되거나, 시간 안에 답이 없으면 버리고 규칙 둘러보기로 갑니다(재시도 없음)
 - AI 시나리오는 마감까지 남은 시간에서 45초(AI 보고서 22초 + 미리 돌려 보기·본 실행 23초 몫)를 뺀 만큼, 최대 25초 기다립니다. 그 시간이 5초가 안 되면 부르지 않습니다. 미리 돌려 보기는 AI 보고서 몫을 뺀 남은 시간의 3분의 1까지만 합니다(본 실행은 같은 시나리오를 두 환경에서 다시 돌아 느린 쪽에 맞춰지므로 3분의 2를 남김). 넘으면 끊고 규칙 둘러보기로 갑니다
@@ -112,7 +113,8 @@ npm start -w @shakedown/shakedown                     # .env를 자동으로 읽
 - 구조화 출력(JSON 스키마)으로 받고 다시 검사합니다. 형식이 틀리거나, 거절되거나, 20초 안에 답이 없으면 규칙 보고서를 그대로 씁니다(재시도 없음)
 - 거절 시 다른 모델이 대신 답하는 서버 측 fallbacks를 켜 두었습니다
 - AI가 낸 수정안은 `auto_applicable: false`입니다. 사람이 확인한 뒤 적용합니다. 단 규칙 수정안이 자동 적용 가능이면 fix만 규칙 것을 그대로 둡니다(엔진이 적용할 값을 AI가 바꾸지 못하게). headline·cause·evidence·confidence는 AI 것입니다
-- 프롬프트의 hop 문자열에는 응답 서버 ID를 붙입니다(예: `GET /board 302 [i-bbbb2222]`). 규칙 보고서에 서버 전환 근거 줄이 있으면, AI evidence에 그 줄이 그대로 없을 때 끝에 붙입니다. AI는 `rule_report`로 그 줄을 보지만 evidence를 다시 쓰면서 빠뜨릴 수 있기 때문입니다(로그인이 앞 단계에서 끝났으면 그 단계 hop은 `diverging_steps`에 없어서, 로그인 서버 ID는 이 규칙 문장으로만 보입니다). AI 글에서 ID를 찾아 이미 말했는지 가리지 않습니다. ID는 아무 문자열이라 `2`가 `302`에 걸리듯 엉뚱한 글과 겹치기 때문입니다. 그래서 AI가 같은 내용을 다른 말로 썼으면 비슷한 줄이 두 번 보일 수 있습니다
+- 프롬프트의 hop 문자열에는 응답 서버 ID를 붙입니다(예: `GET /board 302 [i-bbbb2222]`). 규칙 보고서에 서버 전환 근거 줄이 있으면, AI evidence에 그 줄이 그대로 없을 때 끝에 붙입니다. AI는 `rule_report`로 그 줄을 보지만 evidence를 다시 쓰면서 빠뜨릴 수 있기 때문입니다(로그인이 앞 단계에서 끝났으면 그 단계 hop은 `diverging_steps`에 없어서, 로그인 서버 ID는 이 규칙 문장으로만 보입니다). AI가 같은 내용을 제 말로 다시 쓴 줄(두 서버 ID를 모두 적은 줄, 예: `rule_report: POST /login은 i-aaaa, …는 i-bbbb에서 처리`)은 빼서 같은 사실이 두 번 보이지 않게 합니다. ID는 아무 문자열이라 `2`가 `302`에 걸리지 않도록 앞뒤가 글자·숫자가 아닐 때만 언급으로 보고, 두 ID가 다 있어야 뺍니다
+- 프롬프트는 환경을 표시 이름(Local·AWS·GCP 등)으로 쓰고 `rule_report`·`hints` 같은 내부 키를 쓰지 말라고 지시하고, 검사 글(`failed_checks`)은 요청 언어로 보냅니다. 그래도 남은 것은 받은 뒤 고칩니다: 머리말 `rule_report:` 제거, `gcp hops: …` → `GCP 요청 경로: …`, `hints.uses_server_session=true` → `레포 분석: 앱이 서버 세션(HttpSession)을 씀`, headline·cause·evidence의 환경 ID → 표시 이름(영어에서는 보통 낱말이기도 한 local·candidate는 그대로)
 - 비용은 `ai_cost`(호출 수, 토큰, 원화)에 기록합니다. AI 시나리오를 불렀으면 그 비용과 합칩니다. 실측: 보고서 1건 약 7초, 입력 1,889·출력 435 토큰, 약 23원. AI 시나리오는 실측 전(TBD)
 
 시운전 마감 시간에는 진행 중인 HTTP 요청과 접속 재시도를 취소합니다. 이미 서버가 접수한 쓰기를 되돌리지는 않으므로 테스트 전용 환경을 사용하세요.

@@ -2,7 +2,8 @@
 // AI는 선택 기능이다. 꺼져 있거나 실패하면 규칙 보고서(fallback)를 그대로 돌려준다.
 import Anthropic from "@anthropic-ai/sdk";
 import type { CostLedger, Fix, Report, StepDiff, StepResult } from "@shakedown/contracts";
-import { switchLine, type Lang } from "./report.ts";
+import { hopsLine, switchIds, switchLine, type Lang } from "./report.ts";
+import { detailText, DISPLAY_NAMES, displayName } from "./display.ts";
 import type { Verdict } from "./verdict.ts";
 
 // 가격 출처: claude-api 스킬 shared/models.md 모델 표(2026-09-25 캐시). claude-opus-5-5는 100만 토큰당 입력 $4, 출력 $20
@@ -48,6 +49,9 @@ const REPORT_SCHEMA = {
 /** 보고서·시나리오를 쓸 언어의 영어 이름. 지시문은 영어로 두고 답만 이 언어로 받는다. */
 export const LANG_NAME: Record<Lang, string> = { ko: "Korean", en: "English", ja: "Japanese" };
 
+/** 환경 표시 이름 목록을 프롬프트에 넣는 모양. "local → Local, aws → AWS, …" */
+export const DISPLAY_NAME_LIST = Object.entries(DISPLAY_NAMES).map(([id, name]) => `${id} → ${name}`).join(", ");
+
 const system = (lang: Lang) => [
   "You explain why a web app behaves differently on a candidate deploy environment than on the baseline environment during an automated shakedown run.",
   "Use only the data in the user message. If the data does not show something, do not claim it; lower the confidence instead.",
@@ -55,7 +59,13 @@ const system = (lang: Lang) => [
   `Answer in ${LANG_NAME[lang]} with: headline (one sentence), cause (two or three sentences), evidence (short facts taken from the data),`,
   "fix (one setting change on the candidate environment, or null if the data does not support one) and confidence (high, medium or low).",
   // 경로·hop·단계 제목은 데이터라 번역하면 원본 기록과 맞춰 볼 수 없다. 수정안의 기계 값은 엔진·사람이 그대로 쓴다.
-  "Keep paths, HTTP methods, hop chains, step titles, environment names and fix.target, fix.option, fix.value and fix.native as they appear in the data.",
+  "Keep paths, HTTP methods, hop chains, step titles and fix.target, fix.option and fix.value as they appear in the data.",
+  // 대시보드에 그대로 보이는 글이라 환경은 표시 이름으로, 내부 키 없이 쓰게 한다. 남는 것은 아래 tidy가 한 번 더 고친다.
+  `In headline, cause, evidence and fix.description, call environments by their display names (${DISPLAY_NAME_LIST}); fix.target stays the environment id from the data.`,
+  `Write fix.native in ${LANG_NAME[lang]} for the candidate environment only, like rule_report.fix.native.`,
+  `Write each evidence item as a plain sentence in ${LANG_NAME[lang]}. Never mention field names of the user message such as rule_report, diverging_steps, hints or hops;`,
+  "say what they mean instead (hints.uses_server_session=true means the repo analysis found that the app keeps the login in a server session (HttpSession); a hop chain is the request path on an environment).",
+  "Do not state the same fact twice. The rule_report evidence sentence about which instance handled which request is added to the report automatically, so do not restate it.",
   "In fix, target is the environment name. Always set auto_applicable to false; a person reviews and applies the fix.",
   // aiReport는 자동 적용 가능한 규칙 수정안을 그대로 유지한다. AI가 다른 수정안을 권하는 문장을 쓰지 않게 미리 알린다.
   "If rule_report.fix.auto_applicable is true, that fix is applied as is, so explain the cause consistently with it.",
@@ -93,11 +103,13 @@ export function costOf(usage: { input_tokens: number; output_tokens: number }, u
   return { calls: 1, input_tokens, output_tokens, krw };
 }
 
-function side(r: StepResult) {
-  return { final_path: r.final_path, final_status: r.final_status, failed_checks: r.checks.filter((c) => !c.ok).map((c) => c.detail) };
+// 검사 글은 요청 언어로 보낸다("… 안 보임"). AI가 그대로 옮겨 적어도 보고서 언어와 맞는다.
+function side(r: StepResult, lang: Lang) {
+  return { final_path: r.final_path, final_status: r.final_status, failed_checks: r.checks.filter((c) => !c.ok).map((c) => detailText(c.detail, lang)) };
 }
 
 function promptData(input: AiInput): string {
+  const lang = input.lang ?? "en";
   const steps = input.diffs
     .filter((d) => d.severity === "critical" || d.severity === "warn")
     .map((d) => ({
@@ -105,9 +117,9 @@ function promptData(input: AiInput): string {
       title: d.title,
       kind: d.kind,
       reasons: d.reasons,
-      baseline: { env: d.baseline, ...side(d.local) },
+      baseline: { env: d.baseline, ...side(d.local, lang) },
       // 응답 서버 ID를 hop마다 붙인다. SYSTEM이 "데이터에 없는 건 주장하지 말라"고 하므로, 서버가 바뀐 것을 AI가 데이터로 직접 볼 수 있어야 한다.
-      candidate: { env: d.candidate, ...side(d.cloud), hops: d.cloud.hops.map((h) => `${h.method} ${h.path} ${h.status}${h.instance ? ` [${h.instance}]` : ""}`) },
+      candidate: { env: d.candidate, ...side(d.cloud, lang), hops: d.cloud.hops.map((h) => `${h.method} ${h.path} ${h.status}${h.instance ? ` [${h.instance}]` : ""}`) },
     }));
   return JSON.stringify({ diverging_steps: steps, rule_report: input.fallback, hints: input.hints ?? {} });
 }
@@ -149,13 +161,51 @@ function parseReport(raw: string): Report | null {
  * AI가 evidence를 다시 쓰면서 서버 ID 근거를 빠뜨리면, "다른 서버가 받았다"는 가장 직접적인 증거가 최종 보고서에서 사라진다.
  * AI는 rule_report 문장으로 그 줄을 보지만, 로그인이 앞 단계에서 끝났으면 그 단계는 프롬프트에 들어가지 않아(critical·warn만 보냄)
  * 로그인 서버 ID를 원본 hop으로는 보지 못한다. 그래서 규칙 줄이 AI evidence에 그대로 없으면 끝에 붙인다.
- * AI 글에서 ID를 찾아 "이미 말했다"고 보지 않는다. ID는 아무 문자열이라 "2"가 "302"에 걸리듯 엉뚱한 글과 겹친다.
- * 그 대가로 AI가 같은 내용을 다른 말로 썼으면 비슷한 줄이 두 번 보일 수 있다.
+ * AI가 같은 내용을 제 말로 다시 쓴 줄(두 서버 ID를 모두 적은 줄)은 빼서 같은 사실이 두 번 보이지 않게 한다.
+ * ID는 아무 문자열이라 "2"가 "302"에 걸리듯 엉뚱한 글과 겹칠 수 있어서, 앞뒤가 글자·숫자가 아닐 때만 언급으로 보고 두 ID가 다 있어야 뺀다.
  */
 function keepInstanceEvidence(report: Report, fallback: Report | null): Report {
   const line = fallback && switchLine(fallback.evidence);
-  if (!line || report.evidence.includes(line)) return report;
-  return { ...report, evidence: [...report.evidence, line] };
+  if (!line) return report;
+  const ids = switchIds(line)!;
+  const restated = (e: string) => e !== line && ids.every((id) => mentions(e, id));
+  const evidence = report.evidence.filter((e) => !restated(e));
+  return { ...report, evidence: evidence.includes(line) ? evidence : [...evidence, line] };
+}
+
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const mentions = (text: string, id: string) => new RegExp(`(?<![A-Za-z0-9])${escapeRe(id)}(?![A-Za-z0-9])`).test(text);
+
+// AI가 프롬프트의 내부 키를 그대로 옮겨 적었을 때 바꿀 말(언어별). 지시문으로 막고, 남은 것만 여기서 고친다.
+const SERVER_SESSION: Record<Lang, string> = {
+  en: "Repo analysis: the app keeps the login in a server session (HttpSession)",
+  ko: "레포 분석: 앱이 서버 세션(HttpSession)을 씀",
+  ja: "リポジトリ分析: アプリはサーバーセッション（HttpSession）を使う",
+};
+// 영어 글에서는 local·candidate가 보통 낱말이기도 해서 바꾸지 않는다.
+const ENV_IDS = (lang: Lang) => Object.keys(DISPLAY_NAMES).filter((id) => lang !== "en" || (id !== "local" && id !== "candidate"));
+
+/** 환경 ID(gcp)를 표시 이름(GCP)으로. 경로(/gcp)·낱말 일부(awsapprunner)·주소(gcp.example.com)는 건드리지 않는다. */
+function withDisplayNames(text: string, lang: Lang): string {
+  const re = new RegExp(`(?<![A-Za-z0-9_/.-])(${ENV_IDS(lang).join("|")})(?![A-Za-z0-9_-]|\\.[A-Za-z0-9])`, "g");
+  return text.replace(re, (id) => displayName(id));
+}
+
+/** evidence 한 줄의 내부 키를 사람이 읽는 말로: "rule_report: …" 머리말, "gcp hops: …", "hints.uses_server_session=true". */
+function tidyLine(line: string, lang: Lang): string {
+  if (/\bhints\.uses_server_session\s*[=:]\s*true\b/.test(line)) return SERVER_SESSION[lang];
+  const plain = line.replace(/^(rule_report|diverging_steps|hints)\s*[:：]\s*/, "");
+  const hops = /^(\S+) hops\s*:\s*(.+)$/s.exec(plain);
+  return withDisplayNames(hops ? hopsLine(displayName(hops[1]), hops[2], lang) : plain, lang);
+}
+
+function tidy(report: Report, lang: Lang): Report {
+  return {
+    ...report,
+    headline: withDisplayNames(report.headline, lang),
+    cause: withDisplayNames(report.cause, lang),
+    evidence: report.evidence.map((e) => tidyLine(e, lang)),
+  };
 }
 
 export async function aiReport(input: AiInput, options: AiOptions): Promise<{ report: Report | null; cost: CostLedger }> {
@@ -191,7 +241,7 @@ export async function aiReport(input: AiInput, options: AiOptions): Promise<{ re
   if (response.stop_reason === "refusal") return { report: input.fallback, cost: spent };
   const raw = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
   const answer = parseReport(raw);
-  const parsed = answer && keepInstanceEvidence(answer, input.fallback);
+  const parsed = answer && keepInstanceEvidence(tidy(answer, input.lang ?? "en"), input.fallback);
   // 엔진이 그대로 적용할 수정안은 규칙이 정한다. AI가 값을 바꾸거나 지우면 허용되지 않은 설정이 적용되거나
   // 적용 버튼이 사라지므로, 규칙 수정안이 자동 적용 가능이면 fix만 규칙 것으로 덮는다. headline·cause·evidence와
   // confidence는 AI 것을 쓴다(confidence는 AI가 자기 원인 설명을 얼마나 확신하는지라서 그 설명과 함께 간다).

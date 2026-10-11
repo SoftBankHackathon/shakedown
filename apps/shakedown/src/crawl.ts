@@ -1,7 +1,7 @@
 // 요청에 시나리오가 없고 알려진 시나리오도 맞지 않을 때, 기준 환경을 GET으로만 둘러본다.
 // 둘러본 결과는 AI 시나리오의 재료가 되고, AI가 없거나 실패하면 열린 페이지를 그대로 visit 단계로 만든다(규칙 둘러보기).
 // 둘러보기는 기준 환경에 흔적을 남기면 안 되므로 쓰기 요청은 보내지 않는다.
-import type { Scenario } from "@shakedown/contracts";
+import type { ReportLang, Scenario } from "@shakedown/contracts";
 import { createSession } from "./http.ts";
 import { normalizePath } from "./compare.ts";
 import { listForms, listLinks, pageText, pageTitle, type FormSummary } from "./html.ts";
@@ -99,12 +99,19 @@ export async function crawl(baseUrl: string, options: { healthPath?: unknown; ti
   return pages;
 }
 
-/** 규칙 둘러보기 시나리오: 기준 환경에서 HTTP 400 미만이었던 페이지를 하나씩 연다. 그런 페이지가 없으면 null. */
-export function crawlScenario(pages: CrawledPage[]): Scenario | null {
+// 둘러보기 시나리오의 설명과 단계 제목(언어별). 여는 경로는 데이터라 그대로 넣는다.
+const WORDS: Record<ReportLang, { app: (n: number) => string; open: (path: string) => string }> = {
+  en: { app: (n) => `Rule-based crawl of ${n} page${n === 1 ? "" : "s"} (AI unavailable)`, open: (path) => `Open ${path}` },
+  ko: { app: (n) => `규칙 기반 둘러보기: 페이지 ${n}개(AI 미사용)`, open: (path) => `${path} 열기` },
+  ja: { app: (n) => `ルールベースの巡回: ${n} ページ（AI 不使用）`, open: (path) => `${path} を開く` },
+};
+
+/** 규칙 둘러보기 시나리오: 기준 환경에서 HTTP 400 미만이었던 페이지를 하나씩 연다. 그런 페이지가 없으면 null. lang은 제목·설명 언어(없으면 영어). */
+export function crawlScenario(pages: CrawledPage[], lang: ReportLang = "en"): Scenario | null {
   const ok = pages.filter((p) => p.status !== null && p.status < 400);
   if (!ok.length) return null;
   return {
-    app_understanding: `Rule-based crawl of ${ok.length} page${ok.length === 1 ? "" : "s"} (AI unavailable)`,
+    app_understanding: WORDS[lang].app(ok.length),
     steps: ok.map((p) => {
       // 기준 환경에서 다른 화면(로그인 화면 등)으로 넘어갔으면 비교 환경도 그 화면으로 가야 한다.
       // 쿼리와 ;jsessionid=… 같은 경로 매개변수는 세션마다 달라서 그 앞의 경로만 본다.
@@ -112,7 +119,7 @@ export function crawlScenario(pages: CrawledPage[]): Scenario | null {
       const landed = p.final_path !== p.path ? pathOnly(new URL(p.final_path!, "http://placeholder")) : null;
       const expected = landed !== null && !isDataPath(landed) ? landed : null;
       return {
-        title: `Open ${p.path}`,
+        title: WORDS[lang].open(p.path),
         action: "visit" as const,
         path: p.path,
         form_action: null,

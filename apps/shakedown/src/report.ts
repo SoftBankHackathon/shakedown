@@ -4,6 +4,7 @@
 // 로그인 풀림만 로그인을 받은 서버와 튕긴 요청을 받은 서버의 ID가 둘 다 있고 서로 다르면 근거 한 줄을 덧붙인다.
 import type { Fix, Hop, Report, ReportLang, StepDiff, StepResult } from "@shakedown/contracts";
 import { normalizePath } from "./compare.ts";
+import { detailText, displayName, statusWord } from "./display.ts";
 import type { Verdict } from "./verdict.ts";
 
 /**
@@ -25,10 +26,12 @@ function hopChain(hops: Hop[]): string {
   return hops.map((h) => `${h.method} ${h.path} ${h.status}`).join(" → ");
 }
 
-/** 한 환경에서 그 단계가 어떻게 끝났는지. 예: "ended on /board, 'x' not shown" */
-function outcome(r: StepResult): string {
-  if (r.final_path === null || r.error?.startsWith("ended on")) return r.error ?? r.status;
-  return r.error ? `ended on ${r.final_path}, ${r.error}` : `ended on ${r.final_path}`;
+/** 한 환경에서 그 단계가 어떻게 끝났는지. 예: "ended on /board, 'x' not shown", ko "/board에서 끝남, 'x' 안 보임" */
+function outcome(r: StepResult, lang: Lang): string {
+  const text = (t: string) => detailText(t, lang);
+  if (r.final_path === null || r.error?.startsWith("ended on")) return r.error ? text(r.error) : statusWord(r.status, lang);
+  const ended = text(`ended on ${r.final_path}`);
+  return r.error ? `${ended}${lang === "ja" ? "、" : ", "}${text(r.error)}` : ended;
 }
 
 // steps.ts는 폼·링크를 못 찾거나, 삭제·로그아웃이라 보내지 않았거나, 리다이렉트가 너무 많을 때도 "request failed:"를 붙인다. 이건 접속 실패가 아니다.
@@ -74,9 +77,10 @@ function loginHop(diffs: StepDiff[], first: StepDiff, end: number): Hop | undefi
 /** 보고서 언어. 요청의 lang(없으면 en). 목록은 contracts의 ReportLang 하나로 둔다. */
 export type Lang = ReportLang;
 
-// 규칙 보고서 문장(언어별). 경로·hop 사슬·단계 제목·검사 오류 글자(ended on …)·환경 이름 같은 데이터 조각은 그대로 끼워 넣는다.
-// 판정 요약(verdict.summary)과 단계 비교 이유(reasons)는 규칙 데이터라 영어 그대로 두고, 아래 문장에도 영어 그대로 들어간다.
-// 한국어는 환경 이름 뒤에 받침에 따라 바뀌는 조사(은/는, 이/가)를 붙이지 않는다("aws에서", "local에서는"처럼 늘 같은 조사만).
+// 규칙 보고서 문장(언어별). 경로·hop 사슬·단계 제목 같은 데이터 조각은 그대로 끼워 넣는다.
+// 환경 이름은 표시 이름(Local·GCP, display.ts)으로, 검사 결과 글(ended on …, '…' not shown)과 단계 비교 이유는 그 언어로 들어간다.
+// 한국어는 환경 이름 뒤에 받침에 따라 바뀌는 조사(은/는, 이/가)를 붙이지 않는다("AWS에서", "Local에서는"처럼 늘 같은 조사만).
+// native는 수정안을 그 비교 환경에서 실제로 어디에 넣는지(run: env를 넣는 곳, db: 세션·데이터를 둘 공유 DB)를 그 언어로 쓴다.
 const en = {
   step: (i: number, title: string, base: string, bo: string, cand: string, co: string) =>
     `Step ${i} (${title}) worked on ${base} (${bo}) but not on ${cand} (${co}).`,
@@ -111,6 +115,10 @@ const en = {
     `It does not match a known cause (unreachable, lost login, lost data, server error), so read the hops below.`,
   otherStep: (i: number, title: string, base: string, bo: string, cand: string, co: string) =>
     `Step ${i} (${title}): ${base} ${bo}; ${cand} ${co}.`,
+  loginLostNative: (run: string, db: string) => `${run} env SPRING_PROFILES_ACTIVE=demo,session-jdbc (sessions in the spring_session table of ${db})`,
+  dataLostNative: (run: string, db: string) => `${run} env var (e.g. DATABASE_URL, SPRING_DATASOURCE_URL) → shared managed DB (${db})`,
+  serverErrorNative: (run: string, db: string) =>
+    `read the DB URL from an env var (e.g. DATABASE_URL; in Spring spring.datasource.url: \${SPRING_DATASOURCE_URL}) set on ${run} to ${db}`,
 };
 
 const WORDS: Record<Lang, typeof en> = {
@@ -146,6 +154,10 @@ const WORDS: Record<Lang, typeof en> = {
       `처음 달라진 곳은 ${i}단계(${title})입니다: ${reasons}. ` +
       `알려진 원인(접속 불가, 로그인 풀림, 데이터 유실, 서버 오류)에 맞지 않으니 아래 요청 경로를 보세요.`,
     otherStep: (i, title, base, bo, cand, co) => `${i}단계(${title}): ${base} ${bo}; ${cand} ${co}.`,
+    loginLostNative: (run, db) => `${run} 환경변수 SPRING_PROFILES_ACTIVE=demo,session-jdbc (세션은 ${db}의 spring_session 테이블에 저장)`,
+    dataLostNative: (run, db) => `${run} 환경변수(예: DATABASE_URL, SPRING_DATASOURCE_URL) → 공유 DB(${db})`,
+    serverErrorNative: (run, db) =>
+      `DB 주소를 환경변수에서 읽기(예: DATABASE_URL, Spring은 spring.datasource.url: \${SPRING_DATASOURCE_URL}), ${run}에서 ${db} 주소로 설정`,
   },
   ja: {
     step: (i, title, base, bo, cand, co) => `ステップ ${i}（${title}）は ${base} では通りましたが（${bo}）、${cand} では通りませんでした（${co}）。`,
@@ -178,8 +190,25 @@ const WORDS: Record<Lang, typeof en> = {
       `最初の違いはステップ ${i}（${title}）です: ${reasons}。` +
       `既知の原因（接続不可、ログイン切れ、データ消失、サーバーエラー）に当てはまらないため、下のリクエスト経路を確認してください。`,
     otherStep: (i, title, base, bo, cand, co) => `ステップ ${i}（${title}）: ${base} ${bo}、${cand} ${co}。`,
+    loginLostNative: (run, db) => `${run} の環境変数 SPRING_PROFILES_ACTIVE=demo,session-jdbc（セッションは ${db} の spring_session テーブルに保存）`,
+    dataLostNative: (run, db) => `${run} の環境変数（例: DATABASE_URL, SPRING_DATASOURCE_URL）→ 共有 DB（${db}）`,
+    serverErrorNative: (run, db) =>
+      `DB の URL を環境変数から読む（例: DATABASE_URL、Spring では spring.datasource.url: \${SPRING_DATASOURCE_URL}）。${run} で ${db} の URL を設定`,
   },
 };
+
+// 비교 환경 ID → [env를 넣는 곳, 세션·데이터를 둘 DB]. 고유 이름이라 대개 언어와 상관없고, ECS task만 언어별로 쓴다.
+// local은 Docker Compose의 PostgreSQL 컨테이너다. 목록에 없는 환경은 표시 이름과 "DB"로 쓴다.
+const PLATFORM: Record<string, [run: string | Record<Lang, string>, db: string]> = {
+  gcp: ["Cloud Run", "Cloud SQL"],
+  aws: [{ en: "ECS task", ko: "ECS 태스크", ja: "ECS タスク" }, "RDS"],
+  azure: ["Container Apps", "Azure Database for PostgreSQL"],
+  local: ["Docker", "PostgreSQL"],
+};
+function platform(id: string, lang: Lang): [run: string, db: string] {
+  const [run, db] = PLATFORM[id] ?? [displayName(id), "DB"];
+  return [typeof run === "string" ? run : run[lang], db];
+}
 
 /** 받을 수 있는 lang 값. 문장을 가진 언어(WORDS의 키)에서 만들어 둘이 어긋나지 않게 한다. */
 export const LANGS = Object.keys(WORDS) as Lang[];
@@ -196,14 +225,29 @@ function instanceLine(words: typeof en, login: Hop | undefined, bounced: Hop): s
 // instanceLine이 만드는 줄의 모양(세 언어). 만드는 문장(WORDS.switched)에서 바로 만들어, 문장을 바꾸면 알아보는 쪽도 함께 바뀐다.
 // 서버 ID는 앱이 정하는 아무 문자열이라("web 1", 헤더가 두 번 와서 ", "로 이어진 값) 자리마다 아무 글자나 받는다.
 const SLOT = "\u0000";
+// 자리마다 잡아 두어(로그인 hop, 그 서버 ID, 튕긴 hop, 그 서버 ID) ai-report가 같은 두 ID를 다시 말한 AI 줄을 알아보게 한다.
 const SWITCHED = LANGS.map((lang) => {
   const escaped = WORDS[lang].switched(SLOT, SLOT, SLOT, SLOT).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^${escaped.replaceAll(SLOT, ".+")}$`, "s");
+  return new RegExp(`^${escaped.replaceAll(SLOT, "(.+?)")}$`, "s");
 });
 
 /** 규칙 보고서 evidence에 있는 서버 전환 근거 줄(어느 언어든). ai-report가 AI 답에 이 줄을 지킬 때 쓴다. */
 export function switchLine(evidence: string[]): string | undefined {
   return evidence.find((line) => SWITCHED.some((re) => re.test(line)));
+}
+
+/** 서버 전환 근거 줄에 적힌 두 서버 ID [로그인을 받은 서버, 튕긴 요청을 받은 서버]. 그 줄이 아니면 null. */
+export function switchIds(line: string): [string, string] | null {
+  for (const re of SWITCHED) {
+    const m = re.exec(line);
+    if (m) return [m[2], m[4]];
+  }
+  return null;
+}
+
+/** 요청 경로 줄("GCP 요청 경로: …"). ai-report가 AI의 "gcp hops: …" 줄을 같은 모양으로 바꿀 때 쓴다. */
+export function hopsLine(env: string, chain: string, lang: Lang): string {
+  return WORDS[lang].hops(env, chain);
 }
 
 /** 방금 쓴 값(글 제목·본문·댓글)이 비교 환경에서만 다시 보이지 않는다. */
@@ -226,10 +270,14 @@ export function ruleReport(
   const failed = diffs.find((d) => d.cloud.status === "failed");
   const candOnly = failed?.local.status === "passed" ? failed : undefined;
   // 이름이 없는 StepDiff(contracts fixture)는 결과 필드 이름(local/cloud)을 그대로 쓴다.
-  const base = first.baseline ?? "local";
-  const cand = first.candidate ?? "cloud";
+  // 문장에는 표시 이름(Local·GCP)을, 수정안의 target(엔진이 읽는 기계 값)에는 환경 ID를 쓴다.
+  const target = first.candidate ?? "cloud";
+  const base = displayName(first.baseline ?? "local");
+  const cand = displayName(target);
+  const [run, db] = platform(target, lang);
+  const done = (r: StepResult) => outcome(r, lang);
 
-  const stepLine = (d: StepDiff) => w.step(d.index, d.title, base, outcome(d.local), cand, outcome(d.cloud));
+  const stepLine = (d: StepDiff) => w.step(d.index, d.title, base, done(d.local), cand, done(d.cloud));
   const hopLines = (d: StepDiff) => [
     ...(d.local.status !== "passed" && d.local.hops.length ? [w.hops(base, hopChain(d.local.hops))] : []),
     ...(d.cloud.hops.length ? [w.hops(cand, hopChain(d.cloud.hops))] : []),
@@ -262,13 +310,13 @@ export function ruleReport(
         ...(switched ? [switched] : []),
       ],
       {
-        target: cand,
+        target,
         // 세션을 서버 메모리 대신 공유 DB(Spring Session JDBC)에 두면 몇 대로 늘려도 로그인이 유지된다.
         // 같은 이미지에 프로필 env만 바꾸면 되고, 세 어댑터(local·aws·gcp)가 이 값을 이미 받는다.
         option: "env",
         value: "SPRING_PROFILES_ACTIVE=demo,session-jdbc",
         description: w.loginLostFix,
-        native: "Cloud Run / ECS env SPRING_PROFILES_ACTIVE=demo,session-jdbc (sessions in the spring_session table of Cloud SQL / RDS)",
+        native: w.loginLostNative(run, db),
         // env를 바꿔 다시 배포할 수 있는 대상인지는 엔진만 안다(hints.can_apply_env). 모르면 제안만 한다.
         auto_applicable: canApplyEnv,
       },
@@ -285,12 +333,12 @@ export function ruleReport(
       w.dataLostCause(cand, base),
       [stepLine(candOnly), ...hopLines(candOnly)],
       {
-        target: cand,
+        target,
         option: "code_change",
         // 앱 스택(Spring·Node·Python)과 클라우드마다 이름이 달라서, 공통 방법을 쓰고 흔한 env 이름은 예로만 든다.
         value: "point every instance at one shared managed database via an env var (e.g. DATABASE_URL, SPRING_DATASOURCE_URL)",
         description: w.dataLostFix,
-        native: "Cloud Run / ECS / Container Apps env var (e.g. DATABASE_URL, SPRING_DATASOURCE_URL) → shared managed DB (Cloud SQL / RDS / Azure Database)",
+        native: w.dataLostNative(run, db),
         auto_applicable: false,
       },
       "medium",
@@ -304,13 +352,11 @@ export function ruleReport(
       w.serverErrorCause(cand, base, candOnly.index, candOnly.title, status),
       [stepLine(candOnly), ...hopLines(candOnly)],
       {
-        target: cand,
+        target,
         option: "code_change",
         value: "move the DB URL to environment variables",
         description: w.serverErrorFix,
-        native:
-          "read the DB URL from an env var (e.g. DATABASE_URL; in Spring spring.datasource.url: ${SPRING_DATASOURCE_URL}) " +
-          "set on Cloud Run / ECS / Container Apps to the managed DB (Cloud SQL / RDS / Azure Database)",
+        native: w.serverErrorNative(run, db),
         auto_applicable: false,
       },
       "medium",
@@ -320,7 +366,7 @@ export function ruleReport(
   return report(
     w.other(first.index, first.title, base, cand),
     w.otherCause(first.index, first.title, first.reasons.join("; ")),
-    [w.otherStep(first.index, first.title, base, outcome(first.local), cand, outcome(first.cloud)), ...hopLines(first)],
+    [w.otherStep(first.index, first.title, base, done(first.local), cand, done(first.cloud)), ...hopLines(first)],
     null,
     "low",
   );

@@ -178,5 +178,6 @@ test("lang: 단계 제목과 app_understanding을 요청 언어로 쓰라고 지
     assert.match(f.seen[0].body.system, new RegExp(`Write step titles \\(short imperative phrases\\) and app_understanding in ${name}`), String(lang));
     // 화면 글자·폼 값은 데이터라 번역하면 기준 환경에서도 맞지 않는다.
     assert.match(f.seen[0].body.system, /Do not translate paths, form actions, field names, field values, link texts, expected text or placeholders/, String(lang));
+    assert.match(f.seen[0].body.system, /use its display name \(local → Local, aws → AWS, gcp → GCP, azure → Azure, onprem → On-prem, candidate → Candidate\)/, String(lang));
   }
 });

@@ -8,7 +8,7 @@ import { isScenario } from "./scenario.ts";
 import type { Verdict } from "./verdict.ts";
 import { waitUntilReachable } from "./preflight.ts";
 import { LANGS, ruleReport, type Lang } from "./report.ts";
-import { aiOptionsFromEnv, aiReport, noCost, type AiOptions } from "./ai-report.ts";
+import { aiOptionsFromEnv, aiReport, MODEL, noCost, type AiOptions } from "./ai-report.ts";
 import { aiScenarioOptionsFromEnv } from "./ai-scenario.ts";
 import { chooseScenario, type Choice } from "./choose.ts";
 
@@ -204,6 +204,15 @@ async function execute(record: Shakedown, job: Job, { reachWaitMs, ai, aiScenari
   return { result, report, cost: addCost(spent, cost) };
 }
 
+/**
+ * 엔진이 시운전 서버가 떠 있는지와 AI를 쓸 수 있는지 본다. AI 보고서나 AI 시나리오 중 하나라도 켜져 있으면 ai는 true.
+ * 키는 있는지만 보고 값은 내보내지 않는다. model은 켜진 쪽의 모델 이름(설정이 없으면 기본 모델), 꺼져 있으면 null.
+ */
+function health({ ai, aiScenario }: Settings): { ok: true; ai: boolean; model: string | null } {
+  const on = [ai, aiScenario].find((o) => o.client !== undefined || Boolean(o.apiKey));
+  return { ok: true, ai: on !== undefined, model: on ? (on.model ?? MODEL) : null };
+}
+
 export function createShakedownServer(options: { deadlineMs?: number; reachWaitMs?: number; ai?: AiOptions; aiScenario?: AiOptions } = {}) {
   const settings: Settings = {
     deadlineMs: options.deadlineMs ?? DEFAULT_DEADLINE_MS,
@@ -242,6 +251,7 @@ export function createShakedownServer(options: { deadlineMs?: number; reachWaitM
   return createServer(async (req, res) => {
     const path = (req.url ?? "/").split("?")[0];
     if (req.method === "POST" && path === "/shakedowns") return create(req, res);
+    if (req.method === "GET" && path === "/health") return send(res, 200, health(settings));
 
     const id = /^\/shakedowns\/([^/]+)$/.exec(path)?.[1];
     if (req.method === "GET" && id) {
