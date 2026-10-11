@@ -20,3 +20,6 @@ export const architectures = {
   large: { cpu: '2', memory: '4Gi', min: 3, max: 8, scaling: 'AUTOMATIC', pool: 2 },
 } as const;
 export type Tier = keyof typeof architectures;
+// 계획 없는 배포(최대 2대)의 인스턴스당 풀. 수정 적용 재배포는 이전 리비전 2대가 연결을 쥔 채 새 2대를 띄우므로 4 × 5 = 20으로 앱 몫(약 22) 안에 둔다.
+// 기본 10이면 40개가 되어 새 리비전이 연결을 못 얻고 뜨지 못한다(2026-10-11 수정 적용 실측: "remaining connection slots are reserved").
+export const LEGACY_POOL = 5;

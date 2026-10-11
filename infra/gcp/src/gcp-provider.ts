@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { databaseEnvironment, type HttpRuntime } from '../../../packages/contracts/runtime.mjs';
-import { architectures, type Tier } from './architecture.js';
+import { architectures, LEGACY_POOL, type Tier } from './architecture.js';
 import type { Config } from './config.js';
 import { validateRequest } from './config.js';
 import type { CloudRun, RunEnv, RunJob, RunService, RunVpcAccess } from './cloud-run.js';
@@ -58,7 +58,8 @@ export class GcpProvider implements Provider {
   private env(request: DeployRequest, initialize: boolean): RunEnv[] {
     if (request.runtime) return this.runtimeEnv(request, request.runtime);
     const c = this.config;
-    const pool = request.architecture && !initialize ? architectures[request.architecture.template_id].pool : undefined;
+    // 계획 없는 배포는 최대 2대라 풀 5로 둔다. 수정 적용 재배포처럼 이전 리비전 2대가 연결을 쥔 채 새 2대가 뜨면 2 × 5 + 2 × 5 = 20으로 한도(약 22) 안이다.
+    const pool = initialize ? undefined : request.architecture ? architectures[request.architecture.template_id].pool : LEGACY_POOL;
     return [
       ...Object.entries({
         SPRING_DATASOURCE_URL: `jdbc:postgresql://${c.dbHost}:5432/${c.dbName}`,
@@ -67,8 +68,8 @@ export class GcpProvider implements Provider {
         SPRING_JPA_HIBERNATE_DDL_AUTO: initialize ? 'update' : 'validate',
         SPRING_PROFILES_ACTIVE: initialize ? 'schema-init' : this.profile(request),
         TZ: request.options.tz,
-        // 계획 배포 앱만: 등급별 인스턴스당 DB 연결 풀(기본 10). 최대 대수까지 늘어도 지금 Cloud SQL 연결 한도 안에 든다(architecture.ts).
-        // 이름은 Spring 환경변수 규칙(점은 밑줄, 대시는 제거)을 따른다. schema Job, small, 계획 없는 배포는 기본값 그대로다.
+        // 인스턴스당 DB 연결 풀(기본 10). 계획 배포는 등급별, 계획 없는 배포는 5. 지금 Cloud SQL 연결 한도 안에 든다(architecture.ts).
+        // 이름은 Spring 환경변수 규칙(점은 밑줄, 대시는 제거)을 따른다. schema Job과 small은 기본값 그대로다.
         ...(pool !== undefined ? { SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE: String(pool) } : {}),
       }).map(([name, value]) => ({ name, value })),
       // 비밀번호 값은 Cloud Run이 Secret Manager에서 직접 꺼낸다. 설정 파일·요청·로그 어디에도 값이 남지 않는다.
