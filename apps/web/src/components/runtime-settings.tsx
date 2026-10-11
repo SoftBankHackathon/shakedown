@@ -1,12 +1,14 @@
 "use client";
 import {useState} from "react";
 import { useT } from "@/components/i18n";
-import {API,MOCK,type Project} from "@/lib/api";
+import {API,MOCK,type Project,type TargetName} from "@/lib/api";
 import type {HttpRuntime} from "@shakedown/contracts";
 
 const field="mt-1 w-full rounded border border-line bg-bg p-2";
 const MANAGED=['postgres','mysql','mongodb'];
-export function RuntimeSettings({project,onSaved}:{project:Project;onSaved:(p:Project)=>void}) {
+// DB modes each cloud accepts. GCP: engine/gcp_runner.py preflight (none·postgres). AWS·Azure runners accept every mode (one DB engine per prepared stack), so they are not listed.
+const DB_SUPPORT:Partial<Record<TargetName,string[]>>={gcp:['none','postgres']};
+export function RuntimeSettings({project,targets,onSaved}:{project:Project;targets:TargetName[];onSaved:(p:Project)=>void}) {
   const t=useT();
   const initial=project.runtime;
   const [port,setPort]=useState(initial?.port??project.analysis.port);
@@ -19,6 +21,7 @@ export function RuntimeSettings({project,onSaved}:{project:Project;onSaved:(p:Pr
   const [command,setCommand]=useState(JSON.stringify(initial?.init_command??[]));
   const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
   if(MOCK)return null;
+  const supported=(m:string)=>targets.every(x=>DB_SUPPORT[x]?.includes(m)??true);
   async function save(){
     setBusy(true);setMessage('');
     try{
@@ -28,13 +31,15 @@ export function RuntimeSettings({project,onSaved}:{project:Project;onSaved:(p:Pr
       onSaved(data);setMessage(t("rt.saved"));
     }catch(e){setMessage(e instanceof Error?e.message:String(e));}finally{setBusy(false);}
   }
-  return <section className="panel panel-body space-y-4"><h2 className="font-semibold text-lg">{t("rt.title")}</h2>
+  return <section id="runtime-settings" className="panel panel-body space-y-4 scroll-mt-20"><h2 className="font-semibold text-lg">{t("rt.title")}</h2>
     <p className="text-sm text-muted">{t("rt.lead")}</p>
     <fieldset disabled={busy} className="space-y-3"><legend className="sr-only">{t("rt.legend")}</legend><div className="grid sm:grid-cols-3 gap-3">
       <label>{t("rt.port")}<input className={field} type="number" min={1} max={65535} value={port} onChange={e=>setPort(Number(e.target.value))}/></label>
       <label>{t("rt.health")}<input className={field} value={health} onChange={e=>setHealth(e.target.value)}/></label>
-      <label>{t("rt.db")}<select className={field} value={mode} onChange={e=>{const next=e.target.value as HttpRuntime['database']['mode'];setMode(next);if(MANAGED.includes(next))setBindings(JSON.stringify({DATABASE_URL:next+'_url'},null,2));}}><option value="none">{t("rt.dbNone")}</option><option value="postgres">{t("rt.dbPostgres")}</option><option value="mysql">{t("rt.dbMysql")}</option><option value="mongodb">{t("rt.dbMongo")}</option><option value="external">{t("rt.dbExternal")}</option></select></label>
+      <label>{t("rt.db")}<select className={field} value={mode} onChange={e=>{const next=e.target.value as HttpRuntime['database']['mode'];setMode(next);if(MANAGED.includes(next))setBindings(JSON.stringify({DATABASE_URL:next+'_url'},null,2));}}>{([['none','rt.dbNone'],['postgres','rt.dbPostgres'],['mysql','rt.dbMysql'],['mongodb','rt.dbMongo'],['external','rt.dbExternal']] as const).map(([v,k])=><option key={v} value={v} disabled={!supported(v)}>{t(k)}</option>)}</select></label>
     </div>
+    {(targets.includes('gcp')||targets.some(x=>x==='aws'||x==='azure'))&&<p className="text-xs text-muted">{targets.includes('gcp')&&t("rt.dbGcpOnly")} {targets.some(x=>x==='aws'||x==='azure')&&t("rt.dbStackNote")}</p>}
+    {!supported(mode)&&<p className="text-sm text-bad">{t("rt.dbUnsupported")}</p>}
     {MANAGED.includes(mode)&&<><label className="block">{t("rt.dbName")}<input className={field} value={name} onChange={e=>setName(e.target.value)}/></label><label className="block">{t("rt.bindings")}<textarea className={field+' font-mono text-sm'} rows={7} value={bindings} onChange={e=>setBindings(e.target.value)}/></label><p className="text-xs text-muted">{t("rt.bindingsNote",{example:'{"DATABASE_URL":"postgres_url"}'})}</p></>}
     <details><summary className="cursor-pointer">{t("rt.more")}</summary><div className="space-y-3 mt-3">
       <label className="block">{t("rt.env")}<textarea className={field+' font-mono text-sm'} rows={3} value={env} onChange={e=>setEnv(e.target.value)}/></label>

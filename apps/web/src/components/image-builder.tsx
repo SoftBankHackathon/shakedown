@@ -6,7 +6,7 @@ import { API, MOCK, type ImagePlan as Plan, type ImageBuild as Build } from "@/l
 
 const STATUS_KEY = { queued: "img.stQueued", building: "img.stBuilding", built: "img.stBuilt", failed: "img.stFailed" } as const;
 
-export function ImageBuilder({projectId}:{projectId:string}) {
+export function ImageBuilder({projectId,stack}:{projectId:string;stack:string}) {
   const t=useT();
   const [runtime,setRuntime]=useState("");
   const [entrypoint,setEntrypoint]=useState("");
@@ -28,7 +28,7 @@ export function ImageBuilder({projectId}:{projectId:string}) {
   async function generate() {
     setBusy(true);setError("");setPlan(null);setBuild(null);
     try {
-      const r=await fetch(API+`/api/projects/${projectId}/image-plans`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...(runtime?{runtime}:{}),...(entrypoint?{entrypoint}:{})})});
+      const r=await fetch(API+`/api/projects/${projectId}/image-plans`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...(runtime?{runtime}:{}),...(python&&entrypoint?{entrypoint}:{})})});
       const result=await r.json();if(!r.ok)throw new Error(result.detail??t("img.planFail"));setPlan(result);
     }catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}
   }
@@ -40,13 +40,15 @@ export function ImageBuilder({projectId}:{projectId:string}) {
     }catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}
   }
   if(MOCK)return null;
+  // The entrypoint field only means something for Python (FastAPI) apps.
+  const python=/python|fastapi|flask|django/i.test(stack);
   const how=plan?t(plan.source==="existing"?"img.srcExisting":plan.source==="ai-fallback"?"img.srcAi":"img.srcRule"):"";
   return <section id="image-builder" className="panel panel-body space-y-4 scroll-mt-20">
     <div className="flex flex-wrap justify-between gap-2"><h2 className="font-semibold">{t("img.title")}</h2><Link href="/settings" className="text-sm text-accent hover:underline">{t("ui.aiSettings")}</Link></div>
     <p className="text-sm text-muted">{t("img.lead")}</p>
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className={`grid gap-3 ${python?"sm:grid-cols-2":""}`}>
       <label className="text-sm">{t("img.runtime")}<input value={runtime} onChange={e=>setRuntime(e.target.value)} placeholder={t("img.runtimePh")} className="mt-1 w-full rounded border border-line bg-bg p-2" /></label>
-      <label className="text-sm">{t("img.entry")}<input value={entrypoint} onChange={e=>setEntrypoint(e.target.value)} placeholder={t("img.entryPh")} className="mt-1 w-full rounded border border-line bg-bg p-2" /></label>
+      {python&&<label className="text-sm">{t("img.entry")}<input value={entrypoint} onChange={e=>setEntrypoint(e.target.value)} placeholder={t("img.entryPh")} className="mt-1 w-full rounded border border-line bg-bg p-2" /></label>}
     </div>
     <p className="text-xs text-muted">{t("img.note")}</p>
     <button disabled={busy||running} onClick={()=>void generate()} className="button secondary">{busy&&!plan?t("img.generating"):t("img.generate")}</button>

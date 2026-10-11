@@ -2,7 +2,7 @@
 
 import { BsShieldCheck } from "react-icons/bs";
 import { useT } from "@/components/i18n";
-import { AiTag, Badge, Mono, RuleTag, Section } from "@/components/ui";
+import { AiTag, Badge, RuleTag, Section } from "@/components/ui";
 import { DONE, formatSeconds, type Deployment } from "@/lib/api";
 import { resultsFor } from "@/lib/steps";
 import { orderTargets, targetLabel } from "@/lib/targets";
@@ -60,9 +60,10 @@ export function DeployReport({ dep }: { dep: Deployment }) {
           </dd>
         </div>
         <div><dt>{t("report.attempts")}</dt><dd>{dep.attempts.length}</dd></div>
+        <div><dt>{t("report.journey")}</dt><dd>{journey}</dd></div>
         <div>
           <dt>{t("report.aiUsage")}</dt>
-          <dd>{journey}<small className="block muted">{t("dep.calls", { n: dep.ai_cost.calls })} · ₩{dep.ai_cost.krw}</small></dd>
+          <dd>{dep.ai_cost.calls ? `${t("dep.calls", { n: dep.ai_cost.calls })} · ₩${dep.ai_cost.krw}` : t("report.noAi")}</dd>
         </div>
       </dl>
 
@@ -104,7 +105,7 @@ export function DeployReport({ dep }: { dep: Deployment }) {
           <h4>{t("report.action")}</h4>
           {fix ? (
             <>
-              <Mono>{targetLabel(fix.target)}: {fix.option}={fix.value}</Mono>
+              <span>{targetLabel(fix.target)}: {t.fix(fix)}</span>
               {fix.native && <span className="muted"> · {fix.native}</span>}
               <div className="muted">{t(dep.status === "promoted" ? "report.fixWorked" : "report.fixFailed", { n: dep.attempts.length })}</div>
             </>

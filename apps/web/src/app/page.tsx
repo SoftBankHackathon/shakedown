@@ -8,6 +8,7 @@ import { useLang, useT } from "@/components/i18n";
 import { ProviderIcon } from "@/components/provider-icon";
 import { Alert, Badge, Breadcrumb, ConnectionStrip, Elapsed, PageHeading, Stat, Toggle } from "@/components/ui";
 import { api, ApiError, DONE, errorMessage, formatSeconds, MOCK, type Deployment, type Project, type TargetName } from "@/lib/api";
+import { isOffline, useServices } from "@/lib/engine";
 import { DEFAULT_TARGETS, orderTargets, pickTarget, TARGETS, targetLabel } from "@/lib/targets";
 
 /** Cheap change check for one poll: did anything the table shows move? */
@@ -31,6 +32,7 @@ export default function Home() {
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
   const lastPoll = useRef(0);
+  const services = useServices();
 
   // Merge a fresh list into the current one; rows that did not move keep their identity so finished rows don't re-render.
   const mergeActions = (fresh: Deployment[]) =>
@@ -153,11 +155,14 @@ export default function Home() {
             <div className="targets">
               {TARGETS.map((tg) => {
                 const on = targets.includes(tg.id);
+                const offline = isOffline(services, tg.id);
+                const usable = tg.available && !offline;
                 return (
-                  <label key={tg.id} className={`target-row ${tg.available ? "" : "unavailable"}`}>
+                  <label key={tg.id} className={`target-row ${usable ? "" : "unavailable"}`}>
                     <input
                       type="checkbox"
-                      disabled={!tg.available}
+                      // An offline target cannot be picked, but one already picked stays so a single slow health check never drops it.
+                      disabled={!usable && !on}
                       checked={on}
                       onChange={() =>
                         setTargets((cur) =>
@@ -169,8 +174,8 @@ export default function Home() {
                     <ProviderIcon id={tg.id} />
                     <span>{tg.label}{on && tg.id === targets[0] && <span className="tag row-tag">{t("cfg.baseline")}</span>}</span>
                     <span className="target-state">
-                      <i className={`connection-dot ${tg.available ? "connected" : ""}`} />
-                      {tg.available ? t("cfg.available") : t("home.soon")}
+                      <i className={`connection-dot ${usable ? "connected" : ""}`} />
+                      {!tg.available ? t("home.soon") : offline ? t("svc.offline") : t("cfg.available")}
                     </span>
                   </label>
                 );
@@ -197,7 +202,7 @@ export default function Home() {
             <dl>
               <div><dt>{t("est.env")}</dt><dd>{targets.length ? orderTargets(targets).map(targetLabel).join(" + ") : "—"}</dd></div>
               <div><dt>{t("est.shakedown")}</dt><dd>{shakedownOn ? t("est.steps") : t("est.deployOnly")}</dd></div>
-              <div><dt>{t("est.ai")}</dt><dd>{t("est.aiNone")}<br /><span className="muted">{t("est.aiHint")}</span></dd></div>
+              <div><dt>{t("est.ai")}</dt><dd>{shakedownOn && services?.shakedown.ai ? <>{t("est.aiOn")}<br /><span className="muted">{t("est.aiOnHint")}</span></> : <>{t("est.aiNone")}{shakedownOn && !services && <><br /><span className="muted">{t("est.aiHint")}</span></>}</>}</dd></div>
             </dl>
             <div className="estimate-note"><BsInfoCircle size={15} /><p>{t("est.note")}</p></div>
             <div className="estimate-bottom">
