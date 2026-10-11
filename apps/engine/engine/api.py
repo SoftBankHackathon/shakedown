@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+import httpx
 from engine.deployments import DeploymentStore, DeployRequest, CompareRequest, DeploymentError, Busy, TERMINAL
 from engine.llm import LlmConnection, ConnectionRequest, LlmError
 from engine.image_builder import ImageBuilder, PlanRequest, BuildError
@@ -131,6 +132,28 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
     @api.get('/api/health')
     def health():
         return {'ok': True}
+
+    @api.get('/api/services')
+    async def services():
+        # 대시보드의 "사용 가능" 표시용. 다섯 곳에 동시에 짧게 물어 1.5초 안에 답한다. 배포는 하지 않는다.
+        async def probe(base):
+            if not isinstance(base, str): return None
+            try:
+                async with httpx.AsyncClient(timeout=1, trust_env=False) as client:
+                    response = await asyncio.wait_for(client.get(base + '/health'), 1.2)
+                body = response.json() if response.status_code == 200 else None
+                return body if isinstance(body, dict) and body.get('ok') is True else None
+            except (httpx.HTTPError, ValueError, asyncio.TimeoutError):
+                return None
+        ds = api.state.deployments
+        names = ('local', 'aws', 'gcp', 'azure')
+        *found, sd = await asyncio.gather(*(probe(getattr(ds.runner_for(n), 'base', None)) for n in names),
+                                          probe(getattr(ds.shakedown, 'base', None)))
+        # 키 값은 오지 않는다. 시운전이 알려 준 AI 사용 가능 여부와 모델 이름만 옮긴다.
+        model = sd.get('model') if sd else None
+        return {'targets': {n: {'online': r is not None} for n, r in zip(names, found)},
+                'shakedown': {'online': sd is not None, 'ai': bool(sd) and sd.get('ai') is True,
+                              'model': model if isinstance(model, str) else None}}
 
     @api.get('/api/projects', response_model=list[Project])
     def projects():

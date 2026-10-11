@@ -173,10 +173,12 @@ class LocalRunner:
             raise DeploymentError('Local Target request failed; check the service on 127.0.0.1:9101 and its deployment logs.') from None
 
 class ShakedownClient:
+    base = 'http://127.0.0.1:9201'
+
     def call(self, method, path, body=None):
         try:
             with httpx.Client(timeout=20, trust_env=False) as client:
-                response = client.request(method, 'http://127.0.0.1:9201' + path, json=body)
+                response = client.request(method, self.base + path, json=body)
                 response.raise_for_status()
                 return response.json()
         except (httpx.HTTPError, ValueError):
