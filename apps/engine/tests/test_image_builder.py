@@ -71,7 +71,10 @@ def test_fastapi_uses_real_entrypoint(tmp_path):
 
 def test_snapshot_skips_symlinks(tmp_path):
     src=tmp_path/'src';src.mkdir();secret=tmp_path/'secret';secret.write_text('TOP_SECRET')
-    (src/'file').symlink_to(secret)
+    try: (src/'file').symlink_to(secret)
+    except OSError as exc:
+        if getattr(exc, 'winerror', None) == 1314: pytest.skip('Windows symlink privilege is unavailable')
+        raise
     snapshot(src,tmp_path/'copy')
     assert not (tmp_path/'copy/file').exists()
 

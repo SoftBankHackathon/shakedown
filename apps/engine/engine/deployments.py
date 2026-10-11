@@ -454,12 +454,13 @@ class DeploymentStore:
             for key in ('cleanup', 'logs_collected'): target.pop(key, None)
             target.update(status='deploying', deployment_id=new_id); d['traffic_blocked'] = False; self.save(d)
             # 빌드하지 않는다. 1회차 본문(같은 digest·포트·DB·옵션)에 env만 더한다.
-            deploying = time.monotonic()
+            deploying = time.perf_counter()
             self.submit(d, cloud, {**blocked['request'], 'deployment_id': new_id, 'env': env})
             accepted = True
             self.wait_ready(d, cloud)
             # 대시보드의 분해(빌드·배포·시운전)가 총시간을 설명하도록 재배포 시간을 배포 시간에 더한다.
-            d['timings']['deploy_s'] = d['timings'].get('deploy_s', 0) + time.monotonic() - deploying
+            elapsed = time.perf_counter() - deploying
+            d['timings']['deploy_s'] = d['timings'].get('deploy_s', 0) + elapsed
             # 2회차 수정안은 자동으로 다시 적용하지 않으므로 can_apply_env 힌트를 주지 않는다.
             self.compare(d, Endpoint(name='local', url=d['targets']['local']['url']), [Endpoint(name=cloud, url=target['url'])], project)
             if d['status'] == 'blocked':
