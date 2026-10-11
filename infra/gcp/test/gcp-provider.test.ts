@@ -277,7 +277,7 @@ function planInput(tier: Tier): DeployRequest {
     architecture: { version: 'gcp-architecture.v1', template_id: tier }, options: { replicas: architectures[tier].min } });
 }
 
-test('a deploy without a plan sends byte-for-byte the same service and job bodies as before plans existed', async () => {
+test('a deploy without a plan sends the same service and job bodies as before plans existed, plus only the app DB pool', async () => {
   const { run, provider } = setup();
   await provider.deploy(input(), AbortSignal.timeout(2_000), () => {});
   const vpcAccess = { networkInterfaces: [{ network: 'default', subnetwork: 'default' }], egress: 'PRIVATE_RANGES_ONLY' };
@@ -287,6 +287,8 @@ test('a deploy without a plan sends byte-for-byte the same service and job bodie
     { name: 'SPRING_JPA_HIBERNATE_DDL_AUTO', value: initialize ? 'update' : 'validate' },
     { name: 'SPRING_PROFILES_ACTIVE', value: initialize ? 'schema-init' : 'demo,session-jdbc' },
     { name: 'TZ', value: 'UTC' },
+    // 계획 이전과 다른 곳은 앱의 연결 풀 한 줄뿐이다(LEGACY_POOL). schema Job은 기본 풀 그대로다.
+    ...(initialize ? [] : [{ name: 'SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE', value: '5' }]),
     { name: 'SPRING_DATASOURCE_PASSWORD', valueSource: { secretKeyRef: { secret: 'shakedown-db-password', version: 'latest' } } },
   ];
   const service = {
@@ -515,4 +517,14 @@ test('a failed init_command leaves a pointer to the job output in the deployment
   legacy.run.jobError = new Error('schema-init job failed');
   await assert.rejects(legacy.provider.deploy(input(), AbortSignal.timeout(2_000), line => legacyLines.push(line)));
   assert.ok(!legacyLines.some(l => l.startsWith('init_command failed')));
+});
+
+test('deploys without a plan cap the app DB pool at 5 so the old and new revisions fit the Cloud SQL connection limit together', async () => {
+  // 수정 적용 재배포는 이전 리비전 2대가 아직 연결을 쥔 채로 새 리비전 2대를 띄운다. 기본 풀 10이면 40개로 db-f1-micro 한도(25)를 넘는다.
+  const { run, provider } = setup();
+  await provider.deploy(input(), AbortSignal.timeout(2_000), () => {});
+  const env = Object.fromEntries((run.services[0].template.containers[0].env ?? []).map(e => [e.name, e.value]));
+  assert.equal(env.SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE, '5');
+  const task = run.jobs[0].template.template.containers[0];
+  assert.ok(!(task.env ?? []).some(e => e.name === 'SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE'));
 });
