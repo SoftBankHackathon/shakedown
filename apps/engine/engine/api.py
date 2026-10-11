@@ -271,15 +271,19 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
     def events(deployment_id: str):
         deployment(deployment_id)
         async def stream():
-            previous = None
+            previous, last = None, 0
             while True:
                 d = api.state.deployments.get(deployment_id)
+                # 진행 로그는 처음부터 한 번씩 보낸다. ts가 줄마다 커지므로 마지막으로 보낸 ts 뒤만 이어 보낸다.
+                for entry in d.get('log', []):
+                    if entry['ts'] > last:
+                        yield 'data: ' + json.dumps(dict(kind='log', **entry)) + '\n\n'
+                        last = entry['ts']
                 status = d['status']
                 progress = (status, len(d.get('attempts', [{}])[-1].get('steps', [])) if d.get('attempts') else 0)
                 if progress != previous:
                     event = dict(ts=time.time(), kind='stage', status=status, message=status)
                     yield 'data: ' + json.dumps(event) + '\n\n'
-                    yield 'data: ' + json.dumps(dict(ts=time.time(), kind='log', source='engine', line=status)) + '\n\n'
                     previous = progress
                 if status in TERMINAL:
                     yield 'data: ' + json.dumps(dict(ts=time.time(), kind='done', status=status)) + '\n\n'

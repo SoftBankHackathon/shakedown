@@ -38,6 +38,8 @@ ENV_FIX_TARGETS = {'gcp'}
 # 값은 GCP 어댑터가 받는 프로필 목록(infra/gcp/src/config.ts의 validateRequest)과 같다.
 ENV_FIXES = {'SPRING_PROFILES_ACTIVE=demo,session-jdbc': {'SPRING_PROFILES_ACTIVE': 'demo,session-jdbc'}}
 VERDICT_RANK = ('PASS', 'WARN', 'BLOCKED')
+# 대시보드 진행 로그(d['log']) 최대 줄 수. 넘치면 오래된 줄부터 버린다.
+LOG_LIMIT = 300
 
 def fix_cloud(options):
     """엔진이 env 수정안을 적용할 클라우드. Local과 자동 수정 대상 클라우드 하나만 배포했을 때 그 이름, 아니면 None.
@@ -297,18 +299,30 @@ class DeploymentStore:
         # 대상 API에 실제로 쓴 배포 ID. 수정 재배포 뒤에는 새 ID라서, 그 뒤의 조회·로그·DELETE는 이 ID로 보낸다.
         return d['targets'][target].get('deployment_id', d['id'])
 
+    @staticmethod
+    def log(d, line, source='engine'):
+        # 대시보드 진행 로그. 짧은 영어 한 줄만 남긴다. env 값·비밀·앱 원본 로그는 넣지 않는다.
+        # ts는 늘 앞 줄보다 크게 둔다. SSE가 ts로 이어 보내므로 줄 수가 상한에 닿아 앞이 잘려도 빠뜨리지 않는다.
+        log = d.setdefault('log', [])
+        log.append(dict(ts=max(time.time(), log[-1]['ts'] + 1e-6) if log else time.time(), source=source, line=line))
+        del log[:-LOG_LIMIT]
+
     def submit(self, d, target, body):
         self.runner_for(target).call('POST', '/deployments', body)
         # 받아들여진 본문을 남긴다. 수정 재배포는 이 본문(같은 이미지·포트·DB·옵션)에 env만 더해 다시 보낸다.
         d['targets'][target].update(deployment_id=body['deployment_id'], request={k: v for k, v in body.items() if k != 'deployment_id'})
+        self.log(d, 'Deploy submitted', target)
         self.save(d)
 
     def wait_ready(self, d, target):
         runner = self.runner_for(target)
-        deadline = time.monotonic() + (max(self.timeout, 2700) if target == 'aws' and d.get('architecture') else self.ready_timeouts.get(target, self.timeout))
+        limit = max(self.timeout, 2700) if target == 'aws' and d.get('architecture') else self.ready_timeouts.get(target, self.timeout)
+        deadline = time.monotonic() + limit
         while time.monotonic() < deadline:
             state = runner.call('GET', '/deployments/' + self.target_id(d, target))
-            if state.get('status') == 'failed': raise DeploymentError(f'{target} deployment failed; inspect its logs.')
+            if state.get('status') == 'failed':
+                self.log(d, 'Target reported a failed deployment', target)
+                raise DeploymentError(f'{target} deployment failed; inspect its logs.')
             if state.get('status') == 'ready':
                 valid = LocalRunner.valid_url(state.get('url', '')) if target == 'local' else runner.valid_url(state.get('url', ''))
                 # 사용자 도메인 HTTPS 바인딩이 준비돼 있으면 공개 주소를 그 주소로 바꾼다. 없으면 기존 검증(valid)대로 처리한다.
@@ -318,9 +332,11 @@ class DeploymentStore:
                 except HttpsError as exc:
                     raise DeploymentError(str(exc)) from None
                 d['targets'][target].update({k:v for k,v in state.items() if k in {'status','url','instances','info'}})
+                self.log(d, f"Ready at {state['url']} ({state.get('instances', '?')} instances)", target)
                 self.save(d)
                 return
             time.sleep(self.poll_seconds)
+        self.log(d, f'Readiness timed out after {limit:.0f}s', target)
         raise DeploymentError(f'{target} deployment readiness timed out.')
 
     def cleanup(self, d, targets):
@@ -339,8 +355,10 @@ class DeploymentStore:
                 d['targets'][target]['cleanup'] = 'confirmed'
                 d['targets'][target]['status'] = 'stopped'
                 d['targets'][target]['instances'] = 0
+                self.log(d, 'Stopped (cleanup confirmed)', target)
                 if target in CLOUDS: blocked.append(True)
             except Exception:
+                self.log(d, 'Cleanup failed; retry DELETE on the adapter', target)
                 d['targets'][target]['cleanup'] = 'failed'
                 d['targets'][target]['status'] = 'failed'
                 d['error'] = d.get('error', '') + f' {target} cleanup failed; inspect the adapter and retry DELETE.'
@@ -356,6 +374,7 @@ class DeploymentStore:
         pending = [t for t in d['options'] if d['targets'][t].get('status') != 'stopped']
         if 'stopped_at' in d and not pending:
             return d
+        self.log(d, 'Stop requested')
         for target in reversed(pending):
             t = d['targets'][target]
             # 어댑터가 받은 적 없는 배포(빌드 실패·POST 거절)는 지울 것이 없다. 모르는 ID에 DELETE하면 404가 실패로 남는다.
@@ -364,9 +383,14 @@ class DeploymentStore:
                     self.runner_for(target).call('DELETE', '/deployments/' + self.target_id(d, target))
                 except Exception:
                     t.update(cleanup='failed', error=f'{target} stop failed; inspect the adapter and press Stop again.')
+                    self.log(d, 'Stop failed; press Stop again', target)
                     continue
                 t['cleanup'] = 'confirmed'; t.pop('error', None)
+                self.log(d, 'Stopped', target)
+            else:
+                self.log(d, 'Nothing to stop (never deployed)', target)
             t.update(status='stopped', instances=0)
+        self.log(d, 'Stop finished')
         d.setdefault('stopped_at', time.time())
         self.save(d)
         return d
@@ -374,20 +398,24 @@ class DeploymentStore:
     def run(self, project, d, comparison=None):
         submitted = []
         try:
+            clouds = [t for t in d['targets'] if t in CLOUDS]
+            self.log(d, 'Build started' + (f' (one image for {", ".join(d["targets"])})' if clouds else ' (Local Docker)'))
             d['status'] = 'building'; self.save(d)
             start = time.monotonic()
             image = 'shakedown/engine:' + d['id']
-            clouds = [t for t in d['targets'] if t in CLOUDS]
             images = {}
             if clouds:
                 # Build once, push to the first cloud's registry, then copy the same digest to the others.
                 analysis, image = self.runner_for(clouds[0]).build_publish(project, d['id'])
                 images[clouds[0]] = image
+                self.log(d, f'Image pushed to the {clouds[0]} registry', clouds[0]); self.save(d)
                 for cloud in clouds[1:]:
                     images[cloud] = self.runner_for(cloud).publish(image, d['id'])
+                    self.log(d, f'Image copied to the {cloud} registry', cloud); self.save(d)
             else:
                 analysis = self.runner.build(project, image)
             d['image'] = image; d['timings']['build_s'] = time.monotonic() - start
+            self.log(d, f"Build finished in {d['timings']['build_s']:.0f}s")
             d['status'] = 'deploying'; self.save(d)
             start = time.monotonic()
             for target in d['targets']:
@@ -407,6 +435,7 @@ class DeploymentStore:
                 self.submit(d, target, body)
                 self.wait_ready(d, target)
             d['timings']['deploy_s'] = time.monotonic() - start
+            self.log(d, f"All targets ready in {d['timings']['deploy_s']:.0f}s")
             d['status'] = 'deployed'
             baseline, *others = d['targets']
             # The shakedown runner compares one candidate at a time, so each cloud gets its own run against the baseline.
@@ -424,6 +453,7 @@ class DeploymentStore:
         except Exception as exc:
             d['status'] = 'failed'
             d['error'] = str(exc) if isinstance(exc, DeploymentError) else 'Deployment failed; inspect the engine environment.'
+            self.log(d, 'Failed: ' + d['error'])
             for target in d['options']:
                 d['targets'][target].update(status='failed', error=d['error'])
             self.cleanup(d, submitted)
@@ -453,6 +483,8 @@ class DeploymentStore:
             raise DeploymentError('This fix is not automatically applicable; apply it manually.')
         self.runner_for(cloud).preflight(project)
         d['attempts'][0]['applied_fix'] = fix
+        # 수정안 값(env)은 보고서에 이미 있다. 로그에는 env 값을 남기지 않는다.
+        self.log(d, f'Applying the suggested env fix to {cloud}')
         d['status'] = 'fixing'
         d.pop('finished', None)
         # 1회차 총시간은 수정이 끝나면 2회차 작업 시간을 더해 다시 채운다. 그 사이에는 지금 값처럼 보이지 않게 뺀다.
@@ -483,6 +515,7 @@ class DeploymentStore:
             target.update(status='deploying', deployment_id=new_id); d['traffic_blocked'] = False; self.save(d)
             # 빌드하지 않는다. 1회차 본문(같은 digest·포트·DB·옵션)에 env만 더한다.
             deploying = time.monotonic()
+            self.log(d, 'Redeploying the same image with the fix', cloud)
             self.submit(d, cloud, {**blocked['request'], 'deployment_id': new_id, 'env': env})
             accepted = True
             self.wait_ready(d, cloud)
@@ -495,6 +528,7 @@ class DeploymentStore:
         except Exception as exc:
             d['status'] = 'failed'
             d['error'] = str(exc) if isinstance(exc, DeploymentError) else 'Fix redeploy failed; inspect the engine environment.'
+            self.log(d, 'Failed: ' + d['error'])
             if not accepted:
                 try:
                     self.runner_for(cloud).call('GET', '/deployments/' + new_id)
@@ -532,6 +566,7 @@ class DeploymentStore:
         except Exception as exc:
             d['status'] = 'failed'
             d['error'] = str(exc) if isinstance(exc, DeploymentError) else 'Comparison failed; no PASS was recorded.'
+            self.log(d, 'Failed: ' + d['error'])
         finally:
             d['finished'] = time.time(); d['timings']['total_s'] = d['finished'] - d['created']; self.save(d)
 
@@ -556,6 +591,8 @@ class DeploymentStore:
         attempt['verdict'] = verdicts[worst]
         attempt['report'] = reports[worst]
         result = results[worst]
+        if reports[worst]: self.log(d, 'Cause report received')
+        self.log(d, f'Verdict: {result}')
         d['status'] = {'PASS':'promoted', 'WARN':'warned', 'BLOCKED':'blocked'}[result]
         d['release_gate'] = 'blocked' if result == 'BLOCKED' else 'review' if result == 'WARN' else 'passed'
         d['traffic_blocked'] = False
@@ -577,6 +614,7 @@ class DeploymentStore:
         body = dict(deployment_id=d['id'], project_id=project.id, baseline=baseline.model_dump(),
                     candidates=[candidate.model_dump()], hints=hints, lang=d.get('lang', 'en'))
         started = time.monotonic()
+        self.log(d, f'Shakedown started: {baseline.name} vs {candidate.name}')
         state = self.shakedown.call('POST', '/shakedowns', body)
         id = state.get('shakedown_id', '')
         import re
@@ -584,6 +622,7 @@ class DeploymentStore:
             raise DeploymentError('Invalid shakedown ID returned by runner.')
         d['shakedown_id'] = id
         spent = attempt['duration_s']
+        logged = 0
         while True:
             if time.monotonic() - started >= self.shakedown_timeout:
                 raise DeploymentError('Shakedown timed out; no PASS was recorded.')
@@ -594,6 +633,12 @@ class DeploymentStore:
                 # 원화는 시운전이 소수 둘째 자리로 보내므로 더한 뒤에도 같은 자리로 맞춘다(0.1+0.2가 0.30000000000000004가 되지 않게).
                 d['ai_cost']['krw'] = round(d['ai_cost']['krw'], 2)
             steps = state.get('steps', [])
+            total = len(d.get('scenario', {}).get('steps', [])) or '?'
+            for step in steps[logged:]:
+                kind = step.get('kind')
+                title = (' ' + step['title']) if step.get('title') else ''
+                self.log(d, f"{candidate.name} step {step.get('index', '?')}/{total}{title}: {kind if kind in ('same', 'skipped') else 'both failed' if kind == 'both_failed' else 'differs'}")
+            logged = max(logged, len(steps))
             attempt['steps'] = prior + steps
             attempt['duration_s'] = spent + time.monotonic() - started
             self.save(d)
