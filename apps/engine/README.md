@@ -58,9 +58,26 @@ Windows에서는 `.venv/Scripts/python.exe -m uvicorn`을 사용합니다. AI �
 - `POST /api/projects/{id}/deployments`: 202 비동기 Local / AWS / GCP 배포
 - `POST /api/projects/{id}/comparisons`: 202 기존 URL 비교
 - `GET /api/deployments?project_id=...`, `GET /api/deployments/{id}`: 결과/증거 조회
-- `POST /api/deployments/{id}/fix`: 202 차단된 배포에 수정안 적용 후 2회차 시운전(아래 "차단 뒤 수정 적용")
-- `GET /api/deployments/{id}/events`: SSE. 상태 또는 완료 단계 수 변화 후 전체 조회. 재연결 시 현재 상태부터, 과거 이벤트 재생 없음
+- `POST /api/deployments/{id}/fix`: 202 차단된 배포에 수정안 적용 후 2회차 시운전(아래 "차단 뒤 수정 적용"). 정리(stop)한 배포는 400
+- `POST /api/deployments/{id}/stop`: 200 끝난 배포의 대상 환경 정리(아래 "대상 환경 정리"). 없는 배포 404, 끝나지 않은 배포(fixing 포함) 409
+- `GET /api/deployments/{id}/events`: SSE. 연결하면 진행 로그(`log` 이벤트, {ts, source, line})를 처음부터 한 번씩 보내고 새 줄을 이어 보냄. 상태 또는 완료 단계 수가 바뀌면 `stage`, 끝나면 `done`
+- `GET /api/services`: 네 대상 어댑터(9101·9102·9103·9104)와 시운전(9201)의 `/health`에 동시에 약 1초씩 물어 1.5초 안에 `{targets: {local|aws|gcp|azure: {online}}, shakedown: {online, ai, model}}`로 답함. HTTP 200이고 `ok: true`일 때만 online, 시운전의 `ai`·`model`은 그 응답 값(없거나 형식이 다르면 false·null). 배포는 하지 않음
 - `GET /api/health`: 엔진 상태
+
+### 진행 로그
+
+배포 기록의 `log`는 짧은 영어 한 줄씩 최대 300줄입니다(넘치면 오래된 줄부터 버림). source는 `engine` 또는 대상 이름입니다. 빌드 시작·끝(초), 클라우드별 이미지 올림·복사, 대상별 배포 접수·준비(주소, 인스턴스 수)·준비 시간 초과, 후보별 시운전 시작, 단계 결과(`gcp step 6/8 Publish a post: differs`), 판정, 원인 보고서 도착, 수정 적용, 정리·stop 결과, 실패 문장을 남깁니다. env 값·비밀·앱 원본 로그는 남기지 않습니다.
+
+### 대상 환경 정리
+
+```bash
+curl -X POST http://127.0.0.1:8700/api/deployments/<id>/stop
+```
+
+- 끝난 배포(deployed·promoted·warned·blocked·failed)만 받습니다. 엔진이 배포한 대상(Local 포함)마다 아직 `stopped`가 아니면 Target API DELETE를 부릅니다(클라우드 먼저, Local 마지막).
+- 성공한 대상은 `status=stopped`, `instances=0`, `cleanup=confirmed`이고 `url`은 남깁니다. 어댑터가 받은 적 없는 대상(빌드 실패 등)은 DELETE 없이 `stopped`입니다.
+- DELETE가 실패한 대상은 `cleanup=failed`와 `error`를 남기고 `status`는 그대로입니다. 일부 또는 전부 실패해도 응답은 200이고, 다시 부르면 실패한 대상만 다시 DELETE합니다.
+- 배포의 `status`(판정)는 바꾸지 않고 `stopped_at`(처음 정리를 시도한 시각)만 남깁니다. 다시 불러도 DELETE 없이 같은 기록을 돌려줍니다. 비교 모드와 외부 비교 URL은 엔진 것이 아니라 지우지 않습니다.
 
 배포 요청 예시:
 
@@ -188,7 +205,7 @@ API:
 
 계획 응답에 `fallback_diagnostic`과 `prompt_version`을 포함해 어떤 진단과 규격으로 생성했는지 확인할 수 있습니다. 프롬프트 본문이나 키를 별도 로그로 저장하지 않습니다.
 
-## AWS 아키텍처 판단 및 선택 구성 배포
+## 아키텍처 판단 및 선택 구성 배포 (AWS·GCP·Azure)
 
 프로젝트 화면에서 서비스 형태, 피크 RPS, 가용성, 트래픽 변화, 우선순위를 입력해 세 설계안을 비교합니다. 저장소를 다시 분석해 프레임워크/DB/서버 세션/의존성 이름과 README의 제한된 키워드를 추출합니다. README 원문이나 코드·환경값은 API로 전송하지 않습니다. README 키워드는 미검증 힌트이며 실제 기능이나 수요의 증명이 아닙니다.
 
@@ -209,6 +226,8 @@ Claude가 연결되어 있고 `use_ai=true`이면 `aws-architecture.v1` 고정 �
 - POST `/api/projects/{id}/architecture-plans`: ArchitectureRequest
 - GET `/api/projects/{id}/architecture-plans/latest`: 최근 계획 또는 null
 - POST `/api/projects/{id}/architecture-plans/{plan_id}/select`: `{template_id: small|medium|large}`
+
+설계안은 고른 클라우드(AWS·GCP·Azure)마다 같은 등급으로 적용합니다. Local은 영향이 없고, 클라우드를 하나도 고르지 않으면 400입니다. 각 클라우드의 replicas는 설계의 최소 태스크 수(small 1, medium 2, large 3)이고 고른 클라우드의 replicas를 직접 넘기면 400입니다. Target API 본문에는 `architecture: {version: <cloud>-architecture.v1, template_id}`가 붙고 runtime 없는 프로젝트는 `SPRING_PROFILES_ACTIVE=demo,session-jdbc` env도 붙습니다(여러 대로 늘어나므로 세션 공유. GCP 어댑터는 이 프로필 없는 계획 배포를 거절). 각 어댑터가 같은 등급을 자기 카탈로그로 옮깁니다(GCP: small 1 vCPU/1 GiB 고정 1, medium 1/2 GiB 자동 2–4, large 2/4 GiB 자동 3–8. Azure: small 0.5/1 GiB 1, medium 1/2 GiB 2–4, large 2/4 GiB 3–6). 아래 표와 AWS 기반 스택 확인, 2700초 준비 대기는 AWS를 골랐을 때만 해당합니다. GCP·Azure의 준비 대기는 각자 한도 그대로입니다.
 
 **선택 저장 자체는 AWS를 변경하지 않습니다.** 배포 요청에 `architecture_plan_id`를 전달하면 최신 선택·분석 근거·실행 설정 및 보안 검사를 재검증한 뒤 서버 카탈로그의 ECS 자원·AZ·자동 확장을 적용합니다. 관리형 PostgreSQL에만 RDS 가용성 변경을 적용합니다. 사전 기반 스택이 필요하며 빈 계정 온보딩은 포함하지 않습니다. 기존 medium·large 실측은 게이트·범용 실행 설정 변경 전 결과입니다. 이번 변경의 AWS 재배포는 미검증입니다.
 
@@ -287,7 +306,7 @@ gcloud auth application-default login
 {"targets":["local","gcp"],"shakedown":true,"autofix":false,"options":{"gcp":{"replicas":2,"sticky_sessions":true,"tz":"UTC"}}}
 ```
 
-GCP 빌드는 linux/amd64 단일 manifest이며 한 번 빌드해 `imagePrefixes[0]` 저장소의 `kty-board`에 push합니다. digest는 `gcloud artifacts docker images describe`로 레지스트리에서 읽고, 인증 중 로컬 Docker에 pull하여 두 대상에 같은 주소를 전달합니다. `gcloud auth print-access-token` 토큰은 표준입력으로만 넘겨 임시 Docker 설정에 로그인하고 끝나면 지웁니다. GCP 옵션은 replicas 1~2, sticky_sessions(Cloud Run 세션 어피니티, best-effort), tz입니다. 설정·gcloud 프로젝트·프로젝트 ID·포트·DB가 다르면 배포를 거절합니다. GCP 빌드도 Local·AWS와 같은 보안 검사(Security Gate)를 거칩니다. 실행 설정(runtime)을 저장한 프로젝트는 DB 모드가 `none`·`postgres`일 때만 받습니다(MySQL·MongoDB·외부 DB는 거절, postgres는 DB 이름이 설정 `dbName`과 같아야 함). runtime 프로젝트는 포트를 설정과 비교하지 않고(Cloud Run이 리비전마다 컨테이너 포트를 정함), env 자동 수정 힌트(`can_apply_env`)도 주지 않습니다(수정안이 Spring 샘플 전용). 어댑터 쪽 조건은 `infra/gcp/README.md` "범용 런타임" 절에 있습니다. 아키텍처 계획(`architecture_plan_id`)은 AWS에만 적용합니다(GCP만 고르면 AWS가 없어 거절, AWS와 함께면 GCP는 계획 없이 배포).
+GCP 빌드는 linux/amd64 단일 manifest이며 한 번 빌드해 `imagePrefixes[0]` 저장소의 `kty-board`에 push합니다. digest는 `gcloud artifacts docker images describe`로 레지스트리에서 읽고, 인증 중 로컬 Docker에 pull하여 두 대상에 같은 주소를 전달합니다. `gcloud auth print-access-token` 토큰은 표준입력으로만 넘겨 임시 Docker 설정에 로그인하고 끝나면 지웁니다. GCP 옵션은 replicas 1~2, sticky_sessions(Cloud Run 세션 어피니티, best-effort), tz입니다. 설정·gcloud 프로젝트·프로젝트 ID·포트·DB가 다르면 배포를 거절합니다. GCP 빌드도 Local·AWS와 같은 보안 검사(Security Gate)를 거칩니다. 실행 설정(runtime)을 저장한 프로젝트는 DB 모드가 `none`·`postgres`일 때만 받습니다(MySQL·MongoDB·외부 DB는 거절, postgres는 DB 이름이 설정 `dbName`과 같아야 함). runtime 프로젝트는 포트를 설정과 비교하지 않고(Cloud Run이 리비전마다 컨테이너 포트를 정함), env 자동 수정 힌트(`can_apply_env`)도 주지 않습니다(수정안이 Spring 샘플 전용). 어댑터 쪽 조건은 `infra/gcp/README.md` "범용 런타임" 절에 있습니다. 아키텍처 계획(`architecture_plan_id`)은 GCP에도 같은 등급으로 적용합니다(`gcp-architecture.v1`, 위 "아키텍처 판단 및 선택 구성 배포").
 
 다른 클라우드와 함께: 엔진은 대상 순서(Local, AWS, Azure, GCP)상 첫 클라우드에서 한 번만 빌드합니다. GCP는 늘 마지막이라 빌드하지 않고, 그 이미지를 `imagePrefixes[0]` 저장소의 `kty-board`(태그는 배포 ID)로 `docker buildx imagetools create --prefer-index=false`로 복사합니다(레지스트리끼리 manifest를 그대로 복사해 digest가 남습니다. 기본값 `--prefer-index=true`는 단일 manifest를 새 index로 감싸 digest를 바꿉니다). 복사 뒤 `gcloud artifacts docker images describe`로 digest를 다시 읽어 출처와 다르면 배포하지 않습니다.
 - AWS와 함께: AWS가 올린 ECR 이미지를 받습니다. `AWS_ADAPTER_CONFIG`의 `repositoryUri`와 같은 저장소의 이미지만 받고, 이름 있는 `HACKATHON_PUBLISH_PROFILE`로 `aws ecr get-login-password`를 받아 ECR에 로그인합니다.

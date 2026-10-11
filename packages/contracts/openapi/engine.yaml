@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Engine API
-  version: 0.1.7
+  version: 0.1.8
   description: |
-    > **상태: 통합 제안 (v0.1.7, 2026-10-10)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 통합 제안 (v0.1.8, 2026-10-11)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     엔진(apps/engine, 김도경)이 구현하고 대시보드(apps/web, 서동옥)가 호출하는 API.
@@ -35,6 +35,37 @@ paths:
                 type: object
                 properties:
                   ok: { type: boolean }
+  /api/services:
+    get:
+      operationId: getServices
+      summary: 대상 서버와 시운전 서비스의 연결 상태 (대시보드 "사용 가능" 표시)
+      description: |
+        엔진이 다섯 곳의 `/health`에 동시에 짧게(약 1초) 물어보고 1.5초 안에 답한다. 배포·비용은 없다.
+        - targets: local(9101)·aws(9102)·gcp(9103)·azure(9104) 어댑터. HTTP 200이고 JSON `ok: true`일 때만 online
+        - shakedown: 9201의 `/health`. online은 같은 규칙, `ai`는 그 응답의 `ai`가 true일 때만 true, `model`은 문자열일 때만 그대로(아니면 null). 닿지 않으면 `{online:false, ai:false, model:null}`
+        - 키 값은 오가지 않는다. 형식은 `src/index.ts`의 `ServiceStatus`
+      responses:
+        "200":
+          description: 연결 상태
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [targets, shakedown]
+                properties:
+                  targets:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      required: [online]
+                      properties: { online: { type: boolean } }
+                  shakedown:
+                    type: object
+                    required: [online, ai, model]
+                    properties:
+                      online: { type: boolean }
+                      ai: { type: boolean }
+                      model: { type: [string, "null"] }
   /api/projects:
     get:
       operationId: listProjects
@@ -132,7 +163,7 @@ paths:
                   default: [local]
                   description: "첫 대상(local을 고르면 local)이 기준이고 나머지 클라우드를 하나씩 비교. 빌드는 한 번. 클라우드가 있으면 첫 클라우드(aws, azure, gcp 순)가 빌드해 자기 저장소에 올리고, local은 그 이미지를, 나머지 클라우드(gcp 포함)는 자기 저장소로 같은 digest 그대로 복사(publish)한 이미지를 배포. 클라우드가 없으면 local이 빌드"
                   items: { type: string, enum: [local, aws, azure, gcp] }
-                architecture_plan_id: { type: string, pattern: "^arch_[a-f0-9]{32}$", description: "최신 선택 설계 ID. AWS 필수, replicas 직접 지정 금지. 실행 시 저장소 근거 재검증." }
+                architecture_plan_id: { type: string, pattern: "^arch_[a-f0-9]{32}$", description: "최신 선택 설계 ID. 고른 클라우드(aws·gcp·azure)마다 같은 등급(small·medium·large)을 적용하고 Local은 영향 없음. 클라우드가 하나도 없으면 400, 고른 클라우드의 replicas 직접 지정 금지(400). 각 클라우드 replicas는 설계의 min_tasks, Target API 본문에 architecture {version: <cloud>-architecture.v1, template_id} 추가(runtime 없는 프로젝트는 env SPRING_PROFILES_ACTIVE=demo,session-jdbc도). AWS 기반 스택 확인과 2700초 준비 대기는 AWS를 골랐을 때만. 실행 시 저장소 근거 재검증." }
                 shakedown: { type: boolean, default: false }
                 autofix: { type: boolean, const: false, default: false }
                 comparison: { $ref: "#/components/schemas/Endpoint" }
@@ -238,7 +269,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Deployment" }
         "400":
-          description: 자동 적용할 수 없는 수정안, 엔진이 배포한 Local+GCP가 아님(비교 모드·외부 URL·AWS·클라우드 둘 이상), 이미 한 번 수정함, 차단된 클라우드의 정리를 확인하지 못함, GCP 사전 확인 실패
+          description: 자동 적용할 수 없는 수정안, 엔진이 배포한 Local+GCP가 아님(비교 모드·외부 URL·AWS·클라우드 둘 이상), 이미 한 번 수정함, 차단된 클라우드의 정리를 확인하지 못함, GCP 사전 확인 실패, 이미 정리(stop)한 배포('This deployment was stopped; start a new Action.')
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -249,6 +280,37 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "409":
           description: blocked가 아님(이미 수정 중 포함), 또는 이 프로젝트의 최신 배포가 아님(더 새 배포가 같은 클라우드 서비스를 쓸 수 있음)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/deployments/{deployment_id}/stop:
+    post:
+      operationId: stopDeployment
+      summary: 판정이 끝난 배포의 대상 환경을 내림 (본문 없음)
+      description: |
+        엔진이 배포한 대상(`options`에 있는 대상, Local 포함)마다 아직 `stopped`가 아니면 Target API `DELETE /deployments/{targets[t].deployment_id}`를 부른다(클라우드 먼저, Local 마지막).
+        - 성공한 대상: `status: stopped`, `instances: 0`, `cleanup: confirmed`. `url`은 그대로 둔다
+        - 어댑터가 받은 적 없는 대상(빌드 실패 등, `deployment_id`도 `cleanup`도 없음)은 DELETE 없이 `stopped`
+        - 실패한 대상: `cleanup: failed`와 `error` 문장, `status`는 그대로. 응답은 그래도 200이고 다시 부르면 실패한 대상만 다시 DELETE
+        - `stopped_at`(처음 정리를 시도한 시각)을 남긴다. `status`(판정)와 `release_gate`는 바꾸지 않는다
+        - 같은 배포를 다시 부르면 DELETE 없이 같은 기록을 돌려준다
+        - 비교 모드(`mode: comparison`)·외부 비교 URL은 엔진 것이 아니라 지우지 않는다(비교 모드는 `stopped_at`만 남김)
+        - 정리한 배포에는 수정 적용(POST /fix)이 400
+      parameters:
+        - { name: deployment_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 정리 결과가 반영된 배포 (일부 DELETE 실패도 200, 대상별 cleanup으로 구분)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "404":
+          description: 없는 배포
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: 아직 끝나지 않은 배포(deployed·promoted·warned·blocked·failed가 아님, fixing 포함)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -264,7 +326,11 @@ paths:
         - `step` {attempt, index, status}: 시운전 단계 진행
         - `verdict` {attempt, status, summary}, `report` {attempt, headline}, `fix` {target, option, value}
         - `done` {status}: 끝 (deployed | promoted | warned | blocked | failed)
-        현재 구현은 stage/log/done을 전달하며 단계별 진행은 stage 이벤트 후 전체 상태를 조회. 재연결은 현재 상태부터 시작하고 과거 이벤트 재생은 미지원.
+        현재 구현은 stage/log/done을 전달하며 단계별 진행은 stage 이벤트 후 전체 상태를 조회.
+        `log` {ts, source, line}은 배포 기록의 `log`(진행 로그)와 같다. 연결하면 저장된 줄을 처음부터 한 번씩 보내고, 그 뒤 새 줄을 이어 보낸다(재연결해도 처음부터 다시 받음).
+        source는 `engine` 또는 대상 이름(local·aws·gcp·azure). 줄은 짧은 영어 문장이다: 빌드 시작·끝(초), 클라우드별 이미지 올림·복사, 대상별 배포 접수·준비(주소, 인스턴스 수)·준비 시간 초과,
+        후보별 시운전 시작, 단계 결과(`gcp step 6/8 Publish a post: differs`, same·skipped·differs), 판정, 원인 보고서 도착, 수정 적용 시작·재배포, 정리·stop 결과, 실패 문장.
+        env 값·비밀·앱 원본 로그는 넣지 않는다. 상태만 되풀이하던 log 줄은 없앴다(상태 변경은 stage 이벤트).
         대시보드는 `log` 외 이벤트를 받으면 GET /api/deployments/{id}로 전체 상태를 다시 읽음.
       parameters:
         - { name: deployment_id, in: path, required: true, schema: { type: string } }
@@ -754,6 +820,18 @@ components:
           items: { type: object, additionalProperties: true }
         timings: { type: object, additionalProperties: { type: number } }
         ai_cost: { type: object, additionalProperties: true }
+        stopped_at: { type: number, description: "POST /stop으로 대상 환경 정리를 처음 시도한 시각(epoch 초). 정리하지 않은 배포에는 없음. 판정(status)은 그대로" }
+        log:
+          type: array
+          maxItems: 300
+          description: "진행 로그(최대 300줄, 넘치면 오래된 줄부터 버림). ts는 줄마다 커짐. SSE log 이벤트와 같은 내용. 이 필드가 생기기 전 기록과 아직 시작 전인 배포에는 없음"
+          items:
+            type: object
+            required: [ts, source, line]
+            properties:
+              ts: { type: number }
+              source: { type: string, description: "engine 또는 대상 이름" }
+              line: { type: string }
     Error:
       type: object
       properties:

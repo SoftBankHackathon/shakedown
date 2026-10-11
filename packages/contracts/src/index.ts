@@ -57,6 +57,8 @@ export type Deployment = {
   error?: string;
   /** POST /api/deployments/{id}/stop으로 대상 환경을 정리한 시각. 판정(status)은 그대로 둔다. */
   stopped_at?: number;
+  /** 진행 로그(최대 300줄). SSE log 이벤트와 같은 줄. source는 "engine" 또는 대상 이름. env 값·비밀·앱 원본 로그는 없다. */
+  log?: { ts: number; source: string; line: string }[];
 };
 
 /** GET /api/services — 엔진이 대상 서버와 시운전 서비스에 짧게 물어본 연결 상태. 대시보드의 "사용 가능" 표시가 이 값을 쓴다. */
