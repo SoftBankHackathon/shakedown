@@ -23,7 +23,7 @@
 
 ## 상태: 초안
 
-Target API는 **v0.1.5 제안**, Engine API는 **v0.1.8 통합 제안**, Shakedown API는 **v0.1.3 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
+Target API는 **v0.1.5 제안**, Engine API는 **v0.1.8 통합 제안**, Shakedown API는 **v0.1.4 초안**입니다. 팀 리뷰 전이라 바뀔 수 있습니다.
 
 바뀔 가능성이 있는 것
 - 상태 확인 방식: 지금은 GET 폴링(2~3초 간격). 콜백(`callback_url`) 방식이 추가될 수 있음
@@ -40,6 +40,7 @@ Target API는 **v0.1.5 제안**, Engine API는 **v0.1.8 통합 제안**, Shakedo
 
 - **Engine v0.1.8 (2026-10-11, 제안. 팀 채널 공유 TBD)**: `GET /api/services`(operationId getServices) 추가: 네 대상 어댑터와 시운전 서비스의 `/health`에 동시에 약 1초씩 물어 1.5초 안에 연결 상태(`ServiceStatus`)를 줌. `POST /api/deployments/{id}/stop`(operationId stopDeployment, 본문 없음) 추가: 끝난 배포의 엔진 배포 대상을 DELETE하고 `stopped_at`을 남김(판정은 그대로, 다시 불러도 DELETE 없음, 일부 실패도 200이고 대상별 `cleanup: failed`, 끝나지 않은 배포는 409, 정리한 배포의 수정 적용은 400). 배포 기록에 진행 로그 `log`({ts, source, line}, 최대 300줄) 추가, SSE `log` 이벤트가 이 줄을 처음부터 보내고 상태만 되풀이하던 줄은 없앰. `architecture_plan_id`를 AWS 전용에서 고른 클라우드(aws·gcp·azure) 모두로: 클라우드가 하나도 없으면 400, 각 클라우드 replicas는 설계의 min_tasks, Target 본문에 `<cloud>-architecture.v1`(Target v0.1.3). 타입은 `Deployment.stopped_at`·`Deployment.log`·`ServiceStatus`.
 - **Engine v0.1.7 (2026-10-10, 제안. 팀 채널 공유·담당자 확인 TBD, 버전 번호는 다른 브랜치의 v0.1.6과 머지 때 정리)**: 배포 요청과 비교 요청에 `lang`(`ko`·`en`·`ja`, 기본 `en`) 추가. 배포 기록(`Deployment.lang`)에 저장하고 그 배포의 모든 시운전 요청(수정 적용 뒤 2회차 포함)에 Shakedown v0.1.3의 `lang`으로 넘김. 목록 밖 값은 400. 기존 기록에는 없음(en으로 봄). 명세는 `components/schemas/ReportLang` 하나를 가리키고, 타입은 `DeployRequest.lang`·`CompareRequest.lang`·`Deployment.lang`.
+- **Shakedown v0.1.4 (2026-10-11, 제안. 팀 채널 공유 TBD)**: `GET /health`(operationId getShakedownHealth) 추가. 응답 `{ok: true, ai: boolean, model: string | null}`. `ai`는 AI 보고서나 AI 시나리오 중 하나라도 켜져 있는지(키는 있는지만 보고 값은 내보내지 않음), `model`은 그 모델 이름, 꺼져 있으면 null. 엔진이 시운전 서버 상태 확인에 씀.
 - **Shakedown v0.1.3 (2026-10-10, 제안. 팀 채널 공유 TBD)**: 요청에 `lang`(`ko`·`en`·`ja`, 기본 `en`) 추가. 규칙 보고서의 headline·cause·evidence 문장과 fix.description, AI 보고서, AI 시나리오의 단계 제목·app_understanding을 그 언어로 씀. 경로·hop·단계 제목·검사 오류 글자, fix의 target·option·value·native, verdict.summary·StepDiff.reasons는 그대로(영어). 목록 밖 값은 400. 응답 키는 그대로. 타입 `ReportLang`(src/index.ts) 추가.
 - **Shakedown v0.1.2 (2026-10-10, 제안. 팀 채널 공유 TBD)**: 요청에 `scenario`가 없으면 시운전이 기준 환경을 보고 고름: 알려진 시나리오(kty-board 기본, GET으로 앞부분만 확인, `fallback`) → AI 시나리오(둘러본 결과로 작성하고 기준 환경에서 미리 돌려 통과한 것만, `ai`) → 규칙 둘러보기(GET만, `fallback`). 그래서 202 응답과 그 직후 조회에는 `scenario`·`scenario_source`가 없고 고른 뒤 채움. 같은 `deployment_id`·같은 baseline이면 처음 고른 시나리오를 다시 씀. 기준 환경에서 열리는 페이지가 없으면 `failed`. `hints`에 알려진 키 `health_path` 추가. 규칙 보고서의 데이터 유실·서버 오류 수정안 문구를 스택 중립으로 바꾸고, 로그인 풀림은 비교 환경에 로그인 POST가 있을 때만 판정. 요청·응답 키는 그대로.
 - **Engine v0.1.6 (2026-10-10, 제안. 팀 채널 공유 TBD)**: 배포 요청 targets에서 gcp도 다른 클라우드(aws·azure)와 함께 보낼 수 있음(v0.1.4의 400 제거). 빌드는 첫 클라우드에서 한 번이고, gcp는 그 이미지(ECR 또는 설정된 ACR)를 Artifact Registry로 같은 digest 그대로 복사해 배포. local과 세 클라우드를 한 번에 고를 수 있게 maxItems 3 → 4. 수정 적용(applyFix)은 지금처럼 Local+GCP 하나일 때만(클라우드 둘 이상이면 400). 요청·응답 형식은 그대로라 타입·fixture는 바꾸지 않음.

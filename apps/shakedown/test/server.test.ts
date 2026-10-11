@@ -624,3 +624,18 @@ test("같은 배포라도 lang이 다르면 그 언어로 시나리오를 새로
   assert.equal(calls, 2);
   assert.deepEqual(claude.scenarioCalls().map((s) => /Korean/.test(s.body.system) ? "ko" : "ja"), ["ko", "ja"]);
 });
+
+test("GET /health는 살아 있음과 AI 설정 여부·모델 이름만 알린다(키는 내보내지 않는다)", async () => {
+  const off = await api();
+  const res = await fetch(`${off}/health`);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, ai: false, model: null });
+
+  const on = await api({ ai: { apiKey: "test-key" } });
+  const body = await (await fetch(`${on}/health`)).json();
+  assert.deepEqual(body, { ok: true, ai: true, model: "claude-opus-5-5" });
+  assert.equal(JSON.stringify(body).includes("test-key"), false);
+
+  const custom = await api({ ai: { apiKey: "test-key", model: "claude-sonnet-x" } });
+  assert.deepEqual(await (await fetch(`${custom}/health`)).json(), { ok: true, ai: true, model: "claude-sonnet-x" });
+});

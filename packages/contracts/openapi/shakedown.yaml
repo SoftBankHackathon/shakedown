@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Shakedown Runner API
-  version: 0.1.3
+  version: 0.1.4
   description: |
-    > **상태: 초안 (v0.1.3, 2026-10-10)**. 팀 리뷰 전이라 바뀔 수 있습니다.
+    > **상태: 초안 (v0.1.4, 2026-10-11)**. 팀 리뷰 전이라 바뀔 수 있습니다.
     > 바꿀 때는 팀 채널에 먼저 공유하고, 버전과 `packages/contracts/README.md`의 변경 이력을 함께 고칩니다.
 
     AI 시운전 서비스가 구현하는 API (apps/shakedown, 김태현). 엔진이 호출합니다.
@@ -52,6 +52,21 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Shakedown" }
+  /health:
+    get:
+      summary: 시운전 서버 상태와 AI 사용 가능 여부
+      operationId: getShakedownHealth
+      description: |
+        엔진이 시운전 서버가 떠 있는지(GET http://127.0.0.1:9201/health)와 AI를 쓸 수 있는지 봄.
+        `ai`는 AI 보고서나 AI 시나리오 중 하나라도 켜져 있으면(ANTHROPIC_API_KEY가 있고 끄는 스위치가 없음) true.
+        키는 있는지만 보고 값은 절대 내보내지 않음
+      responses:
+        "200":
+          description: 살아 있음
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+              example: { ok: true, ai: true, model: claude-opus-5-5 }
   /shakedowns/{shakedown_id}:
     get:
       summary: 시운전 진행 상황과 결과
@@ -232,6 +247,13 @@ components:
             auto_applicable: { type: boolean, description: "true면 엔진이 이 수정안을 그대로 적용할 수 있음(hints.can_apply_env=true인 env 수정안만). AI 보고서도 이 fix는 바꾸지 않음" }
         confidence: { type: string, enum: [high, medium, low] }
         by: { type: string, enum: [rule, ai] }
+    Health:
+      type: object
+      required: [ok, ai, model]
+      properties:
+        ok: { type: boolean, const: true }
+        ai: { type: boolean, description: AI(보고서·시나리오)가 설정되어 있는지 }
+        model: { type: [string, "null"], description: 켜진 AI의 모델 이름. AI가 꺼져 있으면 null }
     CostLedger:
       type: object
       properties:

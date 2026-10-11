@@ -40,6 +40,7 @@ HOST=0.0.0.0 PORT=9201 npm start -w @shakedown/shakedown   # 엔진이 다른 PC
 |---|---|
 | `POST /shakedowns` | 202 `{shakedown_id, status: "running", steps: [], ai_cost}` 후 뒤에서 실행. 요청에 시나리오가 있으면 `scenario`, `scenario_source: "saved"`도 바로 담김 |
 | `GET /shakedowns/{id}` | 200 현재 상태. 실행 중에는 두 환경이 모두 끝낸 단계까지 `steps`가 채워짐. 모르는 id는 404 |
+| `GET /health` | 200 `{ok: true, ai, model}`. `ai`는 AI 보고서나 AI 시나리오 중 하나라도 켜져 있으면 true, `model`은 그 모델 이름(꺼져 있으면 null). 키는 있는지만 보고 값은 내보내지 않음 |
 
 - 요청에 `scenario`가 없거나 null이면 기준 환경을 보고 고릅니다(아래 "시나리오 고르기")
 - 요청의 `lang`(`ko`·`en`·`ja`, 없거나 null이면 `en`)은 원인 보고서(규칙·AI)와 AI 시나리오의 단계 제목·`app_understanding` 언어입니다. 다른 값이면 400 `lang must be ko, en or ja`. 경로·hop·단계 제목·검사 오류 글자와 수정안의 target·option·value·native는 그대로이고, 판정 요약(`verdict.summary`)과 단계 비교 이유(`reasons`)는 영어 그대로입니다
