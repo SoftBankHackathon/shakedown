@@ -255,13 +255,15 @@ class DeploymentStore:
             raise DeploymentError('Options must belong to selected targets.')
         architecture = None
         if request.architecture_plan_id:
-            if 'aws' not in targets:
-                raise DeploymentError('An architecture plan requires the AWS target.')
+            # 설계안(소·중·대)은 고른 클라우드마다 같은 등급으로 적용한다. Local은 영향 없음.
+            if not any(t in CLOUDS for t in targets):
+                raise DeploymentError('An architecture plan requires a cloud target (AWS, GCP or Azure).')
             if not getattr(self, 'architecture', None):
                 raise DeploymentError('Architecture planner is unavailable.')
             architecture = self.architecture.resolve(project, request.architecture_plan_id)
-            if 'replicas' in request.options.get('aws', {}):
-                raise DeploymentError('Selected architecture controls AWS replicas; remove the replica override.')
+            for target in targets:
+                if target in CLOUDS and 'replicas' in request.options.get(target, {}):
+                    raise DeploymentError(f"Selected architecture controls {TARGETS[target]['label']} replicas; remove the replica override.")
         options = {}
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
         for target in targets:
@@ -276,12 +278,12 @@ class DeploymentStore:
                     or opts['replicas'] not in spec['replicas'] or type(opts['sticky_sessions']) is not bool
                     or (opts['sticky_sessions'] and not spec['sticky'])):
                 raise DeploymentError('Local supports one replica; clouds support one or two. Only Azure and GCP support sticky sessions.')
-            if target == 'aws' and architecture:
+            if target in CLOUDS and architecture:
                 opts['replicas'] = architecture['min_tasks']
             options[target] = opts
         for target in targets:
             if target in CLOUDS: self.runner_for(target).preflight(project)
-        if architecture: self.aws.validate_architecture(architecture, project)
+        if architecture and 'aws' in targets: self.aws.validate_architecture(architecture, project)
         d = dict(id='dep_' + uuid.uuid4().hex, project_id=project.id, created=time.time(), status='queued',
                  shakedown=request.shakedown, autofix=False, options=options, targets={name: {'status':'pending','label': TARGETS[name]['label']} for name in targets},
                  architecture=architecture, architecture_plan_id=request.architecture_plan_id, attempts=[], timings={}, ai_cost=dict(calls=0,input_tokens=0,output_tokens=0,krw=0),
@@ -423,9 +425,10 @@ class DeploymentStore:
                 body = dict(deployment_id=d['id'], project_id=project.id, image=images.get(target, image), port=analysis.port,
                             health_path=analysis.health_path, database={'engine':'postgres','name':analysis.database_name or 'board_db'},
                             secret_refs={'SPRING_DATASOURCE_PASSWORD':'db_password'}, options=d['options'][target])
-                if target == 'aws' and d.get('architecture'):
-                    # Only server-resolved catalog IDs cross the adapter boundary.
-                    body['architecture'] = {'version': 'aws-architecture.v1', 'template_id': d['architecture']['id']}
+                if target in CLOUDS and d.get('architecture'):
+                    # Only server-resolved catalog IDs cross the adapter boundary. 각 어댑터가 같은 등급을 자기 카탈로그로 옮긴다.
+                    body['architecture'] = {'version': f'{target}-architecture.v1', 'template_id': d['architecture']['id']}
+                    # 계획 배포는 여러 대로 늘어나므로 세션을 공유 DB에 둔다. GCP 어댑터는 이 프로필 없는 계획 배포를 거절한다(infra/gcp/src/config.ts).
                     if not project.runtime: body['env'] = {'SPRING_PROFILES_ACTIVE': 'demo,session-jdbc'}
                 if project.runtime:
                     body.pop('database',None); body.pop('secret_refs',None)
