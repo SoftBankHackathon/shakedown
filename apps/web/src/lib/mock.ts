@@ -118,6 +118,7 @@ function projectFor({ repo, targets }: CreateProjectRequest): Project {
 
 export const mockApi = {
   project: async (id: string): Promise<Project> => projects.get(id) ?? PROJECT,
+  projects: async (): Promise<Project[]> => [...projects.values()],
   createProject: async (body: CreateProjectRequest): Promise<Project> => {
     await sleep(400); // pretend to analyze the repo
     return projectFor(body);

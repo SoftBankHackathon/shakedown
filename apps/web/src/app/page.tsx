@@ -1,16 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { BsArrowRight, BsBoxSeam, BsChevronDown, BsChevronRight, BsGithub, BsInfoCircle, BsShieldCheck } from "react-icons/bs";
 import { useLang, useT } from "@/components/i18n";
-import { ActionCard } from "@/components/action-card";
-import { api, ApiError, DONE, errorMessage, MOCK, type Deployment, type TargetName } from "@/lib/api";
-import { DEFAULT_TARGETS, pickTarget, TARGETS } from "@/lib/targets";
+import { ProviderIcon } from "@/components/provider-icon";
+import { Alert, Badge, Breadcrumb, ConnectionStrip, Elapsed, PageHeading, Stat, Toggle } from "@/components/ui";
+import { api, ApiError, DONE, errorMessage, formatSeconds, MOCK, type Deployment, type Project, type TargetName } from "@/lib/api";
+import { DEFAULT_TARGETS, orderTargets, pickTarget, TARGETS, targetLabel } from "@/lib/targets";
 
-type ActionRow = { deployment: Deployment; projectName: string };
-type SavedRow = { id: string; projectName: string };
-
-/** Cheap change check for one poll: did anything the card shows move? */
+/** Cheap change check for one poll: did anything the table shows move? */
 const progressKey = (d: Deployment) =>
   `${d.status}|${Object.values(d.targets).map((x) => x.status).join(",")}|${d.attempts.map((a) => a.steps?.length ?? 0).join(",")}`;
 
@@ -21,53 +21,55 @@ export default function Home() {
   const [comparisonUrl, setComparisonUrl] = useState("");
   const [repo, setRepo] = useState("");
   const [targets, setTargets] = useState<TargetName[]>(MOCK ? DEFAULT_TARGETS : ["local"]);
-  const [actions, setActions] = useState<ActionRow[]>([]);
+  // Both lists come from the engine (GET /api/projects, GET /api/deployments), so every tab sees the same history.
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [actions, setActions] = useState<Deployment[]>([]);
   const [pending, setPending] = useState(0);
   const [flash, setFlash] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
+  const lastPoll = useRef(0);
 
-  // Keep the list across page changes in this tab: only ids are stored, the engine has the rest.
-  useEffect(() => {
-    let saved: SavedRow[] = [];
-    try {
-      saved = JSON.parse(sessionStorage.getItem("actions") ?? "[]");
-    } catch {}
-    if (!saved.length) return;
-    Promise.all(saved.map((r) => api.deployment(r.id).then((deployment) => ({ deployment, projectName: r.projectName }))
-      .catch(() => null)))
-      .then((rows) => setActions(rows.filter((r): r is ActionRow => r !== null)));
-  }, []);
-  const savedKey = actions.map((a) => a.deployment.id).join(",");
-  useEffect(() => {
-    try {
-      const rows: SavedRow[] = actionsRef.current.slice(0, 30).map((a) => ({ id: a.deployment.id, projectName: a.projectName }));
-      sessionStorage.setItem("actions", JSON.stringify(rows));
-    } catch {}
-  }, [savedKey]);
+  // Merge a fresh list into the current one; rows that did not move keep their identity so finished rows don't re-render.
+  const mergeActions = (fresh: Deployment[]) =>
+    setActions((cur) => {
+      const byId = new Map(cur.map((d) => [d.id, d]));
+      return fresh.map((d) => {
+        const old = byId.get(d.id);
+        return old && progressKey(old) === progressKey(d) ? old : d;
+      });
+    });
 
-  // Refresh actions that haven't reached a verdict yet; untouched rows keep their identity,
-  // so finished cards don't re-render.
   useEffect(() => {
-    const timer = setInterval(async () => {
-      const running = actionsRef.current.filter((a) => !DONE.has(a.deployment.status));
-      if (running.length === 0) return;
-      const fresh = await Promise.all(running.map((a) => api.deployment(a.deployment.id).catch(() => a.deployment)));
-      const byId = new Map(fresh.map((d) => [d.id, d]));
-      setActions((cur) => cur.map((a) => {
-        const next = byId.get(a.deployment.id);
-        return next && progressKey(next) !== progressKey(a.deployment) ? { ...a, deployment: next } : a;
-      }));
-    }, 1000);
-    return () => clearInterval(timer);
+    let alive = true;
+    const fail = (e: unknown) => { if (alive) setListError(errorMessage(e)); };
+    api.projects().then((list) => { if (alive) { setProjects(list); setListError(null); } }).catch(fail);
+    const poll = () => {
+      lastPoll.current = Date.now();
+      api.allDeployments().then((list) => { if (alive) { mergeActions(list); setListError(null); } }).catch(fail);
+    };
+    poll();
+    // Engine-side history: refresh every 3 s while anything is still running, else every 15 s (measured from the last call, so timer drift cannot skip or double a window).
+    const timer = setInterval(() => {
+      const running = actionsRef.current.some((d) => !DONE.has(d.status));
+      if (Date.now() - lastPoll.current < (running ? 3000 : 15000) - 200) return;
+      poll();
+    }, 3000);
+    return () => { alive = false; clearInterval(timer); };
   }, []);
+
+  const names = new Map(projects.map((p) => [p.id, p.name]));
+  // GET /api/projects does not carry last_deployment (only the single-project endpoint fills it), so take it from the history already loaded.
+  const latest = new Map<string, Deployment>();
+  for (const d of actions) { const cur = latest.get(d.project_id); if (!cur || d.created > cur.created) latest.set(d.project_id, d); }
 
   async function prepareImage() {
-    if (!repo.trim()) { setError("레포 URL 또는 로컬 앱 경로를 입력하세요."); return; }
+    if (!repo.trim()) { setError(t("home.needRepo")); return; }
     setPending((n) => n + 1); setError(null);
     try {
-      const project = await api.createProject({repo: repo.trim(), image_only: true, targets: targets.length ? targets : ["local"]});
+      const project = await api.createProject({ repo: repo.trim(), image_only: true, targets: targets.length ? targets : ["local"] });
       router.push(`/projects/${project.id}#image-builder`);
     } catch (e) { setError(errorMessage(e)); }
     finally { setPending((n) => n - 1); }
@@ -88,8 +90,9 @@ export default function Home() {
     try {
       const project = await api.createProject({ repo: repo.trim(), targets });
       name = project.name;
-      const deployment = await api.deploy(project.id, { shakedown: MOCK || targets.length >= 2 || !!comparisonUrl.trim(), autofix: MOCK, options: {}, targets, comparison: !MOCK && targets.length === 1 && comparisonUrl.trim() ? {name:"candidate", url:comparisonUrl.trim()} : undefined, lang });
-      setActions((cur) => [{ deployment, projectName: project.name }, ...cur]);
+      setProjects((cur) => (cur.some((p) => p.id === project.id) ? cur : [project, ...cur]));
+      const deployment = await api.deploy(project.id, { shakedown: MOCK || targets.length >= 2 || !!comparisonUrl.trim(), autofix: MOCK, options: {}, targets, comparison: !MOCK && targets.length === 1 && comparisonUrl.trim() ? { name: "candidate", url: comparisonUrl.trim() } : undefined, lang });
+      setActions((cur) => [deployment, ...cur.filter((d) => d.id !== deployment.id)]);
     } catch (err) {
       // The engine owns the "one running deployment per project" rule and answers 409.
       setError(err instanceof ApiError && err.status === 409 ? t("home.busy", { name }) : errorMessage(err));
@@ -98,95 +101,213 @@ export default function Home() {
     }
   }
 
+  const shakedownOn = MOCK || targets.length >= 2 || !!comparisonUrl.trim();
+  const counts = {
+    passed: actions.filter((d) => d.status === "promoted").length,
+    blocked: actions.filter((d) => d.status === "blocked").length,
+    running: actions.filter((d) => !DONE.has(d.status)).length,
+  };
+
   return (
-    <div className="space-y-8">
-      <section className="pt-4">
-        <p className="text-xs font-semibold uppercase tracking-widest text-ai">{t("home.eyebrow")}</p>
-        <h1 className="mt-2 text-4xl font-bold tracking-tight">{t("home.title")}</h1>
-        <p className="mt-4 text-base text-muted max-w-3xl leading-relaxed">{t(MOCK ? "home.lead" : "live.lead")}</p>
-        {MOCK && <p className="mt-3 text-xs text-warn">● {t("mock")}</p>}
-        {MOCK && <ol className="mt-8 grid gap-3 sm:grid-cols-4">
-          {([1, 2, 3, 4] as const).map((n) => (
-            <li key={n} className="card p-4 relative">
-              <span className={`flex size-7 items-center justify-center rounded-full text-sm font-bold ${
-                n === 3 ? "bg-ai/20 text-ai" : n === 4 ? "bg-ok/15 text-ok" : "bg-accent/15 text-accent"}`}>
-                {n}
-              </span>
-              <span className="mt-3 block font-semibold">{t(`home.step${n}`)}</span>
-              <span className="mt-1 block text-xs text-muted">{t(`home.step${n}d`)}</span>
-              {n < 4 && (
-                <span className="hidden sm:block absolute -right-2.5 top-1/2 -translate-y-1/2 z-10 text-muted">›</span>
-              )}
-            </li>
-          ))}
-        </ol>}
-      </section>
+    <>
+      <Breadcrumb parent={t("nav.newAction")} current={t("bc.config")} />
+      {MOCK && <Alert>{t("mock")}</Alert>}
+      {error && <Alert onClose={() => setError(null)}>{error}</Alert>}
 
-      <form onSubmit={runAction} className="card p-5 space-y-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <input
-            value={repo}
-            onChange={(e) => setRepo(e.target.value)}
-            placeholder={t("home.placeholder")}
-            className="flex-1 rounded-lg border border-line bg-bg px-3 py-3 font-mono text-sm outline-none focus:border-accent"
-            required
-          />
-          <button
-            className={`relative rounded-lg px-8 py-3 text-base font-bold tracking-wide text-white transition-all active:scale-95 ${
-              flash ? "bg-ok" : "bg-accent hover:brightness-110"}`}
-          >
-            {flash ? `✓ ${t("home.accepted")}` : t("action")}
-            {pending > 0 && (
-              <span className="absolute -right-2 -top-2 flex size-5 items-center justify-center rounded-full bg-ai text-[11px] text-bg">
-                {pending}
-              </span>
+      <form onSubmit={runAction} className="configure-grid">
+        <label className="repository-strip">
+          <BsGithub size={29} />
+          <input className="strip-input" value={repo} onChange={(e) => setRepo(e.target.value)} placeholder={t("home.placeholder")} aria-label={t("home.placeholder")} required />
+        </label>
+        <ConnectionStrip />
+
+        <section className="configuration-card" aria-label={t("bc.config")}>
+          <div className="project-fields">
+            <div className="field-row framework-row">
+              <label htmlFor="home-stack">{t("cfg.stack")}</label>
+              <div>
+                <div className="read-only-select"><input id="home-stack" value={t("cfg.autoDetect")} readOnly /><BsChevronDown size={12} /></div>
+                <p className="hint">{t(MOCK ? "home.lead" : "live.lead")}</p>
+              </div>
+            </div>
+            {!MOCK && targets.length === 1 && (
+              <div className="field-row framework-row">
+                <label htmlFor="home-comparison">{t("live.candidate")}</label>
+                <div>
+                  <input id="home-comparison" type="url" value={comparisonUrl} onChange={(e) => setComparisonUrl(e.target.value)} placeholder="https://comparison.example.com" />
+                  <p className="hint">{t("live.compareHint")} {t("live.externalHint")}</p>
+                </div>
+              </div>
             )}
-          </button>
-        </div>
-        {!MOCK && <button type="button" disabled={pending > 0} onClick={() => void prepareImage()} className="rounded-lg border border-accent px-4 py-2 text-sm text-accent disabled:opacity-50">배포 없이 이미지 먼저 만들기</button>}
-        {!MOCK && targets.length === 1 && <label className="block text-sm">{t("live.candidate")}<input type="url" value={comparisonUrl} onChange={(e) => setComparisonUrl(e.target.value)} placeholder="https://comparison.example.com" className="mt-2 w-full rounded-lg border border-line bg-bg p-3" /><span className="text-xs text-muted">{t("live.compareHint")} {t("live.externalHint")}</span></label>}
-        <fieldset>
-          <legend className="text-xs font-semibold uppercase tracking-wide text-muted">{t("home.targets")}</legend>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {TARGETS.map((tg) => {
-              const on = targets.includes(tg.id);
-              return (
-                <button
-                  key={tg.id}
-                  type="button"
-                  disabled={!tg.available}
-                  aria-pressed={on}
-                  onClick={() =>
-                    setTargets((cur) =>
-                      on ? cur.filter((x) => x !== tg.id)
-                        : pickTarget(cur, tg.id),
-                    )
-                  }
-                  className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm transition-colors ${
-                    !tg.available ? "border-line text-muted/60 cursor-not-allowed"
-                      : on ? "border-accent bg-accent/15 text-accent" : "border-line text-muted hover:text-text"}`}
-                >
-                  <span className={`size-2 rounded-full ${on ? "bg-accent" : "bg-line"}`} />
-                  {tg.label}
-                  {!tg.available && <span className="text-[10px] uppercase">{t("home.soon")}</span>}
-                </button>
-              );
-            })}
+            <div className="field-row">
+              <label htmlFor="home-shakedown">{t("est.shakedown")}</label>
+              <div className="command-field">
+                <input id="home-shakedown" readOnly value={shakedownOn ? t("est.steps") : t("est.deployOnly")} />
+                <span className="automatic"><BsShieldCheck size={13} />{t("cfg.detected")}</span>
+              </div>
+            </div>
           </div>
-          <p className="mt-2 text-xs text-muted">{MOCK ? t("home.targetsHint") : t("live.scope")}</p>
-        </fieldset>
-      </form>
-      {error && <p className="text-sm text-bad">{error}</p>}
 
-      <div className="space-y-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">{t("home.actions")}</h2>
-        {actions.length === 0 && <p className="text-muted text-sm">{t("home.noActions")}</p>}
-        <div className="space-y-3">
-          {actions.map(({ deployment, projectName }) => (
-            <ActionCard key={deployment.id} deployment={deployment} projectName={projectName} />
-          ))}
-        </div>
+          <div className="config-section targets-section">
+            <h2>{t("home.targets")}</h2>
+            <div className="targets">
+              {TARGETS.map((tg) => {
+                const on = targets.includes(tg.id);
+                return (
+                  <label key={tg.id} className={`target-row ${tg.available ? "" : "unavailable"}`}>
+                    <input
+                      type="checkbox"
+                      disabled={!tg.available}
+                      checked={on}
+                      onChange={() =>
+                        setTargets((cur) =>
+                          on ? cur.filter((x) => x !== tg.id)
+                            : MOCK ? TARGETS.map((x) => x.id).filter((id) => id === tg.id || cur.includes(id)) : pickTarget(cur, tg.id),
+                        )
+                      }
+                    />
+                    <ProviderIcon id={tg.id} />
+                    <span>{tg.label}{on && tg.id === targets[0] && <span className="tag row-tag">{t("cfg.baseline")}</span>}</span>
+                    <span className="target-state">
+                      <i className={`connection-dot ${tg.available ? "connected" : ""}`} />
+                      {tg.available ? t("cfg.available") : t("home.soon")}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="inline-note"><BsInfoCircle /><span>{MOCK ? t("home.targetsHint") : t("live.scope")}</span></div>
+          </div>
+
+          <div className="shakedown-footer">
+            <Toggle label={t("cfg.autoRun")} checked={shakedownOn} disabled onChange={() => {}} />
+            <strong>{t("cfg.autoRun")}</strong>
+            <span>{t("cfg.autoRunMeta")}</span>
+            {!MOCK && (
+              <button type="button" className="text-link" disabled={pending > 0} onClick={() => void prepareImage()}>
+                {t("cfg.imageOnly")}<BsChevronRight size={12} />
+              </button>
+            )}
+          </div>
+        </section>
+
+        <aside className="estimate-column">
+          <section className="estimate-card">
+            <h2>{t("est.title")}</h2>
+            <dl>
+              <div><dt>{t("est.env")}</dt><dd>{targets.length ? orderTargets(targets).map(targetLabel).join(" + ") : "—"}</dd></div>
+              <div><dt>{t("est.shakedown")}</dt><dd>{shakedownOn ? t("est.steps") : t("est.deployOnly")}</dd></div>
+              <div><dt>{t("est.ai")}</dt><dd>{t("est.aiNone")}<br /><span className="muted">{t("est.aiHint")}</span></dd></div>
+            </dl>
+            <div className="estimate-note"><BsInfoCircle size={15} /><p>{t("est.note")}</p></div>
+            <div className="estimate-bottom">
+              <span><BsShieldCheck size={15} />{t("est.gate")}</span>
+              <p>{t("est.gateDesc")}</p>
+            </div>
+          </section>
+          <button className="button primary deploy-button" disabled={pending > 0}>
+            {pending > 0 ? <><span className="spinner" />{t("project.starting")}</> : flash ? `✓ ${t("home.accepted")}` : <>{t("action")}<BsArrowRight size={17} /></>}
+          </button>
+        </aside>
+      </form>
+
+      <PageHeading id="projects" title={t("proj.title")} lead={t("proj.lead")} />
+      {listError && <Alert>{t("home.listError", { detail: listError })}</Alert>}
+      <ProjectTable rows={projects} latest={latest} />
+
+      <PageHeading id="actions" title={t("home.actions")} lead={t("hist.lead")} />
+      <div className="stats">
+        <Stat label={t("stat.total")} value={actions.length} />
+        <Stat label={t("stat.passed")} value={counts.passed} />
+        <Stat label={t("stat.blocked")} value={counts.blocked} />
+        <Stat label={t("stat.running")} value={counts.running} />
       </div>
+      <ActionTable rows={actions} names={names} />
+    </>
+  );
+}
+
+function ProjectTable({ rows, latest }: { rows: Project[]; latest: Map<string, Deployment> }) {
+  const t = useT();
+  return (
+    <div className="table-wrap">
+      <table className="run-table deploy-table">
+        <thead>
+          <tr>
+            <th>{t("proj.name")}</th>
+            <th>{t("hist.targets")}</th>
+            <th>{t("proj.last")}</th>
+            <th>{t("proj.added")}</th>
+            <th><span className="sr-only">{t("proj.open")}</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p) => {
+            const last = p.last_deployment ?? latest.get(p.id);
+            return (
+              <tr key={p.id}>
+                <td>
+                  <Link className="table-link" href={`/projects/${p.id}`}>
+                    <BsGithub size={19} />
+                    <span><strong>{p.name}</strong><small className="mono">{p.repo.replace(/^https:\/\/github\.com\//, "")}</small></span>
+                  </Link>
+                </td>
+                <td>{orderTargets(p.targets ?? ["local"]).map(targetLabel).join(" + ")}<small>{p.analysis.stack}{p.analysis.database ? ` · ${p.analysis.database}` : ""}</small></td>
+                <td>{last ? <><Badge status={last.status} /><small className="mono">{last.id}</small></> : <span className="muted">—</span>}</td>
+                <td>{t.ago(p.created)}<small className="mono">{p.id}</small></td>
+                <td><Link className="icon-button" href={`/projects/${p.id}`} aria-label={t("proj.open")}><BsChevronRight /></Link></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {!rows.length && <div className="table-empty">{t("proj.none")}</div>}
+    </div>
+  );
+}
+
+function ActionTable({ rows, names }: { rows: Deployment[]; names: Map<string, string> }) {
+  const t = useT();
+  return (
+    <div className="table-wrap">
+      <table className="run-table deploy-table">
+        <thead>
+          <tr>
+            <th>{t("hist.project")}</th>
+            <th>{t("hist.targets")}</th>
+            <th>{t("hist.result")}</th>
+            <th>{t("hist.ai")}</th>
+            <th>{t("hist.time")}</th>
+            <th><span className="sr-only">{t("hist.detail")}</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((d) => {
+            const done = DONE.has(d.status);
+            const targetNames = orderTargets(Object.keys(d.targets));
+            const verdict = d.attempts.at(-1)?.verdict;
+            return (
+              <tr key={d.id}>
+                <td>
+                  <Link className="table-link" href={`/deployments/${d.id}`}>
+                    <BsBoxSeam size={19} />
+                    <span><strong>{names.get(d.project_id) ?? d.project_id}</strong><small className="mono">{d.id}</small></span>
+                  </Link>
+                </td>
+                <td>{targetNames.map(targetLabel).join(" + ")}<small>{d.shakedown ? t("est.steps") : t("est.deployOnly")}</small></td>
+                <td><Badge status={d.status} /><small>{done ? verdict?.summary ?? "" : t.maybe(`stage.${d.status}`, "")}</small></td>
+                <td>{t("dep.calls", { n: d.ai_cost.calls })}<small>₩{d.ai_cost.krw}</small></td>
+                <td className="mono">
+                  {done && d.timings.total_s != null ? formatSeconds(d.timings.total_s) : <Elapsed created={d.created} />}
+                  <small>{t.ago(d.created)}</small>
+                </td>
+                <td><Link className="icon-button" href={`/deployments/${d.id}`} aria-label={t("hist.detail")}><BsChevronRight /></Link></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {!rows.length && <div className="table-empty">{t("home.noActions")}</div>}
     </div>
   );
 }

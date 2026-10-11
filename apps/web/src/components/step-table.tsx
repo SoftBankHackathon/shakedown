@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import { BsTerminal } from "react-icons/bs";
 import { useT } from "@/components/i18n";
 import { AiTag, Mono } from "@/components/ui";
 import type { Hop, Step, StepDiff, StepResult } from "@/lib/api";
@@ -24,15 +25,15 @@ export function StepTable({ baseline, candidate, steps, diffs, running }: {
   const firstBad = diffs.find((d) => d.severity === "critical" || d.severity === "warn")?.index ?? null;
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+    <div className="table-wrap">
+      <table className="comparison-table">
         <thead>
-          <tr className="text-left text-xs uppercase tracking-wide text-muted">
-            <th className="py-2 w-8">#</th>
-            <th className="py-2">{t("step.step")}</th>
-            <th className="py-2">{baseline}</th>
-            <th className="py-2">{candidate}</th>
-            <th className="py-2 text-right">{t("step.result")}</th>
+          <tr>
+            <th className="w-10">#</th>
+            <th>{t("step.step")}</th>
+            <th>{baseline}</th>
+            <th>{candidate}</th>
+            <th className="text-right">{t("step.result")}</th>
           </tr>
         </thead>
         <tbody>
@@ -44,27 +45,24 @@ export function StepTable({ baseline, candidate, steps, diffs, running }: {
             const isNext = running && !d && i === diffs.length;
             return (
               <Fragment key={idx}>
-                <tr
-                  onClick={() => d && setOpen(isOpen ? -1 : idx)}
-                  className={`border-t border-line ${d ? "cursor-pointer" : ""} ${rowTone}`}
-                >
-                  <td className="py-2.5 text-muted tabular-nums">{idx}</td>
-                  <td className="py-2.5">
+                <tr onClick={() => d && setOpen(isOpen ? -1 : idx)} className={`${d ? "cursor-pointer" : ""} ${rowTone}`}>
+                  <td className="mono muted tabular-nums">{String(idx).padStart(2, "0")}</td>
+                  <td>
                     <div className="font-medium">{s.title}</div>
-                    <div className="text-xs text-muted font-mono">{describe(s)}</div>
+                    <small className="mono">{describe(s)}</small>
                   </td>
-                  <td className="py-2.5"><Cell r={d?.local} pending={isNext} /></td>
-                  <td className="py-2.5"><Cell r={d?.cloud} pending={isNext} /></td>
-                  <td className="py-2.5 text-right"><Outcome d={d} /></td>
+                  <td><Cell r={d?.local} pending={isNext} /></td>
+                  <td><Cell r={d?.cloud} pending={isNext} /></td>
+                  <td className="text-right"><Outcome d={d} /></td>
                 </tr>
                 {d && isOpen && d.kind !== "same" && d.kind !== "skipped" && (
-                  <tr className="bg-bg/60">
+                  <tr className="selected">
                     <td />
-                    <td colSpan={4} className="py-3 pr-2">
-                      <ul className="mb-3 space-y-0.5 text-xs">
+                    <td colSpan={4}>
+                      <ul className="space-y-0.5 text-xs">
                         {d.reasons.map((r) => <li key={r}>• {r}</li>)}
                       </ul>
-                      <div className="grid gap-3 md:grid-cols-2">
+                      <div className="trace-grid">
                         <Hops title={baseline} hops={d.local.hops} />
                         <Hops title={candidate} hops={d.cloud.hops} />
                       </div>
@@ -76,18 +74,19 @@ export function StepTable({ baseline, candidate, steps, diffs, running }: {
           })}
         </tbody>
       </table>
+      {!steps.length && <div className="table-empty">{t("dep.waiting")}</div>}
     </div>
   );
 }
 
 function Cell({ r, pending }: { r?: StepResult; pending: boolean }) {
   const t = useT();
-  if (!r) return <span className="text-xs text-muted">{pending ? t("step.running") : ""}</span>;
+  if (!r) return <span className="text-xs muted">{pending ? t("step.running") : ""}</span>;
   return (
     <div>
       <span className={`font-semibold ${TONE[r.status]}`}>{ICON[r.status]}</span>{" "}
       <Mono>{r.final_path ?? "—"}</Mono>
-      {r.status !== "skipped" && <span className="ml-2 text-xs text-muted tabular-nums">{r.elapsed_ms}ms</span>}
+      {r.status !== "skipped" && <span className="ml-2 text-xs muted tabular-nums">{r.elapsed_ms}ms</span>}
     </div>
   );
 }
@@ -119,26 +118,20 @@ function Hops({ title, hops }: { title: string; hops: Hop[] }) {
   const t = useT();
   const ids = [...new Set(hops.map((h) => h.instance).filter(Boolean))] as string[];
   return (
-    <div className="rounded-lg border border-line p-3">
-      <div className="mb-2 text-xs font-semibold text-muted">{title} · {t("step.hops")}</div>
-      {hops.length === 0 && <div className="text-xs text-muted">{t("step.notExecuted")}</div>}
-      <ol className="space-y-1 text-xs font-mono">
-        {hops.map((h, i) => (
-          <li key={i} className="flex items-center gap-2">
-            <span className="text-muted w-10">{h.method}</span>
-            <span className="flex-1 truncate">{h.path}</span>
-            <span className={h.status >= 400 ? "text-bad" : h.status >= 300 ? "text-muted" : "text-ok"}>{h.status}</span>
-            {h.instance && (() => {
-              const k = ids.indexOf(h.instance);
-              return (
-                <span className={`rounded px-1.5 ${INSTANCE_TONES[k % INSTANCE_TONES.length]}`}>
-                  {t("step.server", { n: k + 1 })}
-                </span>
-              );
-            })()}
-          </li>
-        ))}
-      </ol>
-    </div>
+    <section className="trace-panel">
+      <h3><BsTerminal />{title} · {t("step.hops")}</h3>
+      {hops.length === 0 && <p className="muted">{t("step.notExecuted")}</p>}
+      {hops.map((h, i) => {
+        const k = h.instance ? ids.indexOf(h.instance) : -1;
+        return (
+          <div className="trace-row" key={i}>
+            <b>{h.method}</b>
+            <code>{h.path}</code>
+            <span className={h.status >= 400 ? "red-text" : h.status >= 300 ? "muted" : "text-ok"}>{h.status}</span>
+            <small>{h.instance && <span className={`rounded px-1.5 ${INSTANCE_TONES[k % INSTANCE_TONES.length]}`}>{t("step.server", { n: k + 1 })}</span>}</small>
+          </div>
+        );
+      })}
+    </section>
   );
 }
