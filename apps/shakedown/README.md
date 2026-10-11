@@ -113,7 +113,8 @@ npm start -w @shakedown/shakedown                     # .env를 자동으로 읽
 - 구조화 출력(JSON 스키마)으로 받고 다시 검사합니다. 형식이 틀리거나, 거절되거나, 20초 안에 답이 없으면 규칙 보고서를 그대로 씁니다(재시도 없음)
 - 거절 시 다른 모델이 대신 답하는 서버 측 fallbacks를 켜 두었습니다
 - AI가 낸 수정안은 `auto_applicable: false`입니다. 사람이 확인한 뒤 적용합니다. 단 규칙 수정안이 자동 적용 가능이면 fix만 규칙 것을 그대로 둡니다(엔진이 적용할 값을 AI가 바꾸지 못하게). headline·cause·evidence·confidence는 AI 것입니다
-- 프롬프트의 hop 문자열에는 응답 서버 ID를 붙입니다(예: `GET /board 302 [i-bbbb2222]`). 규칙 보고서에 서버 전환 근거 줄이 있으면, AI evidence에 그 줄이 그대로 없을 때 끝에 붙입니다. AI는 `rule_report`로 그 줄을 보지만 evidence를 다시 쓰면서 빠뜨릴 수 있기 때문입니다(로그인이 앞 단계에서 끝났으면 그 단계 hop은 `diverging_steps`에 없어서, 로그인 서버 ID는 이 규칙 문장으로만 보입니다). AI 글에서 ID를 찾아 이미 말했는지 가리지 않습니다. ID는 아무 문자열이라 `2`가 `302`에 걸리듯 엉뚱한 글과 겹치기 때문입니다. 그래서 AI가 같은 내용을 다른 말로 썼으면 비슷한 줄이 두 번 보일 수 있습니다
+- 프롬프트의 hop 문자열에는 응답 서버 ID를 붙입니다(예: `GET /board 302 [i-bbbb2222]`). 규칙 보고서에 서버 전환 근거 줄이 있으면, AI evidence에 그 줄이 그대로 없을 때 끝에 붙입니다. AI는 `rule_report`로 그 줄을 보지만 evidence를 다시 쓰면서 빠뜨릴 수 있기 때문입니다(로그인이 앞 단계에서 끝났으면 그 단계 hop은 `diverging_steps`에 없어서, 로그인 서버 ID는 이 규칙 문장으로만 보입니다). AI가 같은 내용을 제 말로 다시 쓴 줄(두 서버 ID를 모두 적은 줄, 예: `rule_report: POST /login은 i-aaaa, …는 i-bbbb에서 처리`)은 빼서 같은 사실이 두 번 보이지 않게 합니다. ID는 아무 문자열이라 `2`가 `302`에 걸리지 않도록 앞뒤가 글자·숫자가 아닐 때만 언급으로 보고, 두 ID가 다 있어야 뺍니다
+- 프롬프트는 환경을 표시 이름(Local·AWS·GCP 등)으로 쓰고 `rule_report`·`hints` 같은 내부 키를 쓰지 말라고 지시하고, 검사 글(`failed_checks`)은 요청 언어로 보냅니다. 그래도 남은 것은 받은 뒤 고칩니다: 머리말 `rule_report:` 제거, `gcp hops: …` → `GCP 요청 경로: …`, `hints.uses_server_session=true` → `레포 분석: 앱이 서버 세션(HttpSession)을 씀`, headline·cause·evidence의 환경 ID → 표시 이름(영어에서는 보통 낱말이기도 한 local·candidate는 그대로)
 - 비용은 `ai_cost`(호출 수, 토큰, 원화)에 기록합니다. AI 시나리오를 불렀으면 그 비용과 합칩니다. 실측: 보고서 1건 약 7초, 입력 1,889·출력 435 토큰, 약 23원. AI 시나리오는 실측 전(TBD)
 
 시운전 마감 시간에는 진행 중인 HTTP 요청과 접속 재시도를 취소합니다. 이미 서버가 접수한 쓰기를 되돌리지는 않으므로 테스트 전용 환경을 사용하세요.

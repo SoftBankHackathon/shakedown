@@ -3,7 +3,7 @@
 // 호출 방식(모델·구조화 출력·fallback·재시도 없음·APIError면 포기)은 AI 보고서(ai-report.ts)와 같다.
 import Anthropic from "@anthropic-ai/sdk";
 import type { CostLedger, Scenario, Step } from "@shakedown/contracts";
-import { clientOf, costOf, FALLBACK_BETA, isObject, LANG_NAME, MODEL, noCost, type AiOptions } from "./ai-report.ts";
+import { clientOf, costOf, DISPLAY_NAME_LIST, FALLBACK_BETA, isObject, LANG_NAME, MODEL, noCost, type AiOptions } from "./ai-report.ts";
 import type { Lang } from "./report.ts";
 import { isScenario } from "./scenario.ts";
 import { fillStep, makeValues } from "./placeholders.ts";
@@ -74,6 +74,8 @@ const system = (lang: Lang) => [
   // 번역하면 기준 환경에서도 맞지 않아 시나리오가 버려진다(ko·ja에서만 생기는 손해).
   `Write step titles (short imperative phrases) and app_understanding in ${LANG_NAME[lang]}.`,
   "Do not translate paths, form actions, field names, field values, link texts, expected text or placeholders; copy them exactly as they appear on the pages.",
+  // 보고서와 같은 환경 이름(Local·GCP)으로 보이게 한다.
+  `If a step title or app_understanding mentions a deploy environment, use its display name (${DISPLAY_NAME_LIST}).`,
 ].join(" ");
 
 /** ANTHROPIC_API_KEY가 있을 때만 켠다. SHAKEDOWN_AI_SCENARIO=off는 AI 시나리오만 끈다(AI 보고서 스위치 SHAKEDOWN_AI_REPORT와 따로). */

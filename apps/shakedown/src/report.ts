@@ -225,14 +225,29 @@ function instanceLine(words: typeof en, login: Hop | undefined, bounced: Hop): s
 // instanceLine이 만드는 줄의 모양(세 언어). 만드는 문장(WORDS.switched)에서 바로 만들어, 문장을 바꾸면 알아보는 쪽도 함께 바뀐다.
 // 서버 ID는 앱이 정하는 아무 문자열이라("web 1", 헤더가 두 번 와서 ", "로 이어진 값) 자리마다 아무 글자나 받는다.
 const SLOT = "\u0000";
+// 자리마다 잡아 두어(로그인 hop, 그 서버 ID, 튕긴 hop, 그 서버 ID) ai-report가 같은 두 ID를 다시 말한 AI 줄을 알아보게 한다.
 const SWITCHED = LANGS.map((lang) => {
   const escaped = WORDS[lang].switched(SLOT, SLOT, SLOT, SLOT).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^${escaped.replaceAll(SLOT, ".+")}$`, "s");
+  return new RegExp(`^${escaped.replaceAll(SLOT, "(.+?)")}$`, "s");
 });
 
 /** 규칙 보고서 evidence에 있는 서버 전환 근거 줄(어느 언어든). ai-report가 AI 답에 이 줄을 지킬 때 쓴다. */
 export function switchLine(evidence: string[]): string | undefined {
   return evidence.find((line) => SWITCHED.some((re) => re.test(line)));
+}
+
+/** 서버 전환 근거 줄에 적힌 두 서버 ID [로그인을 받은 서버, 튕긴 요청을 받은 서버]. 그 줄이 아니면 null. */
+export function switchIds(line: string): [string, string] | null {
+  for (const re of SWITCHED) {
+    const m = re.exec(line);
+    if (m) return [m[2], m[4]];
+  }
+  return null;
+}
+
+/** 요청 경로 줄("GCP 요청 경로: …"). ai-report가 AI의 "gcp hops: …" 줄을 같은 모양으로 바꿀 때 쓴다. */
+export function hopsLine(env: string, chain: string, lang: Lang): string {
+  return WORDS[lang].hops(env, chain);
 }
 
 /** 방금 쓴 값(글 제목·본문·댓글)이 비교 환경에서만 다시 보이지 않는다. */
