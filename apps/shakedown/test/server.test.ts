@@ -101,9 +101,9 @@ test("비교 환경이 서버 2대면 BLOCKED, 4단계에서 갈라진다", asyn
   assert.deepEqual(done.verdict, {
     status: "BLOCKED",
     first_divergence: 4,
-    summary: "Step 4 (Sign in) led to different pages (/board on local, / on aws).",
+    summary: "Step 4 (Sign in) led to different pages (/board on Local, / on AWS).",
   });
-  assert.equal(done.report?.headline, "Login is lost on aws: requests land on different instances");
+  assert.equal(done.report?.headline, "Login is lost on AWS: requests land on different instances");
   assert.equal(done.report?.by, "rule");
   assert.equal(done.report?.fix?.option, "env");
   // 엔진이 env를 바꿀 수 있다고 알려 주지 않았으니(hints 없음) 제안만 한다.
@@ -128,7 +128,7 @@ test("비교 환경이 꺼져 있으면 BLOCKED와 접속 불가 보고서", asy
   const done = await waitDone(base, body.shakedown_id);
   assert.equal(done.status, "done");
   assert.equal(done.verdict?.first_divergence, 1);
-  assert.equal(done.report?.headline, "aws is not reachable");
+  assert.equal(done.report?.headline, "AWS is not reachable");
 });
 
 test("기준 환경이 꺼져 있으면 비교할 수 없으니 failed", async () => {
@@ -339,7 +339,7 @@ test("AI가 켜져 있으면 BLOCKED 보고서를 AI가 쓰고 비용을 기록�
   assert.equal(done.status, "done");
   assert.deepEqual(done.report, { headline: "AI headline", cause: "AI cause", evidence: ["e1"], fix: null, confidence: "medium", by: "ai" });
   assert.deepEqual(done.ai_cost, { calls: 1, input_tokens: 1000, output_tokens: 500, krw: 19.6 });
-  assert.equal(prompt?.rule_report?.headline, "Login is lost on aws: requests land on different instances");
+  assert.equal(prompt?.rule_report?.headline, "Login is lost on AWS: requests land on different instances");
   assert.deepEqual(prompt?.hints, { uses_server_session: true });
 });
 
@@ -394,7 +394,7 @@ test("게시판이 아닌 앱: 비교 환경만 500이면 BLOCKED와 스택 중�
   assert.equal(done.status, "done", done.error);
   assert.equal(done.verdict?.status, "BLOCKED");
   assert.equal(done.verdict?.first_divergence, 1);
-  assert.equal(done.report?.headline, "aws fails with a server error (HTTP 500)");
+  assert.equal(done.report?.headline, "AWS fails with a server error (HTTP 500)");
   assert.equal(done.report?.fix?.option, "code_change");
   assert.doesNotMatch(done.report?.fix?.native ?? "", /App Runner|application\.yml/);
 });
@@ -579,19 +579,23 @@ test("lang이 ko·en·ja가 아니면 400", async () => {
   }
 });
 
-test("lang: ko면 규칙 보고서를 한국어로 쓰고, 판정 요약은 영어 그대로 둔다", async () => {
+test("lang: ko면 규칙 보고서·판정 요약·단계 비교 이유·기본 시나리오 단계 제목을 한국어로 쓰고 환경은 표시 이름으로 쓴다", async () => {
   const base = await api();
   const { body } = await post(base, request(await board(), await board({ instances: 2 }), { lang: "ko" }));
   const done = await waitDone(base, body.shakedown_id);
-  assert.equal(done.report?.headline, "aws에서 로그인이 풀립니다: 요청이 서로 다른 인스턴스로 갑니다");
-  assert.equal(done.verdict?.summary, "Step 4 (Sign in) led to different pages (/board on local, / on aws).");
+  assert.equal(done.report?.headline, "AWS에서 로그인이 풀립니다: 요청이 서로 다른 인스턴스로 갑니다");
+  assert.equal(done.verdict?.summary, "4단계(로그인)에서 도착한 화면이 다릅니다(Local: /board, AWS: /).");
+  assert.deepEqual(done.steps[3].reasons, ["끝난 곳: /board(Local) / /(AWS)"]);
+  assert.equal(done.scenario?.steps[0].title, "회원가입 화면 열기");
+  // 기계 필드는 환경 ID 그대로다.
+  assert.deepEqual([done.steps[3].baseline, done.steps[3].candidate, done.report?.fix?.target], ["local", "aws", "aws"]);
 });
 
 test("lang이 없거나 null이면 영어", async () => {
   const base = await api();
   for (const extra of [{}, { lang: null }]) {
     const { body } = await post(base, request(await board(), await board({ instances: 2 }), extra));
-    assert.equal((await waitDone(base, body.shakedown_id)).report?.headline, "Login is lost on aws: requests land on different instances");
+    assert.equal((await waitDone(base, body.shakedown_id)).report?.headline, "Login is lost on AWS: requests land on different instances");
   }
 });
 
@@ -605,7 +609,7 @@ test("lang: ja면 AI 시나리오와 AI 보고서에 일본어로 쓰라고 지�
   assert.equal(claude.seen.length, 2);
   for (const seen of claude.seen) assert.match(seen.body.system, /Japanese/);
   // AI에게 힌트로 주는 규칙 보고서도 같은 언어다.
-  assert.equal(JSON.parse(claude.seen[1].body.messages[0].content).rule_report.headline, "aws でサーバーエラーが発生します（HTTP 500）");
+  assert.equal(JSON.parse(claude.seen[1].body.messages[0].content).rule_report.headline, "AWS でサーバーエラーが発生します（HTTP 500）");
 });
 
 test("같은 배포라도 lang이 다르면 그 언어로 시나리오를 새로 고른다", async () => {

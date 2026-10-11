@@ -115,9 +115,11 @@ components:
           enum: [ko, en, ja]
           default: en
           description: |
-            원인 보고서(규칙·AI)와 AI 시나리오의 단계 제목·app_understanding 언어. 없으면 en(이전 엔진과 호환), 목록 밖이면 400.
-            경로·hop·단계 제목·검사 오류 글자와 fix의 target·option·value·native는 그대로이고,
-            verdict.summary와 StepDiff.reasons는 규칙 데이터라 영어 그대로
+            원인 보고서(규칙·AI), verdict.summary, StepDiff.reasons, 시나리오(알려진 시나리오·AI 시나리오·둘러보기)의
+            단계 제목·app_understanding, fix.description·fix.native 언어. 없으면 en(이전 엔진과 호환), 목록 밖이면 400.
+            사람이 읽는 글의 환경 이름은 표시 이름(local→Local, aws→AWS, gcp→GCP, azure→Azure, onprem→On-prem, candidate→Candidate).
+            경로·hop·StepResult.error·checks와 기계 필드(StepDiff.baseline·candidate, fix.target·option·value)는 그대로.
+            판정(status·first_divergence)은 언어와 상관없음. en 문구는 이전과 같고 환경 이름만 표시 이름
         hints:
           type: object
           description: |
@@ -243,7 +245,7 @@ components:
             option: { type: string, description: "sticky_sessions | tz | env | code_change | none" }
             value: { type: string, description: "option=env면 KEY=VALUE 한 개(비밀이 아닌 환경변수). 같은 이미지에 이 env만 더해 다시 배포함. 예 SPRING_PROFILES_ACTIVE=demo,session-jdbc" }
             description: { type: string }
-            native: { type: string, description: 대상 환경에서의 실제 설정 이름 }
+            native: { type: string, description: "대상 환경(target)에서의 실제 설정 이름. 그 환경 것만 요청 언어로 씀(gcp Cloud Run·Cloud SQL, aws ECS task·RDS, azure Container Apps·Azure Database for PostgreSQL, local Docker)" }
             auto_applicable: { type: boolean, description: "true면 엔진이 이 수정안을 그대로 적용할 수 있음(hints.can_apply_env=true인 env 수정안만). AI 보고서도 이 fix는 바꾸지 않음" }
         confidence: { type: string, enum: [high, medium, low] }
         by: { type: string, enum: [rule, ai] }

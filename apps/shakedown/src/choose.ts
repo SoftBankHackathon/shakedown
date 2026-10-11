@@ -8,7 +8,7 @@ import { createSession, type Session } from "./http.ts";
 import { runScenario, runStep } from "./steps.ts";
 import { findForm } from "./html.ts";
 import { fillStep, makeValues } from "./placeholders.ts";
-import { defaultScenario } from "./scenario.ts";
+import { defaultScenarioOf } from "./scenario.ts";
 import { crawl, crawlScenario } from "./crawl.ts";
 import { AI_SCENARIO_TIMEOUT_MS, aiScenario } from "./ai-scenario.ts";
 import { noCost, type AiOptions } from "./ai-report.ts";
@@ -18,7 +18,7 @@ import type { Lang } from "./report.ts";
 export type Choice = { scenario: Scenario; source: "ai" | "fallback"; cost: CostLedger };
 export type ChooseOptions = {
   hints?: Record<string, unknown>;
-  /** AI 시나리오의 단계 제목·app_understanding 언어. 없으면 영어. */
+  /** 고른 시나리오(알려진 시나리오·AI 시나리오·둘러보기)의 단계 제목·app_understanding 언어. 없으면 영어. */
   lang?: Lang;
   /** AI 시나리오 설정. 비어 있으면 AI를 부르지 않는다. */
   ai: AiOptions;
@@ -78,12 +78,14 @@ export async function chooseScenario(baseline: Target, options: ChooseOptions): 
   const http = { timeoutMs: options.timeoutMs, signal };
   let cost = noCost();
 
-  if (await fits(createSession(baseline.url, http), defaultScenario)) return { scenario: defaultScenario, source: "fallback", cost };
+  // 알려진 시나리오와 둘러보기 시나리오의 단계 제목도 요청 언어로 쓴다(맞는지 보는 fits는 제목을 보지 않는다).
+  const known = defaultScenarioOf(options.lang);
+  if (await fits(createSession(baseline.url, http), known)) return { scenario: known, source: "fallback", cost };
   signal?.throwIfAborted();
 
   const pages = await crawl(baseline.url, { healthPath: options.hints?.health_path, ...http });
   signal?.throwIfAborted();
-  const rule = crawlScenario(pages);
+  const rule = crawlScenario(pages, options.lang);
   // 열리는 페이지가 없으면 AI에게 줄 재료도 없다. AI를 부르기 전에 끝낸다.
   if (!rule) {
     const tried = pages.map((p) => `${p.path} ${p.status !== null ? `HTTP ${p.status}` : p.error}`).join(", ");
