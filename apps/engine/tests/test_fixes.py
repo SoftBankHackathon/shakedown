@@ -2,7 +2,9 @@
 import re
 import threading
 import time
+from types import SimpleNamespace
 import pytest
+from engine import deployments
 from engine.deployments import DeploymentStore, DeployRequest, CompareRequest, Endpoint, DeploymentError, Busy, NotFound
 from test_comparisons import Runner, Shakedown, wait, project
 from test_gcp_deployments import Gcp, DIGEST, URL
@@ -357,9 +359,12 @@ def test_fix_second_shakedown_failure_fails_and_stops_both(project, tmp_path, br
     finally: ds.close()
 
 
-def test_fix_timings_add_the_redeploy_but_not_the_wait_before_the_click(project, tmp_path):
+def test_fix_timings_add_the_redeploy_but_not_the_wait_before_the_click(project, tmp_path, monkeypatch):
     # 차단 뒤 사람이 버튼을 누르기까지 기다린 시간은 작업 시간이 아니다. total_s에 넣으면 '시운전 한 번 3분 안'과
     # 대시보드의 분해(빌드·배포·시운전)로 설명되지 않는 총시간이 보인다.
+    # 일부 Windows monotonic 시계는 약 15ms 단위라 짧은 재배포의 경과 시간이 0이 될 수 있다.
+    monkeypatch.setattr(deployments, 'time', SimpleNamespace(
+        monotonic=lambda: 0.0, perf_counter=time.perf_counter, time=time.time, sleep=time.sleep))
     ds = DeploymentStore(tmp_path/'d.db', Runner(), gcp=Gcp(), shakedown=Runs('BLOCKED', 'PASS'), poll_seconds=.001)
     try:
         first = blocked_local_gcp(ds, project)
