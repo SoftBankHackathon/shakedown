@@ -159,7 +159,7 @@ def recommend(facts, options, llm):
     return dict(schema_version=VERSION,source=source,recommended_template=selected,reasons=reasons,evidence_ids=cited,
                 assessment=assessment,templates=catalog,requirements=options.model_dump(),facts=facts,
                 selected_template=None,status='needs_input' if assessment['missing_inputs'] or selected is None else 'proposed',
-                deployment=dict(ready=False,reason='설계를 선택한 뒤 AWS 배포를 시작하면 해당 구성을 적용합니다. 준비된 AWS 기반 스택과 앱 실행 설정이 필요하며 자원 변경 요금이 발생합니다.'))
+                deployment=dict(ready=False,reason='설계를 선택한 뒤 클라우드(AWS·GCP·Azure) 배포를 시작하면 고른 클라우드마다 해당 구성을 적용합니다. 준비된 기반 스택과 앱 실행 설정이 필요하며 자원 변경 요금이 발생합니다.'))
 
 
 class ArchitecturePlanner:
@@ -221,7 +221,7 @@ class ArchitecturePlanner:
             if plan['assessment']['missing_inputs']:raise ArchitectureError('누락된 운영 요구를 입력한 뒤 다시 판단하세요.')
             plan.update(selected_template=tier,selected_at=time.time(),status='selected')
             supported = bool(getattr(project,'runtime',None)) or (facts['stack'].startswith('spring-boot') and facts['signals']['database'] in {'postgres','postgresql'})
-            plan['deployment'] = dict(ready=supported, reason='AWS 배포 시 선택한 컴퓨팅·확장 구성을 적용합니다. 관리형 PostgreSQL을 선택한 경우에만 RDS 가용성을 변경합니다. 기반 스택과 권한이 필요하며 비용이 발생합니다.' if supported else '설계 저장은 가능하지만 언어 공통 HTTP 실행 설정을 먼저 저장하세요.')
+            plan['deployment'] = dict(ready=supported, reason='클라우드(AWS·GCP·Azure) 배포 시 고른 클라우드마다 선택한 컴퓨팅·확장 구성을 적용합니다. AWS는 관리형 PostgreSQL을 선택한 경우에만 RDS 가용성을 변경합니다. 기반 스택과 권한이 필요하며 비용이 발생합니다.' if supported else '설계 저장은 가능하지만 언어 공통 HTTP 실행 설정을 먼저 저장하세요.')
             db.execute('UPDATE architecture_plans SET payload=? WHERE id=?',(json.dumps(plan,ensure_ascii=False),id));db.commit()
         return plan
 

@@ -55,6 +55,17 @@ export type Deployment = {
   timings: { build_s?: number; deploy_s?: number; total_s?: number };
   ai_cost: CostLedger;
   error?: string;
+  /** POST /api/deployments/{id}/stop으로 대상 환경을 정리한 시각. 판정(status)은 그대로 둔다. */
+  stopped_at?: number;
+  /** 진행 로그(최대 300줄). SSE log 이벤트와 같은 줄. source는 "engine" 또는 대상 이름. env 값·비밀·앱 원본 로그는 없다. */
+  log?: { ts: number; source: string; line: string }[];
+};
+
+/** GET /api/services — 엔진이 대상 서버와 시운전 서비스에 짧게 물어본 연결 상태. 대시보드의 "사용 가능" 표시가 이 값을 쓴다. */
+export type ServiceStatus = {
+  targets: Partial<Record<TargetName, { online: boolean }>>;
+  /** ai는 시운전 서비스가 원인 보고서·시나리오에 Claude를 쓸 수 있는지(키 존재 여부만, 키 값은 오지 않는다). */
+  shakedown: { online: boolean; ai: boolean; model: string | null };
 };
 
 export type Project = {
@@ -167,6 +178,7 @@ export type ReportLang = "ko" | "en" | "ja";
 export type CompareRequest = { baseline: ComparisonEndpoint; candidate: ComparisonEndpoint; lang?: ReportLang };
 
 export type DeployRequest = {
+  /** 선택한 설계안(소·중·대)을 고른 클라우드(aws·gcp·azure)마다 같은 등급으로 적용한다. Local은 영향 없음. */
   architecture_plan_id?: string;
   comparison?: ComparisonEndpoint;
   targets?: TargetName[];
