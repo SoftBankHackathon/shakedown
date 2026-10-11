@@ -10,10 +10,13 @@ const ROW_TONE: Record<StepDiff["severity"], string> = { critical: "bg-bad/5", w
 const ICON: Record<StepResult["status"], string> = { passed: "✓", failed: "✕", skipped: "–" };
 const TONE: Record<StepResult["status"], string> = { passed: "text-ok", failed: "text-bad", skipped: "text-muted" };
 
-function describe(s: Step) {
-  if (s.action === "visit") return `visit ${s.path}`;
-  if (s.action === "submit_form") return `submit ${s.form_action}`;
-  return `click "${s.link_text}"`;
+/** {{title}} and the other run values (apps/shakedown/src/placeholders.ts) are filled in at run time; show what they stand for. */
+const placeholders = (text: string, t: ReturnType<typeof useT>) => text.replace(/\{\{(\w+)\}\}/g, (raw, name: string) => t.maybe(`ph.${name}`, raw));
+
+function describe(s: Step, t: ReturnType<typeof useT>) {
+  if (s.action === "visit") return `visit ${placeholders(s.path ?? "", t)}`;
+  if (s.action === "submit_form") return `submit ${placeholders(s.form_action ?? "", t)}`;
+  return `click "${placeholders(s.link_text ?? "", t)}"`;
 }
 
 /** Same journey, two environments, side by side. Diverging rows open to show every HTTP hop. */
@@ -48,8 +51,8 @@ export function StepTable({ baseline, candidate, steps, diffs, running }: {
                 <tr onClick={() => d && setOpen(isOpen ? -1 : idx)} className={`${d ? "cursor-pointer" : ""} ${rowTone}`}>
                   <td className="mono muted tabular-nums">{String(idx).padStart(2, "0")}</td>
                   <td>
-                    <div className="font-medium">{s.title}</div>
-                    <small className="mono">{describe(s)}</small>
+                    <div className="font-medium">{placeholders(s.title, t)}</div>
+                    <small className="mono">{describe(s, t)}</small>
                   </td>
                   <td><Cell r={d?.local} pending={isNext} /></td>
                   <td><Cell r={d?.cloud} pending={isNext} /></td>

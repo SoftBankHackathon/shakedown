@@ -47,4 +47,10 @@
 /* Align the desktop frame and form rhythm with the supplied reference. */
 @media(min-width:1041px){.app-frame{margin-right:10px}.topbar{height:46px}.breadcrumb{line-height:20px}.framework-row .hint{line-height:18px}.targets-section{padding-bottom:10px}.environment-section{padding-bottom:14px}.environment-table{padding-top:14px}}
 .skip-link{clip-path:inset(50%)}.skip-link:focus{clip-path:none}
+/* In-page links above the project page's lower sections; jumped-to sections keep clear of the top edge. */
+.page-nav{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}.page-nav a{border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px;color:var(--muted);background:#fff}.page-nav a:hover{color:#111;border-color:#111}.stack>[id]{scroll-margin-top:80px}
+/* The deployment title never breaks inside a word and its id wraps instead of overflowing; screen-reader-only header cells stay inside their scrolling table. */
+.table-scroll,.table-wrap{position:relative}.run-heading>div:first-child{min-width:0;max-width:100%}.run-title{min-width:0}.run-title h2{flex-wrap:wrap;min-width:0;white-space:nowrap}.run-title h2>.mono{white-space:normal;overflow-wrap:anywhere;min-width:0}
+/* Narrow phones: the project picker takes its own row so it never covers the language buttons. */
+@media(max-width:560px){.workspace-picker{order:4;flex:1 1 100%}.header-divider{display:none}.workspace-button{max-width:100%}.workspace-button>span{max-width:none}}
 }

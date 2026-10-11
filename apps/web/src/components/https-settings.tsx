@@ -66,8 +66,11 @@ export function HttpsSettings({ projectId }: { projectId: string }) {
       setBusy(false);
     }
   }
+  // The engine answers without an HTTPS service with a setup sentence naming port 9301; show plain words and keep the hint small.
+  const shown = error || statusError;
+  const serviceOff = shown.includes("9301");
   return (
-    <Section title={t("https.title")}>
+    <Section id="https" title={t("https.title")}>
       <div className="space-y-4 text-sm">
         <p className="text-muted">{t("https.lead")}</p>
         {MOCK ? (
@@ -104,7 +107,8 @@ export function HttpsSettings({ projectId }: { projectId: string }) {
               </form>
             </div>
             {loading && <p role="status" className="text-muted">{t("https.loading")}</p>}
-            {(error || statusError) && <p role="alert" className="text-bad">{error || statusError}</p>}
+            {shown && <p role="alert" className="text-bad" title={shown}>{serviceOff ? t("https.serviceOff") : shown}</p>}
+            {serviceOff && <p className="text-xs text-muted">{t("https.serviceHint")}</p>}
             {binding && (
               <div className="space-y-3 rounded-lg border border-line p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">

@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+import httpx
 from engine.deployments import DeploymentStore, DeployRequest, CompareRequest, DeploymentError, Busy, TERMINAL
 from engine.llm import LlmConnection, ConnectionRequest, LlmError
 from engine.image_builder import ImageBuilder, PlanRequest, BuildError
@@ -132,6 +133,28 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
     def health():
         return {'ok': True}
 
+    @api.get('/api/services')
+    async def services():
+        # 대시보드의 "사용 가능" 표시용. 다섯 곳에 동시에 짧게 물어 1.5초 안에 답한다. 배포는 하지 않는다.
+        async def probe(base):
+            if not isinstance(base, str): return None
+            try:
+                async with httpx.AsyncClient(timeout=1, trust_env=False) as client:
+                    response = await asyncio.wait_for(client.get(base + '/health'), 1.2)
+                body = response.json() if response.status_code == 200 else None
+                return body if isinstance(body, dict) and body.get('ok') is True else None
+            except (httpx.HTTPError, ValueError, asyncio.TimeoutError):
+                return None
+        ds = api.state.deployments
+        names = ('local', 'aws', 'gcp', 'azure')
+        *found, sd = await asyncio.gather(*(probe(getattr(ds.runner_for(n), 'base', None)) for n in names),
+                                          probe(getattr(ds.shakedown, 'base', None)))
+        # 키 값은 오지 않는다. 시운전이 알려 준 AI 사용 가능 여부와 모델 이름만 옮긴다.
+        model = sd.get('model') if sd else None
+        return {'targets': {n: {'online': r is not None} for n, r in zip(names, found)},
+                'shakedown': {'online': sd is not None, 'ai': bool(sd) and sd.get('ai') is True,
+                              'model': model if isinstance(model, str) else None}}
+
     @api.get('/api/projects', response_model=list[Project])
     def projects():
         return api.state.store.list()
@@ -235,19 +258,32 @@ def create_app(store: ProjectStore | None = None, deployments_store: DeploymentS
         except DeploymentError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
+    @api.post('/api/deployments/{deployment_id}/stop')
+    def stop(deployment_id: str):
+        # 판정이 끝난 배포의 대상 환경을 내린다. 판정은 바꾸지 않는다. DELETE 실패는 대상별 cleanup='failed'로 기록한다.
+        deployment(deployment_id)
+        try:
+            return api.state.deployments.stop(deployment_id)
+        except Busy as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
     @api.get('/api/deployments/{deployment_id}/events')
     def events(deployment_id: str):
         deployment(deployment_id)
         async def stream():
-            previous = None
+            previous, last = None, 0
             while True:
                 d = api.state.deployments.get(deployment_id)
+                # 진행 로그는 처음부터 한 번씩 보낸다. ts가 줄마다 커지므로 마지막으로 보낸 ts 뒤만 이어 보낸다.
+                for entry in d.get('log', []):
+                    if entry['ts'] > last:
+                        yield 'data: ' + json.dumps(dict(kind='log', **entry)) + '\n\n'
+                        last = entry['ts']
                 status = d['status']
                 progress = (status, len(d.get('attempts', [{}])[-1].get('steps', [])) if d.get('attempts') else 0)
                 if progress != previous:
                     event = dict(ts=time.time(), kind='stage', status=status, message=status)
                     yield 'data: ' + json.dumps(event) + '\n\n'
-                    yield 'data: ' + json.dumps(dict(ts=time.time(), kind='log', source='engine', line=status)) + '\n\n'
                     previous = progress
                 if status in TERMINAL:
                     yield 'data: ' + json.dumps(dict(ts=time.time(), kind='done', status=status)) + '\n\n'

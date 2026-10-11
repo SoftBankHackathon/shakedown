@@ -114,8 +114,8 @@ def test_cloud_pair_without_local_never_offers_the_fix(project, tmp_path):
         assert post['baseline']['name'] == 'aws' and 'can_apply_env' not in post['hints']
     finally: ds.close()
 
-def test_architecture_plan_goes_only_to_aws_when_gcp_comes_along(project, tmp_path):
-    # GCP 어댑터는 모르는 필드를 400으로 거절한다(strict). 아키텍처 계획은 AWS 본문에만 실려야 한다.
+def test_architecture_plan_goes_to_aws_and_gcp_alike(project, tmp_path):
+    # 설계안은 고른 클라우드마다 같은 등급으로 적용한다. GCP 어댑터는 gcp-architecture.v1로 받는다.
     from engine.architecture import CATALOG
     class Planner:
         def resolve(self, p, id): return dict(next(t for t in CATALOG if t['id'] == 'medium'))
@@ -127,7 +127,8 @@ def test_architecture_plan_goes_only_to_aws_when_gcp_comes_along(project, tmp_pa
         assert d['status'] == 'promoted' and gcp.published == [AWS_DIGEST]
         aws_body, gcp_body = (next(c[2] for c in runner.calls if c[0] == 'POST') for runner in (aws, gcp))
         assert aws_body['architecture']['template_id'] == 'medium'
-        assert 'architecture' not in gcp_body and 'env' not in gcp_body and gcp_body['options']['replicas'] == 2
+        assert gcp_body['architecture'] == {'version': 'gcp-architecture.v1', 'template_id': 'medium'}
+        assert gcp_body['env'] == {'SPRING_PROFILES_ACTIVE': 'demo,session-jdbc'} and gcp_body['options']['replicas'] == 2
     finally: ds.close()
 
 def test_local_and_all_three_clouds_share_one_build(project, tmp_path):
@@ -230,6 +231,8 @@ def test_runtime_project_sends_its_runtime_to_gcp_without_legacy_fields_or_the_e
 @pytest.mark.parametrize('target, architecture, overrides, limit', [
     ('gcp', None, None, 450), ('local', None, None, 300), ('aws', None, None, 300), ('azure', None, None, 300),
     ('aws', {'id': 'aws-ha'}, None, 2700),
+    # 설계안을 고른 GCP·Azure는 2700초 규칙 없이 자기 대기 한도를 쓴다.
+    ('gcp', {'id': 'large'}, None, 450), ('azure', {'id': 'large'}, None, 300),
     # 다른 대상만 바꿔 넘겨도 GCP 예외는 남아야 한다.
     ('local', None, {'local': 120}, 120), ('gcp', None, {'local': 120}, 450)])
 def test_ready_wait_gives_only_gcp_extra_time(tmp_path, monkeypatch, target, architecture, overrides, limit):

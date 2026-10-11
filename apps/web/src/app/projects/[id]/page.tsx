@@ -10,9 +10,12 @@ import { useLang, useT } from "@/components/i18n";
 import { ImageBuilder } from "@/components/image-builder";
 import { ProviderIcon } from "@/components/provider-icon";
 import { RuntimeSettings } from "@/components/runtime-settings";
-import { AiTag, Alert, Badge, Breadcrumb, ConnectionStrip, Section, Toggle } from "@/components/ui";
+import { AiTag, Alert, Badge, Breadcrumb, ConnectionStrip, RuleTag, Section, Toggle } from "@/components/ui";
 import { api, API, ApiError, errorMessage, formatSeconds, MOCK, type Deployment, type Project, type TargetName, type TargetOptions } from "@/lib/api";
+import { isOffline, useServices } from "@/lib/engine";
 import { DEFAULT_TARGET_OPTIONS, DEFAULT_TARGETS, orderTargets, pickTarget, TARGETS, targetLabel, TIMEZONES } from "@/lib/targets";
+
+const CLOUDS: TargetName[] = ["aws", "gcp", "azure"];
 
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
@@ -28,7 +31,10 @@ export default function ProjectPage() {
   const [comparisonUrl, setComparisonUrl] = useState("");
   const [baselineUrl, setBaselineUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  // 저장한 설계안은 사용자가 켰을 때만 붙인다. 기본 Action(Local+GCP 데모)은 인스턴스 수 설정을 그대로 쓴다.
+  const [applyPlan, setApplyPlan] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const services = useServices();
 
   useEffect(() => {
     api.project(id).then((p) => { setProject(p); const supported = (p.targets ?? ["local"]).filter((x) => TARGETS.some((t) => t.id === x && t.available)); setLiveTargets(supported.length ? supported : ["local"]); }).catch((e) => setError(e.message));
@@ -40,13 +46,14 @@ export default function ProjectPage() {
     setError(null);
     try {
       let architectureId: string | undefined;
-      if (!MOCK && liveTargets.includes("aws")) {
+      // 엔진은 고른 설계 등급을 aws·gcp·azure마다 같은 등급으로 적용한다(DeployRequest.architecture_plan_id).
+      if (!MOCK && applyPlan && liveTargets.some((x) => CLOUDS.includes(x))) {
         const response = await fetch(`${API}/api/projects/${id}/architecture-plans/latest`, { cache: "no-store" });
         if (!response.ok) throw new Error(t("project.planCheckError"));
         const plan = await response.json();
         if (plan?.selected_template) architectureId = plan.id;
       }
-      const deploymentOptions = Object.fromEntries(Object.entries(opts).filter(([name]) => liveTargets.includes(name as TargetName)).map(([name, value]) => [name, name === "aws" && architectureId ? { sticky_sessions: false, tz: value.tz } : value]));
+      const deploymentOptions = Object.fromEntries(Object.entries(opts).filter(([name]) => liveTargets.includes(name as TargetName)).map(([name, value]) => [name, CLOUDS.includes(name as TargetName) && architectureId ? { sticky_sessions: false, tz: value.tz } : value]));
       const d = await api.deploy(id, { architecture_plan_id: architectureId, shakedown: MOCK ? shakedown : liveTargets.length >= 2 || !!comparisonUrl.trim(), autofix: false, options: MOCK ? opts : deploymentOptions, targets: MOCK ? undefined : liveTargets, comparison: !MOCK && liveTargets.length === 1 && comparisonUrl.trim() ? { name: "candidate", url: comparisonUrl.trim() } : undefined, lang });
       router.push(`/deployments/${d.id}`);
     } catch (e) {
@@ -72,6 +79,17 @@ export default function ProjectPage() {
     setOpts((cur) => ({ ...cur, [name]: { ...optsFor(name), ...patchOpt } }));
   const shakedownOn = MOCK ? shakedown : liveTargets.length >= 2 || !!comparisonUrl.trim();
   const repoShort = project.repo.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
+  // The summary is AI-written only when the analysis called the AI or an AI evidence row exists; the engine's rule summary is not.
+  const aiSummary = project.analysis_cost.calls > 0 || a.evidence.some((e) => e.source === "ai");
+  const aiReport = shakedownOn && services?.shakedown.ai;
+  const sections = [
+    !MOCK && ["compare", t("pnav.compare")],
+    !MOCK && ["runtime-settings", t("pnav.runtime")],
+    !MOCK && ["architecture-planner", t("pnav.arch")],
+    !MOCK && ["image-builder", t("pnav.image")],
+    ["https", t("pnav.https")],
+    ["deployments", t("project.deployments")],
+  ].filter((x): x is [string, string] => !!x);
 
   return (
     <>
@@ -93,7 +111,7 @@ export default function ProjectPage() {
               <label htmlFor="p-stack">{t("cfg.stack")}</label>
               <div>
                 <div className="read-only-select"><input id="p-stack" value={[a.stack, a.database].filter(Boolean).join(" · ") || "—"} readOnly /><BsChevronDown size={12} /></div>
-                {a.summary && <p className="hint"><AiTag /> {a.summary}</p>}
+                {a.summary && <p className="hint">{aiSummary ? <AiTag /> : <RuleTag>{t("tag.rule")}</RuleTag>} {t.engine(a.summary)}</p>}
               </div>
             </div>
             <div className="field-row">
@@ -122,12 +140,15 @@ export default function ProjectPage() {
                 const on = targets.includes(tg.id);
                 const isBaseline = on && tg.id === baseline;
                 const o = optsFor(tg.id);
+                const offline = isOffline(services, tg.id);
+                const usable = tg.available && !offline;
                 return (
                   <div key={tg.id}>
-                    <label className={`target-row ${tg.available ? "" : "unavailable"}`}>
+                    <label className={`target-row ${usable ? "" : "unavailable"}`}>
                       <input
                         type="checkbox"
-                        disabled={MOCK || !tg.available}
+                        // An offline target cannot be picked, but one already picked stays so a single slow health check never drops it.
+                        disabled={MOCK || (!usable && !on)}
                         checked={on}
                         onChange={(e) => {
                           setLiveTargets((current) => e.target.checked ? pickTarget(current, tg.id) : current.filter((x) => x !== tg.id));
@@ -141,8 +162,8 @@ export default function ProjectPage() {
                         {project.ports?.[tg.id] ? <span className="row-meta">{t("project.port")} {project.ports[tg.id]}</span> : null}
                       </span>
                       <span className="target-state">
-                        <i className={`connection-dot ${tg.available ? "connected" : ""}`} />
-                        {tg.available ? t("cfg.available") : t("home.soon")}
+                        <i className={`connection-dot ${usable ? "connected" : ""}`} />
+                        {!tg.available ? t("home.soon") : offline ? t("svc.offline") : t("cfg.available")}
                       </span>
                     </label>
                     {on && !isBaseline && (
@@ -170,6 +191,9 @@ export default function ProjectPage() {
               })}
             </div>
             <div className="inline-note"><BsInfoCircle /><span>{MOCK ? t("home.targetsHint") : t("live.scope")}</span></div>
+            {!MOCK && liveTargets.some((x) => CLOUDS.includes(x)) && (
+              <label className="inline-note"><input type="checkbox" checked={applyPlan} onChange={(e) => setApplyPlan(e.target.checked)} /><span>{t("project.applyPlan")}</span></label>
+            )}
           </div>
 
           <details className="config-section environment-section" open>
@@ -196,7 +220,7 @@ export default function ProjectPage() {
                   <div className="environment-value"><span className="mono">{s.value}</span><span className="tag">{t("project.hiddenFromAi")}</span></div>
                 </div>
               ))}
-              {a.warnings.map((w) => <p className="hint" key={w}>⚠ {w}</p>)}
+              {a.warnings.map((w) => <p className="hint" key={w} title={w}>⚠ {t.engine(w)}</p>)}
             </div>
             <details className="routes">
               <summary className="text-link"><BsInfoCircle size={13} />{t("project.routes", { n: a.routes.length })}</summary>
@@ -222,7 +246,7 @@ export default function ProjectPage() {
             <dl>
               <div><dt>{t("est.env")}</dt><dd>{orderTargets(targets).map(targetLabel).join(" + ") || "—"}</dd></div>
               <div><dt>{t("est.shakedown")}</dt><dd>{shakedownOn ? t("est.steps") : t("est.deployOnly")}</dd></div>
-              <div><dt>{t("est.ai")}</dt><dd>{t("est.aiNone")}<br /><span className="muted">{t("est.analysisCost", { krw: project.analysis_cost.krw, n: project.analysis_cost.calls })}</span></dd></div>
+              <div><dt>{t("est.ai")}</dt><dd>{aiReport ? <>{t("est.aiOn")}<br /><span className="muted">{t("est.aiOnHint")}</span></> : t("est.aiNone")}<br /><span className="muted">{t("est.analysisCost", { krw: project.analysis_cost.krw, n: project.analysis_cost.calls })}</span></dd></div>
             </dl>
             <div className="estimate-note"><BsInfoCircle size={15} /><p>{t("est.note")}</p></div>
             <div className="estimate-bottom">
@@ -236,9 +260,12 @@ export default function ProjectPage() {
         </aside>
       </div>
 
+      <nav className="page-nav" aria-label={t("pnav.label")}>
+        {sections.map(([anchor, label]) => <a key={anchor} href={`#${anchor}`}>{label}</a>)}
+      </nav>
       <div className="stack">
         {!MOCK && (
-          <Section title={t("live.compareTitle")}>
+          <Section id="compare" title={t("live.compareTitle")}>
             <div className="project-fields compact">
               <div className="field-row"><label htmlFor="c-baseline">{t("live.baseline")}</label><input id="c-baseline" type="url" value={baselineUrl} onChange={(e) => setBaselineUrl(e.target.value)} placeholder="http://127.0.0.1:18080" /></div>
               <div className="field-row"><label htmlFor="c-candidate">{t("live.candidate")}</label><input id="c-candidate" type="url" value={comparisonUrl} onChange={(e) => setComparisonUrl(e.target.value)} placeholder="https://comparison.example.com" /></div>
@@ -247,10 +274,10 @@ export default function ProjectPage() {
             <button type="button" className="button primary" disabled={busy || !baselineUrl.trim() || !comparisonUrl.trim()} onClick={compareExisting}>{t("live.compareNow")}</button>
           </Section>
         )}
-        <RuntimeSettings key={id} project={project} onSaved={setProject} />
+        <RuntimeSettings key={id} project={project} targets={targets} onSaved={setProject} />
         <p className="hint">{t("project.awsPlanNote")}</p>
-        <ArchitecturePlanner key={id + JSON.stringify(project.runtime)} projectId={id} />
-        <ImageBuilder projectId={id} />
+        <ArchitecturePlanner key={id + JSON.stringify(project.runtime)} projectId={id} targets={project.targets ?? []} />
+        <ImageBuilder projectId={id} stack={a.stack} />
         <HttpsSettings projectId={id} />
 
         <Section id="deployments" title={t("project.deployments")} flush>
@@ -267,7 +294,7 @@ export default function ProjectPage() {
                     <td>
                       <Link href={`/deployments/${d.id}`} className="table-link">
                         <BsBoxSeam size={19} />
-                        <span><strong className="mono">{d.id}</strong><small>{t("project.shakedowns", { n: d.attempts.length })}{fixed?.applied_fix && ` · ${t("project.autofixed", { x: fixed.applied_fix.option })}`}</small></span>
+                        <span><strong className="mono">{d.id}</strong><small>{t("project.shakedowns", { n: d.attempts.length })}{fixed?.applied_fix && ` · ${t("project.autofixed", { x: t.fix(fixed.applied_fix) })}`}</small></span>
                       </Link>
                     </td>
                     <td>{orderTargets(Object.keys(d.targets)).map(targetLabel).join(" + ")}</td>

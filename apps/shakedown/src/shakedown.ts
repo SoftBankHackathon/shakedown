@@ -1,9 +1,9 @@
 // 시운전 한 번: 같은 시나리오를 두 환경에서 동시에 실행하고, 비교하고, 판정한다.
-import type { Scenario, StepDiff, StepResult } from "@shakedown/contracts";
+import type { ReportLang, Scenario, StepDiff, StepResult } from "@shakedown/contracts";
 import { createSession } from "./http.ts";
 import { runScenario } from "./steps.ts";
 import { fillStep, makeValues } from "./placeholders.ts";
-import { defaultScenario } from "./scenario.ts";
+import { defaultScenarioOf } from "./scenario.ts";
 import { compareSteps } from "./compare.ts";
 import { judge, type Verdict } from "./verdict.ts";
 
@@ -15,6 +15,8 @@ export type ShakedownInput = {
   runId?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** 판정 요약·단계 비교 이유와 (시나리오가 없을 때) 기본 시나리오 단계 제목의 언어. 없으면 영어. */
+  lang?: ReportLang;
   /** 두 환경이 모두 끝낸 단계가 늘 때마다 그때까지의 비교 결과를 받는다. */
   onProgress?: (steps: StepDiff[]) => void;
 };
@@ -26,7 +28,7 @@ export type ShakedownResult = {
 };
 
 export async function runShakedown(input: ShakedownInput): Promise<ShakedownResult> {
-  const scenario = input.scenario ?? defaultScenario;
+  const scenario = input.scenario ?? defaultScenarioOf(input.lang);
   const values = makeValues(input.runId);
   const steps = scenario.steps.map((s) => fillStep(s, values));
   const options = { timeoutMs: input.timeoutMs, signal: input.signal };
@@ -40,7 +42,7 @@ export async function runShakedown(input: ShakedownInput): Promise<ShakedownResu
     const n = Math.min(done.base.length, done.cand.length);
     if (n === reported) return;
     reported = n;
-    input.onProgress?.(compareSteps(done.base.slice(0, n), done.cand.slice(0, n), names));
+    input.onProgress?.(compareSteps(done.base.slice(0, n), done.cand.slice(0, n), names, input.lang));
   };
 
   // 브라우저 두 개처럼 세션(쿠키)을 따로 두고 동시에 실행한다.
@@ -48,10 +50,10 @@ export async function runShakedown(input: ShakedownInput): Promise<ShakedownResu
     runScenario(createSession(input.baseline.url, options), steps, progress("base")),
     runScenario(createSession(input.candidate.url, options), steps, progress("cand")),
   ]);
-  const diffs = compareSteps(base, cand, names);
+  const diffs = compareSteps(base, cand, names, input.lang);
   return {
     scenario,
     steps: diffs,
-    verdict: judge(diffs),
+    verdict: judge(diffs, input.lang),
   };
 }

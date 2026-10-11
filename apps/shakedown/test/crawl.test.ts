@@ -103,6 +103,11 @@ test("규칙 둘러보기 시나리오: 기준 환경에서 400 미만이었던 
     ],
   });
   assert.equal(crawlScenario([page("/", 200)])?.app_understanding, "Rule-based crawl of 1 page (AI unavailable)");
+  // 단계 제목과 설명은 요청 언어로 쓰고, 여는 경로는 그대로다.
+  const ko = crawlScenario([page("/", 200), page("/about", 200)], "ko")!;
+  assert.deepEqual(ko.steps.map((s) => [s.title, s.path]), [["/ 열기", "/"], ["/about 열기", "/about"]]);
+  assert.equal(ko.app_understanding, "규칙 기반 둘러보기: 페이지 2개(AI 미사용)");
+  assert.equal(crawlScenario([page("/", 200)], "ja")!.steps[0].title, "/ を開く");
   // 넘어간 화면이 글 번호 주소면 환경마다 번호가 달라서 기대하지 않는다(경로 비교는 번호를 같은 것으로 보는 compare.ts가 맡는다).
   assert.equal(crawlScenario([page("/latest", 200, "/posts/17")])?.steps[0].expect.path_startswith, null);
   assert.equal(crawlScenario([page("/", 200, "/workspaces/123e4567-e89b-12d3-a456-426614174000")])?.steps[0].expect.path_startswith, null);
