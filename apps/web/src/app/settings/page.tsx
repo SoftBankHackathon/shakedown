@@ -1,11 +1,12 @@
 "use client";
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BsArrowRepeat, BsHddNetwork } from "react-icons/bs";
+import { BsArrowRepeat, BsCloud, BsHddNetwork, BsShieldCheck } from "react-icons/bs";
 import { useT } from "@/components/i18n";
 import { Alert, Breadcrumb, PageHeading } from "@/components/ui";
 import { API, MOCK, type LlmConnectionStatus as Connection } from "@/lib/api";
-import { useEngineOnline } from "@/lib/engine";
+import { useEngineOnline, useServices } from "@/lib/engine";
+import { TARGETS } from "@/lib/targets";
 
 const MODELS = [
   { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
@@ -19,6 +20,7 @@ export default function Settings() {
   // Error text only; a ref keeps language switches from reloading and overwriting an unsaved model choice.
   const tRef = useRef(t); useEffect(() => { tRef.current = t; }, [t]);
   const online = useEngineOnline();
+  const services = useServices();
   const [status, setStatus] = useState<Connection | null>(null);
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [customModel, setCustomModel] = useState(false);
@@ -56,6 +58,10 @@ export default function Settings() {
   }
   const aiState = t(status?.verified ? "ai.stateVerified" : status?.configured ? "ai.stateConfigured" : "ai.stateNone");
   const engineState = MOCK ? t("conn.mock") : online ? t("settings.on") : online === false ? t("settings.off") : t("settings.checking");
+  // null: engine down or older than GET /api/services, so the state is unknown rather than off.
+  const shakedown = services?.shakedown;
+  const shakedownState = MOCK ? t("conn.mock") : !services ? t("settings.unknown") : shakedown?.online ? t("settings.on") : t("settings.serviceOff");
+  const shakedownAi = shakedown?.online ? (shakedown.ai ? t("settings.aiOn", { model: shakedown.model ?? "Claude" }) : t("settings.aiRules")) : null;
   return (
     <>
       <Breadcrumb parent={t("nav.newAction")} parentHref="/" current={t("settings.title")} />
@@ -74,8 +80,30 @@ export default function Settings() {
         <section className="panel connection-card">
           <span className="connection-icon"><Image src="/providers/claude.svg" alt="Claude" width={24} height={24} /></span>
           <div>
-            <div className="connection-title"><h3>Anthropic Claude</h3><span className="tag">{aiState}</span></div>
+            <div className="connection-title"><h3>{t("settings.engineAi")}</h3><span className="tag">{aiState}</span></div>
             <p>{t("settings.aiDesc")}{status?.configured && <> {t("ai.current")} <span className="mono">{status.model}</span></>}</p>
+          </div>
+        </section>
+        <section className="panel connection-card">
+          <span className="connection-icon"><BsShieldCheck /></span>
+          <div>
+            <div className="connection-title"><h3>{t("settings.shakedown")}</h3><span className="tag">{shakedownState}</span>{shakedownAi && <span className={`tag ${shakedown?.ai ? "ai" : ""}`}>{shakedownAi}</span>}</div>
+            <p>{t("settings.shakedownDesc")}</p>
+          </div>
+        </section>
+        <section className="panel connection-card">
+          <span className="connection-icon"><BsCloud /></span>
+          <div>
+            <div className="connection-title"><h3>{t("settings.targets")}</h3>{!services && !MOCK && <span className="tag">{t("settings.unknown")}</span>}</div>
+            <p>{t("settings.targetsDesc")}</p>
+            {services && (
+              <ul className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm">
+                {TARGETS.filter((tg) => tg.available).map((tg) => {
+                  const state = services.targets[tg.id]?.online;
+                  return <li key={tg.id} className="flex items-center gap-2"><i className={`connection-dot ${state ? "connected" : ""}`} />{tg.label} · {state ? t("settings.on") : state === false ? t("svc.offline") : "—"}</li>;
+                })}
+              </ul>
+            )}
           </div>
         </section>
       </div>
